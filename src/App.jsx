@@ -660,12 +660,14 @@ function ContentModule({ data, setData, q }) {
 function RingDark({ value, max, label, tint, size = 100 }) {
   const r = (size - 9) / 2, c = 2 * Math.PI * r, pct = max ? Math.min(1, value / max) : 0;
   return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img" aria-label={`${label} since post`} style={{ flexShrink: 0, position: "relative" }}>
-      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(255,255,255,0.12)" strokeWidth="9" />
-      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={tint} strokeWidth="9" strokeLinecap="round" strokeDasharray={c} strokeDashoffset={c * (1 - pct)} transform={`rotate(-90 ${size / 2} ${size / 2})`} style={{ transition: "stroke-dashoffset 0.6s ease" }} />
-      <text x={size / 2} y={size / 2 - 1} textAnchor="middle" fill="#fff" style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontSize: size * 0.22, fontWeight: 700 }}>{label}</text>
-      <text x={size / 2} y={size / 2 + 15} textAnchor="middle" fill="rgba(255,255,255,0.55)" style={{ fontSize: 9, letterSpacing: "0.06em" }}>SINCE POST</text>
-    </svg>
+    <div className="flex flex-col items-center" style={{ flexShrink: 0, gap: 3 }}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img" aria-label={`${label} since post`} style={{ position: "relative" }}>
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(255,255,255,0.12)" strokeWidth="9" />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={tint} strokeWidth="9" strokeLinecap="round" strokeDasharray={c} strokeDashoffset={c * (1 - pct)} transform={`rotate(-90 ${size / 2} ${size / 2})`} style={{ transition: "stroke-dashoffset 0.6s ease" }} />
+        <text x={size / 2} y={size / 2 + size * 0.08} textAnchor="middle" fill="#fff" style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontSize: size * 0.26, fontWeight: 700 }}>{label}</text>
+      </svg>
+      <span style={{ fontSize: 9, letterSpacing: "0.06em", color: "rgba(255,255,255,0.55)", whiteSpace: "nowrap" }}>SINCE POST</span>
+    </div>
   );
 }
 
