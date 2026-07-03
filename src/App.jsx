@@ -396,7 +396,7 @@ function Overview({ ally, mama, go, aptUnlocked }) {
   const spent = items.filter((i) => i.status === "Bought").reduce((s, i) => s + (Number(i.paid) || 0), 0);
 
   const tiles = [
-    { key: "content", emoji: "🎬", label: "In flight", value: h.counts.Idea + h.counts.Scripted + h.counts.Filmed + h.counts.Edited, bg: C.skyBg, accent: C.sky, ring: Math.min(1, (h.since || 0) / ally.content.cadence), sub: "content pieces" },
+    { key: "content", emoji: "🎬", label: "Content", value: h.counts.Idea + h.counts.Scripted + h.counts.Filmed + h.counts.Edited, bg: C.skyBg, accent: C.sky, ring: Math.min(1, (h.since || 0) / ally.content.cadence), sub: "content pieces" },
     { key: "song", emoji: "🎵", label: "Song", value: `${Math.round(songPct * 100)}%`, bg: C.lilacBg, accent: C.lilac, ring: songPct, sub: "to release" },
     { key: "unlocks", emoji: "🔓", label: "Unlocks", value: `${Math.round(unlockPct * 100)}%`, bg: C.yellowBg, accent: C.yellow, ring: unlockPct, sub: "life admin" },
     { key: "deals", emoji: "🤝", label: "Deals", value: active.length, bg: C.pinkBg, accent: C.pink, ring: active.length ? 0.6 : 0, sub: "active now" },
@@ -408,6 +408,21 @@ function Overview({ ally, mama, go, aptUnlocked }) {
 
   /* budget bars by status */
   const byStatus = ["To source", "Watching", "Bought"].map((st, i) => ({ label: st, value: items.filter((x) => x.status === st).length, color: [C.peach, C.sky, C.mint][i] }));
+
+  /* song stage mix */
+  const SONG_TINT = { todo: FAINT, active: C.amber, done: C.mint }, SONG_LABEL = { todo: "To do", active: "Active", done: "Done" };
+  const songBars = ["todo", "active", "done"].map((st) => ({ label: SONG_LABEL[st], value: stages.filter((s) => s.status === st).length, color: SONG_TINT[st] }));
+
+  /* unlock node mix */
+  const UNLOCK_TINT = { locked: FAINT, active: C.yellow, done: C.mint }, UNLOCK_LABEL = { locked: "Locked", active: "Active", done: "Done" };
+  const unlockBars = ["locked", "active", "done"].map((st) => ({ label: UNLOCK_LABEL[st], value: allNodes.filter((n) => n.status === st).length, color: UNLOCK_TINT[st] }));
+
+  /* deal stage mix */
+  const dealBars = DEAL_STAGES.slice(0, 6).map((s, i) => ({ label: s.split(" ")[0], value: ally.deals.deals.filter((d) => d.stage === s).length, color: AURAS[i % AURAS.length] }));
+
+  /* mama task mix */
+  const MAMA_TINT = { "To do": FAINT, Doing: C.amber, Done: C.mint };
+  const mamaBars = TASK_COLS.map((s) => ({ label: s, value: mama.tasks.filter((t) => t.status === s).length, color: MAMA_TINT[s] }));
 
   /* calendar marks + schedule */
   const marks = {};
@@ -452,41 +467,52 @@ function Overview({ ally, mama, go, aptUnlocked }) {
       {/* charts + calendar */}
       <div className="grid gap-4" style={{ gridTemplateColumns: "1.3fr 1fr", alignItems: "start" }}>
         <div className="flex flex-col gap-4" style={{ minWidth: 0 }}>
-          <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(200px,1fr))" }}>
-            {/* content donut */}
-            <div className="rounded-2xl p-4" style={{ ...card, borderRadius: 18 }}>
-              <div style={{ fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase", color: MUT, marginBottom: 8 }}>Content pipeline 🎬</div>
+          {/* one visual card per section */}
+          <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px,1fr))" }}>
+            <SectionVisualCard go={go} k="content" title="Content pipeline 🎬"
+              caption={<><span style={{ color: h.tint }}>{h.since === null ? "—" : `${h.since}d`}</span> since post · {h.msg.split(".")[0]}</>}>
               {donutTotal > 0 ? (
                 <div className="flex items-center gap-3">
-                  <Donut segments={donutSegs} size={120} thick={16} centerTop={donutTotal} centerSub="in flight" />
+                  <Donut segments={donutSegs} size={100} thick={14} centerTop={donutTotal} centerSub="in flight" />
                   <div className="flex flex-col gap-1.5">
                     {donutSegs.map((s) => (
-                      <div key={s.label} className="flex items-center gap-2" style={{ fontSize: 12 }}>
-                        <span style={{ width: 9, height: 9, borderRadius: 3, background: s.color }} />{s.label} <b style={{ marginLeft: "auto" }}>{s.value}</b>
+                      <div key={s.label} className="flex items-center gap-2" style={{ fontSize: 11.5 }}>
+                        <span style={{ width: 8, height: 8, borderRadius: 3, background: s.color }} />{s.label} <b style={{ marginLeft: "auto" }}>{s.value}</b>
                       </div>
                     ))}
                   </div>
                 </div>
-              ) : <div style={{ fontSize: 13, color: FAINT, padding: "24px 0", textAlign: "center" }}>Nothing in the pipeline yet. Add ideas in Content.</div>}
-            </div>
-            {/* budget bars */}
-            <div className="rounded-2xl p-4" style={{ ...card, borderRadius: 18 }}>
-              <div className="flex items-center justify-between" style={{ marginBottom: 8 }}>
-                <div style={{ fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase", color: MUT }}>Furnishing 🛋️</div>
-                {!aptUnlocked && <span style={{ fontSize: 10 }}>🔒</span>}
-              </div>
-              <Bars data={byStatus} height={128} />
-              <div style={{ fontSize: 11, color: MUT, marginTop: 8, textAlign: "center" }}>{fmtR(spent)} spent / {fmtR(budgetTotal)} plan</div>
-            </div>
-          </div>
+              ) : <div style={{ fontSize: 12.5, color: FAINT, padding: "18px 0", textAlign: "center" }}>Nothing in the pipeline yet.</div>}
+            </SectionVisualCard>
 
-          {/* module cards */}
-          <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(210px,1fr))" }}>
-            <ModTile go={go} k="content" title="Content runway" tint={h.tint}><span style={{ color: h.tint }}>{h.since === null ? "—" : `${h.since}d`}</span> since post · {h.msg.split(".")[0]}</ModTile>
-            <ModTile go={go} k="song" title="Song" tint={C.lilac}>{(stages.find((s) => s.status === "active") || stages.find((s) => s.status !== "done") || {}).name || "Released 🎉"}</ModTile>
-            <ModTile go={go} k="unlocks" title="Life unlocks" tint={C.yellow}>{allNodes.filter((n) => n.status === "done").length}/{allNodes.length} steps done</ModTile>
-            <ModTile go={go} k="apartment" title="Apartment" tint={aptUnlocked ? C.peach : FAINT}>{aptUnlocked ? `${items.filter((i) => i.status === "Bought").length}/${items.length} bought` : "🔒 opens at move-in"}</ModTile>
-            <ModTile go={go} k="mama" title="Mama · Work HQ" tint={C.sky}>{mama.tasks.filter((t) => t.status !== "Done").length} open tasks</ModTile>
+            <SectionVisualCard go={go} k="song" title="Song 🎵"
+              caption={(stages.find((s) => s.status === "active") || stages.find((s) => s.status !== "done") || {}).name || "Released 🎉"}>
+              <Bars data={songBars} height={100} />
+            </SectionVisualCard>
+
+            <SectionVisualCard go={go} k="unlocks" title="Life unlocks 🔓"
+              caption={`${allNodes.filter((n) => n.status === "done").length}/${allNodes.length} steps done`}>
+              <Bars data={unlockBars} height={100} />
+            </SectionVisualCard>
+
+            <SectionVisualCard go={go} k="apartment" title="Furnishing 🛋️" locked={!aptUnlocked}
+              caption={aptUnlocked ? `${fmtR(spent)} spent / ${fmtR(budgetTotal)} plan` : "🔒 opens at move-in"}>
+              <Bars data={byStatus} height={100} />
+            </SectionVisualCard>
+
+            <SectionVisualCard go={go} k="deals" title="Brand deals 🤝"
+              caption={`${active.length} active now`}>
+              {ally.deals.deals.length > 0
+                ? <Bars data={dealBars} height={100} />
+                : <div style={{ fontSize: 12.5, color: FAINT, padding: "18px 0", textAlign: "center" }}>No deals in the pipeline yet.</div>}
+            </SectionVisualCard>
+
+            <SectionVisualCard go={go} k="mama" title="Mama · Work HQ 💼"
+              caption={`${mama.tasks.filter((t) => t.status !== "Done").length} open tasks`}>
+              {mama.tasks.length > 0
+                ? <Bars data={mamaBars} height={100} />
+                : <div style={{ fontSize: 12.5, color: FAINT, padding: "18px 0", textAlign: "center" }}>No tasks captured yet.</div>}
+            </SectionVisualCard>
           </div>
         </div>
 
@@ -522,14 +548,16 @@ function Overview({ ally, mama, go, aptUnlocked }) {
   );
 }
 
-function ModTile({ go, k, title, tint, children }) {
+function SectionVisualCard({ go, k, title, caption, locked, children }) {
+  const tint = MODULES[k].accent;
   return (
-    <button onClick={() => go(k)} className="text-left rounded-2xl" style={{ ...card, borderRadius: 16, borderLeft: `3px solid ${tint}`, padding: 14, cursor: "pointer", fontFamily: "inherit", color: "inherit" }}>
-      <div className="flex items-center justify-between mb-1">
-        <span style={{ fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: MUT }}>{MODULES[k].emoji} {title}</span>
-        <ArrowUpRight size={14} color={FAINT} />
+    <button onClick={() => go(k)} className="text-left rounded-2xl p-4" style={{ ...card, borderRadius: 18, borderLeft: `3px solid ${tint}`, cursor: "pointer", fontFamily: "inherit", color: "inherit", width: "100%" }}>
+      <div className="flex items-center justify-between" style={{ marginBottom: 8 }}>
+        <span style={{ fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase", color: MUT }}>{title}</span>
+        {locked ? <span style={{ fontSize: 10 }}>🔒</span> : <ArrowUpRight size={14} color={FAINT} />}
       </div>
-      <div style={{ fontSize: 13, lineHeight: 1.4 }}>{children}</div>
+      {children}
+      <div style={{ fontSize: 11, color: MUT, marginTop: 8, textAlign: "center" }}>{caption}</div>
     </button>
   );
 }
