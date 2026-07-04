@@ -101,7 +101,7 @@ const monthName = () => new Date().toLocaleDateString("en-ZA", { month: "long" }
 const isApartmentUnlocked = (ally) => !!ally.apartment.unlockedOverride || ally.unlocks.chains.some((ch) => ch.nodes.some((n) => /move\s*in/i.test(n.label) && n.status === "done"));
 
 /* ---------- pipeline constants ---------- */
-const CONTENT_COLS = ["Idea", "Scripted", "Filmed", "Edited", "Posted"];
+const CONTENT_COLS = ["Idea", "Scripted", "Filmed", "Edited"];
 const CONTENT_TINT = { Idea: C.sky, Scripted: C.lilac, Filmed: C.amber, Edited: C.mint, Posted: FAINT };
 const DEAL_STAGES = ["Brief", "Script", "Script approval", "Film", "Edit", "Final approval", "Posted"];
 const CLIENT_STATUSES = ["Lead", "Active", "Paused"];
@@ -656,20 +656,46 @@ function PriorityControls({ item, onChange, hideDue }) {
 }
 
 /* ================= CONTENT ================= */
+/* skit script box: collapsed to a single line by default (so the board stays compact),
+   auto-grows to fit whatever's pasted in once focused, and can be manually collapsed
+   back down without losing the text underneath. */
+function ScriptBox({ value, open, onFocus, onChange, onToggle }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!ref.current) return;
+    if (open) { ref.current.style.height = "auto"; ref.current.style.height = ref.current.scrollHeight + "px"; }
+    else { ref.current.style.height = "28px"; }
+  }, [value, open]);
+  return (
+    <div className="mt-1.5">
+      <button onClick={onToggle} className="flex items-center gap-1" style={{ ...iconBtn, padding: 0, fontSize: 10, color: FAINT }}>
+        {open ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
+        <span>{value ? "Script" : "Add script"}</span>
+      </button>
+      <textarea ref={ref} value={value} onFocus={onFocus} onChange={(e) => onChange(e.target.value)}
+        placeholder="Paste the skit script here…" className="w-full rounded-lg px-2.5 py-1.5 mt-1"
+        style={{ ...inputStyle, fontSize: 12.5, lineHeight: 1.5, resize: "none", overflow: "hidden", transition: "height 0.15s ease" }} />
+    </div>
+  );
+}
+
 function ContentModule({ data, setData, q }) {
   const content = data.content;
   const h = contentHealth(content);
   const [title, setTitle] = useState("");
+  const [openDesc, setOpenDesc] = useState({});
+  const toggleDesc = (id) => setOpenDesc((o) => ({ ...o, [id]: !o[id] }));
+  const openIfNot = (id) => setOpenDesc((o) => (o[id] ? o : { ...o, [id]: true }));
   const patch = (p) => setData((d) => ({ ...d, content: { ...d.content, ...p } }));
   const ql = (q || "").toLowerCase();
-  const add = () => { const t = title.trim(); if (!t) return; patch({ items: [{ id: uid(), title: t, status: "Idea", postedDate: null, due: null, priority: "Medium", lastProgress: null, created: todayISO() }, ...content.items] }); setTitle(""); };
+  const add = () => { const t = title.trim(); if (!t) return; patch({ items: [{ id: uid(), title: t, desc: "", status: "Idea", postedDate: null, due: null, priority: "Medium", lastProgress: null, created: todayISO() }, ...content.items] }); setTitle(""); };
   const move = (id, dir) => setData((d) => {
-    const items = d.content.items.map((i) => { if (i.id !== id) return i; const next = CONTENT_COLS[Math.min(Math.max(CONTENT_COLS.indexOf(i.status) + dir, 0), CONTENT_COLS.length - 1)]; return { ...i, status: next, postedDate: next === "Posted" ? todayISO() : i.postedDate }; });
-    const moved = items.find((i) => i.id === id); const lastPosted = moved && moved.status === "Posted" ? todayISO() : d.content.lastPosted;
-    return { ...d, content: { ...d.content, items, lastPosted } };
+    const items = d.content.items.map((i) => { if (i.id !== id) return i; const next = CONTENT_COLS[Math.min(Math.max(CONTENT_COLS.indexOf(i.status) + dir, 0), CONTENT_COLS.length - 1)]; return { ...i, status: next }; });
+    return { ...d, content: { ...d.content, items } };
   });
   const remove = (id) => patch({ items: content.items.filter((i) => i.id !== id) });
   const updateItem = (id, p) => patch({ items: content.items.map((i) => (i.id === id ? { ...i, ...p } : i)) });
+  const markPosted = (id) => patch({ items: content.items.filter((i) => i.id !== id), lastPosted: todayISO() });
   const clearPosted = () => patch({ items: content.items.filter((i) => i.status !== "Posted") });
   const donutSegs = ["Idea", "Scripted", "Filmed", "Edited"].map((s) => ({ value: h.counts[s], color: CONTENT_TINT[s], label: s })).filter((s) => s.value > 0);
   const donutTotal = donutSegs.reduce((s, x) => s + x.value, 0);
@@ -707,31 +733,32 @@ function ContentModule({ data, setData, q }) {
         <button onClick={add} style={{ ...pillDark, fontSize: 13, padding: "8px 16px" }}><Plus size={13} style={{ display: "inline", marginRight: 4 }} />Add idea</button>
       </div>
 
-      <div className="grid gap-0" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", background: LINE, gap: 1, border: `1px solid ${LINE}`, borderRadius: 14, overflow: "hidden" }}>
+      <div className="grid gap-0" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", background: LINE, gap: 1, border: `1px solid ${LINE}`, borderRadius: 14, overflow: "hidden" }}>
         {CONTENT_COLS.map((col) => {
           let cItems = content.items.filter((i) => i.status === col);
           if (ql) cItems = cItems.filter((i) => i.title.toLowerCase().includes(ql));
-          const shown = col === "Posted" ? cItems.slice(0, 6) : cItems;
           return (
-            <div key={col} style={{ background: C.canvas, padding: 14, display: "flex", flexDirection: "column", gap: 8 }}>
-              <div className="flex items-center justify-between px-0.5" style={{ paddingBottom: 8, borderBottom: `1px solid ${LINE}`, marginBottom: 2 }}>
-                <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 11.5, letterSpacing: "0.05em", textTransform: "uppercase", color: CONTENT_TINT[col] }}>{col}</span>
-                <span style={{ fontSize: 11.5, color: MUT }}>{cItems.length}</span>
+            <div key={col} style={{ background: C.canvas, padding: 16, display: "flex", flexDirection: "column", gap: 9 }}>
+              <div className="flex items-center justify-between px-0.5" style={{ paddingBottom: 9, borderBottom: `1px solid ${LINE}`, marginBottom: 2 }}>
+                <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 12.5, letterSpacing: "0.05em", textTransform: "uppercase", color: CONTENT_TINT[col] }}>{col}</span>
+                <span style={{ fontSize: 12.5, color: MUT }}>{cItems.length}</span>
               </div>
-              <div className="flex flex-col gap-2">
-                {shown.map((i) => (
-                  <div key={i.id} className="rounded-lg" style={{ background: "rgba(255,255,255,0.035)", border: `1px solid ${LINE}`, borderLeft: `2px solid ${CONTENT_TINT[col]}`, borderRadius: 10, padding: "10px 12px", opacity: col === "Posted" ? 0.55 : 1 }}>
-                    <InlineEdit value={i.title} onChange={(v) => updateItem(i.id, { title: v })} />
-                    {col === "Posted" && i.postedDate && <div style={{ fontSize: 11, color: FAINT, marginTop: 2 }}>posted {i.postedDate}</div>}
-                    {col !== "Posted" && <PriorityControls item={i} onChange={(p) => updateItem(i.id, p)} />}
+              <div className="flex flex-col gap-2.5">
+                {cItems.map((i) => (
+                  <div key={i.id} className="rounded-lg" style={{ background: "rgba(255,255,255,0.035)", border: `1px solid ${LINE}`, borderLeft: `2px solid ${CONTENT_TINT[col]}`, borderRadius: 10, padding: "11px 13px" }}>
+                    <InlineEdit value={i.title} onChange={(v) => updateItem(i.id, { title: v })} strong />
+                    <ScriptBox value={i.desc || ""} open={!!openDesc[i.id]} onFocus={() => openIfNot(i.id)} onChange={(v) => updateItem(i.id, { desc: v })} onToggle={() => toggleDesc(i.id)} />
+                    <PriorityControls item={i} onChange={(p) => updateItem(i.id, p)} />
                     <div className="flex items-center gap-1 mt-1.5"><span className="ml-auto flex gap-1">
                       {col !== "Idea" && <button onClick={() => move(i.id, -1)} style={{ ...iconBtn, padding: 2 }} aria-label="Back">←</button>}
-                      {col !== "Posted" && <button onClick={() => move(i.id, 1)} style={{ ...iconBtn, padding: 2, color: C.mint }} aria-label="Forward">→</button>}
+                      {col === "Edited"
+                        ? <button onClick={() => markPosted(i.id)} className="rounded-full px-2.5 py-0.5" style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.03em", cursor: "pointer", fontFamily: "inherit", background: `${C.mint}22`, border: `1px solid ${C.mint}55`, color: C.mint }}>POSTED</button>
+                        : <button onClick={() => move(i.id, 1)} style={{ ...iconBtn, padding: 2, color: C.mint }} aria-label="Forward">→</button>}
                       <button onClick={() => remove(i.id)} style={{ ...iconBtn, padding: 2 }} aria-label="Delete"><X size={11} /></button>
                     </span></div>
                   </div>
                 ))}
-                {shown.length === 0 && <div className="rounded-lg text-center" style={{ border: `1px dashed ${LINE}`, fontSize: 12, color: FAINT, borderRadius: 10, padding: "14px 6px" }}>{ql ? "No match" : "Empty"}</div>}
+                {cItems.length === 0 && <div className="rounded-lg text-center" style={{ border: `1px dashed ${LINE}`, fontSize: 12, color: FAINT, borderRadius: 10, padding: "14px 6px" }}>{ql ? "No match" : "Empty"}</div>}
               </div>
             </div>
           );
