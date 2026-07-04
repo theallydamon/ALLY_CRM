@@ -669,14 +669,12 @@ function ContentPillarCard({ content, go, rank, pct }) {
         </div>
         <ArrowUpRight size={16} color={MUT} />
       </div>
-      <div className="flex items-center gap-4">
-        <Ring pct={Math.min(1, pct / 100)} tint={tint} size={78} thick={9} label={`${Math.round(pct)}%`} />
-        <div className="min-w-0">
-          <div style={{ fontSize: 13.5, fontWeight: 600, color: tint }}>{since === null ? "no post logged yet" : since === 1 ? "1 day since last post" : `${since} days since last post`}</div>
-          {critical && <div style={{ fontSize: 10.5, fontWeight: 700, color: C.rose, marginTop: 3, letterSpacing: "0.03em" }}>⚠ CRITICAL — post overdue</div>}
-        </div>
+      <div className="flex flex-col items-center text-center" style={{ padding: "6px 0 16px" }}>
+        <Ring pct={Math.min(1, pct / 100)} tint={tint} size={148} thick={16} label={`${Math.round(pct)}%`} />
+        <div style={{ fontSize: 13.5, fontWeight: 600, color: tint, marginTop: 10 }}>{since === null ? "no post logged yet" : since === 1 ? "1 day since last post" : `${since} days since last post`}</div>
+        {critical && <div style={{ fontSize: 10.5, fontWeight: 700, color: C.rose, marginTop: 3, letterSpacing: "0.03em" }}>⚠ CRITICAL — post overdue</div>}
       </div>
-      <div className="grid gap-2 mt-4" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+      <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
         {pipelineCols.map((c) => (
           <div key={c} className="rounded-lg py-2 text-center" style={{ background: C.soft, border: `1px solid ${LINE}` }}>
             <div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 19, color: CONTENT_TINT[c] }}>{counts[c]}</div>
@@ -718,9 +716,9 @@ function PriorityPillarCard({ pillarKey, tasks, go, rank, onDropPriority, pct })
         </div>
         <ArrowUpRight size={16} color={MUT} />
       </div>
-      <div className="flex items-center gap-3 mb-4">
-        <Ring pct={Math.min(1, pct / 100)} tint={tint} size={78} thick={9} label={`${Math.round(pct)}%`} />
-        {critical && <span style={{ fontSize: 10.5, fontWeight: 700, color: C.rose, letterSpacing: "0.03em" }}>⚠ CRITICAL — overloaded</span>}
+      <div className="flex flex-col items-center text-center" style={{ padding: "6px 0 16px" }}>
+        <Ring pct={Math.min(1, pct / 100)} tint={tint} size={148} thick={16} label={`${Math.round(pct)}%`} />
+        {critical && <span style={{ fontSize: 10.5, fontWeight: 700, color: C.rose, letterSpacing: "0.03em", marginTop: 10 }}>⚠ CRITICAL — overloaded</span>}
       </div>
       <div className="grid gap-2.5" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
         {cols.map((col) => {
