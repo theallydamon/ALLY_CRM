@@ -593,7 +593,9 @@ function PriorityDashboard({ ally, mama, go }) {
       {/* cards underneath the pie, ranked left to right */}
       <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))" }}>
         {[...PRIORITY_PILLARS].sort((a, b) => rankOf[a] - rankOf[b]).map((k) => (
-          <PriorityPillarCard key={k} pillarKey={k} tasks={byPillar[k]} go={go} rank={rankOf[k]} />
+          k === "content"
+            ? <ContentPillarCard key={k} content={ally.content} go={go} rank={rankOf[k]} />
+            : <PriorityPillarCard key={k} pillarKey={k} tasks={byPillar[k]} go={go} rank={rankOf[k]} />
         ))}
       </div>
     </section>
@@ -601,6 +603,41 @@ function PriorityDashboard({ ally, mama, go }) {
 }
 
 const PRIORITY_COL_TINT = { Urgent: C.rose, Medium: C.amber, Low: C.sky };
+
+/* Content's card doesn't show Urgent/Medium/Low task columns like the other pillars — content has no
+   individual priorities anymore, just one master signal (days since last post) plus a glance at where
+   ideas sit in the pipeline. */
+function ContentPillarCard({ content, go, rank }) {
+  const mod = MODULES.content;
+  const since = daysSince(content.lastPosted);
+  const tint = since === null ? FAINT : since <= 1 ? C.sky : since <= 3 ? C.amber : C.rose;
+  const pipelineCols = ["Edited", "Filmed", "Scripted"];
+  const counts = Object.fromEntries(pipelineCols.map((c) => [c, content.items.filter((i) => i.status === c).length]));
+  return (
+    <div className="rounded-2xl p-5" style={{ ...card, borderRadius: 18, borderLeft: `4px solid ${mod.accent}` }}>
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2 min-w-0">
+          <span style={{ width: 28, height: 28, borderRadius: 99, background: mod.accent, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 14, flexShrink: 0 }}>{rank}</span>
+          <span style={{ fontSize: 17, flexShrink: 0 }}>{mod.emoji}</span>
+          <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 16, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{mod.label}</span>
+        </div>
+        <button onClick={() => go("content")} style={{ ...iconBtn, padding: 3 }} aria-label="Open Content"><ArrowUpRight size={16} /></button>
+      </div>
+      <div className="flex items-baseline gap-2">
+        <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 36, color: tint, lineHeight: 1 }}>{since === null ? "—" : since}</span>
+        <span style={{ fontSize: 12.5, color: MUT }}>{since === null ? "no post logged yet" : since === 1 ? "day since last post" : "days since last post"}</span>
+      </div>
+      <div className="grid gap-2 mt-4" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+        {pipelineCols.map((c) => (
+          <div key={c} className="rounded-lg py-2 text-center" style={{ background: C.soft, border: `1px solid ${LINE}` }}>
+            <div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 19, color: CONTENT_TINT[c] }}>{counts[c]}</div>
+            <div style={{ fontSize: 9.5, letterSpacing: "0.04em", textTransform: "uppercase", color: MUT, marginTop: 2 }}>{c}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function PriorityPillarCard({ pillarKey, tasks, go, rank }) {
   const mod = MODULES[pillarKey];
