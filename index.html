@@ -48,9 +48,9 @@ const C = {
   canvas: "#0B0B0D", frame: "#0B0B0D", card: "#131316", soft: "#0E0E11", dark: "#F2F2F4",
   ink: "#F2F2F4", ink2: "rgba(242,242,244,0.72)",
   /* accents */
-  mint: "#2FA37C", pink: "#E0688F", yellow: "#D69A00", lilac: "#7B67E0", sky: "#3E8FD6", peach: "#E07B3E", rose: "#E5484D", cyan: "#22B8CF",
+  mint: "#2FA37C", pink: "#E0688F", yellow: "#D69A00", lilac: "#7B67E0", sky: "#3E8FD6", peach: "#E07B3E", rose: "#E5484D", brown: "#9C6B3E",
   /* soft tiles (translucent tints on dark) */
-  mintBg: "rgba(47,163,124,0.16)", pinkBg: "rgba(224,104,143,0.16)", yellowBg: "rgba(214,154,0,0.16)", lilacBg: "rgba(123,103,224,0.16)", skyBg: "rgba(62,143,214,0.16)", peachBg: "rgba(224,123,62,0.16)", cyanBg: "rgba(34,184,207,0.16)",
+  mintBg: "rgba(47,163,124,0.16)", pinkBg: "rgba(224,104,143,0.16)", yellowBg: "rgba(214,154,0,0.16)", lilacBg: "rgba(123,103,224,0.16)", skyBg: "rgba(62,143,214,0.16)", peachBg: "rgba(224,123,62,0.16)", brownBg: "rgba(156,107,62,0.18)",
   /* aliases used across modules */
   violet: "#7B67E0", teal: "#2FA37C", coral: "#E07B3E", amber: "#D69A00",
 };
@@ -70,7 +70,7 @@ const MODULES = {
   unlocks:   { emoji: "🔓", label: "Unlocks",   accent: C.yellow, bg: C.yellowBg },
   apartment: { emoji: "🛋️", label: "Apartment", accent: C.peach, bg: C.peachBg },
   deals:     { emoji: "🤝", label: "Deals",     accent: C.pink,  bg: C.pinkBg },
-  mama:      { emoji: "💼", label: "Mama",      accent: C.cyan,  bg: C.cyanBg },
+  mama:      { emoji: "💼", label: "Mama",      accent: C.brown, bg: C.brownBg },
 };
 const TAB_ORDER = ["overview", "content", "song", "unlocks", "apartment", "deals", "mama"];
 
@@ -115,7 +115,7 @@ const PRIORITY_PILLARS = ["mama", "song", "content", "deals", "unlocks"];
 /* ---------- priority engine: shared urgency scoring across all 5 pillars ---------- */
 const PRIORITY_LEVELS = ["Low", "Medium", "High"];
 const PRIORITY_WEIGHT = { Low: 1, Medium: 2, High: 3 };
-const PRIORITY_TINT = { Low: MUT, Medium: C.amber, High: C.rose };
+const PRIORITY_TINT = { Low: C.sky, Medium: C.amber, High: C.rose };
 
 /* how hard the calendar alone pushes urgency up, independent of the priority you set */
 function dueUrgency(daysUntilDue) {
@@ -600,7 +600,7 @@ function PriorityDashboard({ ally, mama, go }) {
   );
 }
 
-const PRIORITY_COL_TINT = { Urgent: C.rose, Medium: C.amber, Low: MUT };
+const PRIORITY_COL_TINT = { Urgent: C.rose, Medium: C.amber, Low: C.sky };
 
 function PriorityPillarCard({ pillarKey, tasks, go, rank }) {
   const mod = MODULES[pillarKey];
