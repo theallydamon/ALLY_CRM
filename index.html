@@ -66,7 +66,7 @@ const cardSoft = { background: C.soft, border: `1px solid ${LINE}` };
 const MODULES = {
   overview:  { emoji: "🎯", label: "Priorities",  accent: C.mint,  bg: C.mintBg },
   content:   { emoji: "🎬", label: "Content",   accent: C.sky,   bg: C.skyBg },
-  song:      { emoji: "🎵", label: "Song",      accent: C.lilac, bg: C.lilacBg },
+  song:      { emoji: "🎵", label: "Music Production", accent: C.lilac, bg: C.lilacBg },
   unlocks:   { emoji: "🔓", label: "Unlocks",   accent: C.yellow, bg: C.yellowBg },
   apartment: { emoji: "🛋️", label: "Apartment", accent: C.peach, bg: C.peachBg },
   deals:     { emoji: "🤝", label: "Deals",     accent: C.pink,  bg: C.pinkBg },
@@ -159,7 +159,7 @@ function collectPriorityTasks(ally, mama) {
     id: i.id, pillar: "content", title: i.title, due: i.due || null,
     priority: i.priority || "Medium", lastProgress: i.lastProgress || null, created: i.created || null,
   }));
-  ally.song.stages.filter((s) => s.status !== "done").forEach((s) => out.push({
+  ally.song.stages.filter((s) => s.status === "active").forEach((s) => out.push({
     id: s.id, pillar: "song", title: s.name, due: s.due || null,
     priority: s.priority || "Medium", lastProgress: s.lastProgress || null, created: s.created || null,
   }));
@@ -175,29 +175,49 @@ function collectPriorityTasks(ally, mama) {
     id: d.id, pillar: "deals", title: d.brand, due: d.due || null,
     priority: d.priority || "Medium", lastProgress: d.lastProgress || null, created: d.created || null,
   }));
+  ally.deals.deals.forEach((d) => (d.tasks || []).filter((t) => !t.done).forEach((t) => out.push({
+    id: t.id, pillar: "deals", title: `${t.title} (${d.brand})`, due: t.due || null,
+    priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
+  })));
+  ally.deals.clients.forEach((c) => (c.tasks || []).filter((t) => !t.done).forEach((t) => out.push({
+    id: t.id, pillar: "deals", title: `${t.title} (${c.name})`, due: t.due || null,
+    priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
+  })));
   mama.tasks.filter((t) => t.status !== "Done").forEach((t) => out.push({
     id: t.id, pillar: "mama", title: t.title, due: t.due || null,
     priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
   }));
+  (mama.creators || []).forEach((cr) => (cr.tasks || []).filter((t) => !t.done).forEach((t) => out.push({
+    id: t.id, pillar: "mama", title: `${t.title} (${cr.name})`, due: t.due || null,
+    priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
+  })));
+  (mama.tools || []).forEach((tl) => (tl.tasks || []).filter((t) => !t.done).forEach((t) => out.push({
+    id: t.id, pillar: "mama", title: `${t.title} (${tl.name})`, due: t.due || null,
+    priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
+  })));
+  (mama.reports || []).forEach((rp) => (rp.tasks || []).filter((t) => !t.done).forEach((t) => out.push({
+    id: t.id, pillar: "mama", title: `${t.title} (${rp.name || rp.title})`, due: t.due || null,
+    priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
+  })));
   return out.map((t) => ({ ...t, ...computeUrgency(t) }));
 }
 
-/* proposes a % of today's energy per top-ranked item, steep on purpose so #1 dominates */
-function computeAllocation(ranked) {
-  const top = ranked.slice(0, 6);
-  const rest = ranked.slice(6);
-  const weight = (t) => Math.pow(2, t.score);
-  const entries = top.map((t) => ({ title: t.title, pillar: t.pillar, w: weight(t) }));
-  const restW = rest.reduce((s, t) => s + weight(t), 0);
-  if (restW > 0) entries.push({ title: "Everything else", pillar: null, w: restW });
-  const totalW = entries.reduce((s, e) => s + e.w, 0) || 1;
-  let assigned = 0;
-  return entries.map((e, i) => {
-    let pct = Math.round((e.w / totalW) * 100);
-    if (i === entries.length - 1) pct = Math.max(0, 100 - assigned);
-    assigned += pct;
-    return { ...e, pct, color: e.pillar ? MODULES[e.pillar].accent : "rgba(255,255,255,0.14)" };
-  });
+/* proposes each pillar's share of today's priority, steep on purpose so the busiest/most urgent pillar dominates.
+   Always sums to exactly 100 so the pie is always fully filled, even with zero tasks anywhere. */
+function computePillarAllocation(byPillar) {
+  const weight = (list) => list.reduce((s, t) => s + Math.pow(2, t.score), 0);
+  const raw = PRIORITY_PILLARS.map((k) => ({ pillar: k, w: weight(byPillar[k]) }));
+  const totalW = raw.reduce((s, e) => s + e.w, 0);
+  const rankOf = Object.fromEntries([...raw].sort((a, b) => b.w - a.w).map((e, i) => [e.pillar, i + 1]));
+  const entries = totalW > 0
+    ? raw.map((e) => ({ ...e, pct: Math.round((e.w / totalW) * 100) }))
+    : raw.map((e) => ({ ...e, pct: 20 }));
+  const drift = 100 - entries.reduce((s, e) => s + e.pct, 0);
+  if (drift !== 0) {
+    const biggestIdx = entries.reduce((bi, e, i, arr) => (e.w > arr[bi].w ? i : bi), 0);
+    entries[biggestIdx] = { ...entries[biggestIdx], pct: entries[biggestIdx].pct + drift };
+  }
+  return { entries, rankOf };
 }
 
 /* ================= CHARTS ================= */
@@ -252,41 +272,6 @@ function Bar({ pct, tint }) {
   return (
     <div style={{ height: 8, borderRadius: 99, background: "rgba(28,28,34,0.07)", overflow: "hidden" }}>
       <div style={{ height: "100%", width: `${Math.min(100, Math.round(pct * 100))}%`, borderRadius: 99, background: tint, transition: "width 0.5s ease" }} />
-    </div>
-  );
-}
-
-function MiniCalendar({ marks }) {
-  const now = new Date();
-  const y = now.getFullYear(), m = now.getMonth();
-  const first = new Date(y, m, 1);
-  const startDow = (first.getDay() + 6) % 7; /* Mon=0 */
-  const days = new Date(y, m + 1, 0).getDate();
-  const today = now.getDate();
-  const cells = [];
-  for (let i = 0; i < startDow; i++) cells.push(null);
-  for (let d = 1; d <= days; d++) cells.push(d);
-  const wd = ["M", "T", "W", "T", "F", "S", "S"];
-  return (
-    <div>
-      <div className="grid" style={{ gridTemplateColumns: "repeat(7,1fr)", gap: 2, marginBottom: 4 }}>
-        {wd.map((w, i) => <div key={i} style={{ textAlign: "center", fontSize: 10, color: FAINT, fontWeight: 500 }}>{w}</div>)}
-      </div>
-      <div className="grid" style={{ gridTemplateColumns: "repeat(7,1fr)", gap: 2 }}>
-        {cells.map((d, i) => {
-          if (!d) return <div key={i} />;
-          const iso = `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-          const mk = marks[iso];
-          const isToday = d === today;
-          return (
-            <div key={i} style={{ position: "relative", aspectRatio: "1", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12,
-              borderRadius: 9, background: isToday ? C.dark : "transparent", color: isToday ? "#fff" : C.ink2, fontWeight: isToday ? 700 : 400 }}>
-              {d}
-              {mk && !isToday && <span style={{ position: "absolute", bottom: 3, width: 5, height: 5, borderRadius: 99, background: mk }} />}
-            </div>
-          );
-        })}
-      </div>
     </div>
   );
 }
@@ -377,16 +362,16 @@ const ALLY_SEED = {
 };
 const MAMA_SEED = {
   creators: [
-    { id: uid(), name: "Yoni Weinberg", niche: "Substack / newsletter", goals: [{ id: uid(), text: "Grow the Substack" }], aura: 0, links: [], notes: [] },
-    { id: uid(), name: "Natalia Mehlman Petrzela", niche: "Politics / history commentary", goals: [], aura: 4, links: [], notes: [] },
-    { id: uid(), name: "Amir Grunhaus", niche: "", goals: [], aura: 2, links: [], notes: [] },
-    { id: uid(), name: "Rami Even-Esh", niche: "", goals: [], aura: 1, links: [], notes: [] },
-    { id: uid(), name: "Keren Picker", niche: "", goals: [], aura: 3, links: [], notes: [] },
-    { id: uid(), name: "Joshua Washington", niche: "", goals: [], aura: 0, links: [], notes: [] },
+    { id: uid(), name: "Yoni Weinberg", niche: "Substack / newsletter", goals: [{ id: uid(), text: "Grow the Substack" }], aura: 0, links: [], notes: [], tasks: [] },
+    { id: uid(), name: "Natalia Mehlman Petrzela", niche: "Politics / history commentary", goals: [], aura: 4, links: [], notes: [], tasks: [] },
+    { id: uid(), name: "Amir Grunhaus", niche: "", goals: [], aura: 2, links: [], notes: [], tasks: [] },
+    { id: uid(), name: "Rami Even-Esh", niche: "", goals: [], aura: 1, links: [], notes: [], tasks: [] },
+    { id: uid(), name: "Keren Picker", niche: "", goals: [], aura: 3, links: [], notes: [], tasks: [] },
+    { id: uid(), name: "Joshua Washington", niche: "", goals: [], aura: 0, links: [], notes: [], tasks: [] },
   ],
   tasks: [],
-  tools: [{ id: uid(), name: "Small HTML tools", problem: "Single-file tools for small Amplified problems. Kickoff scheduled.", status: "Idea", next: "Scope the first tool with the AI team" }],
-  reports: [{ id: uid(), name: "Monthly creator reports", dueDay: 28, done: [] }, { id: uid(), name: "Creator deep dive reports", dueDay: 15, done: [] }],
+  tools: [{ id: uid(), name: "Small HTML tools", problem: "Single-file tools for small Amplified problems. Kickoff scheduled.", status: "Idea", next: "Scope the first tool with the AI team", tasks: [] }],
+  reports: [{ id: uid(), name: "Monthly creator reports", dueDay: 28, done: [], tasks: [] }, { id: uid(), name: "Creator deep dive reports", dueDay: 15, done: [], tasks: [] }],
 };
 const ALLY_KEY = "ally-crm-v1";
 const MAMA_KEY = "creator-strategy-hq-v1";
@@ -448,7 +433,7 @@ function AllyCRM() {
   const mod = MODULES[tab];
 
   return (
-    <div style={{ background: C.canvas, minHeight: "100vh", color: C.ink }}>
+    <div style={{ background: C.canvas, height: "100vh", overflow: "hidden", color: C.ink }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700&family=Outfit:wght@300;400;500;600&display=swap');
         * { box-sizing: border-box; }
@@ -466,39 +451,39 @@ function AllyCRM() {
         .railbtn:hover { background: ${FILL} !important; }
       `}</style>
 
-      <div className="flex" style={{ minHeight: "100vh", fontFamily: "'Outfit', sans-serif", color: C.ink }}>
+      <div className="flex" style={{ height: "100%", fontFamily: "'Outfit', sans-serif", color: C.ink }}>
 
-        {/* ===== sidebar rail ===== */}
-        <aside className="flex flex-col items-center" style={{ width: 60, flexShrink: 0, borderRight: `1px solid ${LINE}`, padding: "16px 0", gap: 4, background: "#0E0E11" }}>
-          <div style={{ width: 32, height: 32, borderRadius: 9, background: "rgba(255,255,255,0.08)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 10, fontSize: 14, fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700 }}>🅰️</div>
+        {/* ===== sidebar rail (fixed, does not scroll with page content) ===== */}
+        <aside className="flex flex-col items-center" style={{ width: 84, flexShrink: 0, borderRight: `1px solid ${LINE}`, padding: "20px 0", gap: 6, background: "#0E0E11", height: "100%", overflowY: "auto" }}>
+          <div style={{ width: 42, height: 42, borderRadius: 12, background: "rgba(255,255,255,0.08)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 14, fontSize: 19, fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700 }}>🅰️</div>
           {TAB_ORDER.map((t) => {
             const on = tab === t; const info = MODULES[t];
             const locked = t === "apartment" && !aptUnlocked;
             return (
               <button key={t} className="railbtn" onClick={() => go(t)} title={info.label} aria-label={info.label}
-                style={{ width: 38, height: 38, borderRadius: 10, border: on ? `1px solid ${LINE}` : "1px solid transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", position: "relative",
-                  background: on ? "rgba(255,255,255,0.1)" : "transparent", fontSize: 16, transition: "background 0.15s" }}>
+                style={{ width: 54, height: 54, borderRadius: 14, border: on ? `1px solid ${LINE}` : "1px solid transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", position: "relative",
+                  background: on ? "rgba(255,255,255,0.1)" : "transparent", fontSize: 24, transition: "background 0.15s" }}>
                 <span style={{ filter: on ? "none" : "saturate(0.85)", opacity: locked ? 0.4 : on ? 1 : 0.7 }}>{info.emoji}</span>
-                {locked && <span style={{ position: "absolute", top: 4, right: 5, fontSize: 8 }}>🔒</span>}
-                {badges[t] ? <span style={{ position: "absolute", top: 3, right: 3, minWidth: 13, height: 13, borderRadius: 99, background: info.accent, color: "#fff", fontSize: 8, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 3px" }}>{badges[t]}</span> : null}
+                {locked && <span style={{ position: "absolute", top: 5, right: 7, fontSize: 10 }}>🔒</span>}
+                {badges[t] ? <span style={{ position: "absolute", top: 4, right: 4, minWidth: 16, height: 16, borderRadius: 99, background: info.accent, color: "#fff", fontSize: 9.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 4px" }}>{badges[t]}</span> : null}
               </button>
             );
           })}
           <div style={{ flex: 1 }} />
-          <div style={{ width: 32, height: 32, borderRadius: 99, background: `linear-gradient(135deg, ${C.lilac}, ${C.pink})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14 }} title="Ally">🧑🏻</div>
+          <div style={{ width: 40, height: 40, borderRadius: 99, background: `linear-gradient(135deg, ${C.lilac}, ${C.pink})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }} title="Ally">🧑🏻</div>
         </aside>
 
         {/* ===== main column ===== */}
-        <div className="flex flex-col" style={{ flex: 1, minWidth: 0 }}>
+        <div className="flex flex-col" style={{ flex: 1, minWidth: 0, height: "100%" }}>
           {/* top bar (persistent) */}
-          <header className="flex items-center gap-3" style={{ padding: "12px 20px", borderBottom: `1px solid ${LINE}`, flexShrink: 0 }}>
+          <header className="flex items-center gap-3" style={{ padding: "14px 24px", borderBottom: `1px solid ${LINE}`, flexShrink: 0 }}>
             <button onClick={back} disabled={!history.length} aria-label="Back"
               style={{ width: 32, height: 32, borderRadius: 9, border: `1px solid ${LINE}`, background: history.length ? C.card : "transparent", cursor: history.length ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", color: history.length ? C.ink : FAINT, flexShrink: 0 }}>
               <ChevronLeft size={16} />
             </button>
-            <div style={{ width: 32, height: 32, borderRadius: 9, background: mod.bg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, flexShrink: 0 }}>{mod.emoji}</div>
+            <div style={{ width: 36, height: 36, borderRadius: 10, background: mod.bg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 17, flexShrink: 0 }}>{mod.emoji}</div>
             <div style={{ minWidth: 0 }}>
-              <div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 600, fontSize: 15, lineHeight: 1.1 }}>{mod.label}</div>
+              <div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 21, lineHeight: 1.1, letterSpacing: "-0.01em" }}>{mod.label}</div>
               <div style={{ fontSize: 10.5, color: MUT }}>{new Date().toLocaleDateString("en-ZA", { weekday: "long", day: "numeric", month: "long" })}</div>
             </div>
             <div className="flex-1" />
@@ -512,8 +497,8 @@ function AllyCRM() {
             </div>
           </header>
 
-          {/* scroll area */}
-          <div className="scroll" style={{ flex: 1, overflowY: "auto", padding: "18px 20px" }}>
+          {/* scroll area — the only part of the page that scrolls; sidebar and header stay put */}
+          <div className="scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "26px 32px" }}>
             {tab === "overview" && <PriorityDashboard ally={ally} mama={mama} go={go} />}
             {tab === "content" && <ContentModule data={ally} setData={setAlly} q={q} />}
             {tab === "song" && <SongModule data={ally} setData={setAlly} />}
@@ -544,85 +529,39 @@ function contentHealth(content) {
 /* ================= PRIORITY DASHBOARD ================= */
 function PriorityDashboard({ ally, mama, go }) {
   const tasks = collectPriorityTasks(ally, mama);
-  const ranked = [...tasks].sort((a, b) => b.score - a.score);
   const byPillar = Object.fromEntries(PRIORITY_PILLARS.map((k) => [k, tasks.filter((t) => t.pillar === k)]));
-  const alloc = computeAllocation(ranked);
-
-  /* calendar marks, kept from the old overview: deal due dates + monthly report due dates */
-  const active = ally.deals.deals.filter((d) => d.stage !== "Posted");
-  const marks = {};
-  active.forEach((d) => { if (d.due) marks[d.due] = C.pink; });
-  ranked.forEach((t) => { if (t.due && t.bucket === "Urgent") marks[t.due] = marks[t.due] || C.rose; });
-  const mk = monthKey();
-  const now = new Date();
-  mama.reports.forEach((r) => { if (!r.done.includes(mk)) { const iso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(Math.min(r.dueDay, 28)).padStart(2, "0")}`; marks[iso] = marks[iso] || C.amber; } });
+  const { entries, rankOf } = computePillarAllocation(byPillar);
+  const donutSegs = entries.map((e) => ({ value: e.pct, color: MODULES[e.pillar].accent }));
+  const topEntry = [...entries].sort((a, b) => b.pct - a.pct)[0];
+  const legend = [...entries].sort((a, b) => rankOf[a.pillar] - rankOf[b.pillar]);
 
   return (
     <section>
-      <div style={{ marginBottom: 20 }}>
-        <h1 style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: "clamp(24px,4vw,32px)", margin: 0, letterSpacing: "-0.02em" }}>Priorities right now 🎯</h1>
-        <p style={{ fontSize: 13.5, color: MUT, margin: "4px 0 0" }}>{ranked.length} open item{ranked.length === 1 ? "" : "s"} across all 5 pillars, ranked by volume and urgency. Recalculates every time you open this.</p>
+      <div style={{ marginBottom: 14 }}>
+        <h1 style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: "clamp(22px,4vw,30px)", margin: 0, letterSpacing: "-0.02em" }}>Priorities right now 🎯</h1>
+        <p style={{ fontSize: 13, color: MUT, margin: "4px 0 0" }}>{tasks.length} open item{tasks.length === 1 ? "" : "s"} across all 5 pillars. The wedges are each pillar's share of priority right now, recalculated every time you open this.</p>
       </div>
 
-      <div className="grid gap-4" style={{ gridTemplateColumns: "1.5fr 1fr", alignItems: "start" }}>
-        {/* left: one card per pillar, columns by urgency */}
-        <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(270px, 1fr))" }}>
-          {PRIORITY_PILLARS.map((k) => <PriorityPillarCard key={k} pillarKey={k} tasks={byPillar[k]} go={go} />)}
+      {/* hero: the pie is always 100% full, one wedge per pillar */}
+      <div className="flex items-center justify-center gap-8 flex-wrap" style={{ ...card, borderRadius: 20, padding: "18px 24px", marginBottom: 16 }}>
+        <Donut segments={donutSegs} size={170} thick={26} centerTop={`${MODULES[topEntry.pillar].emoji}`} centerSub={MODULES[topEntry.pillar].label} />
+        <div className="flex flex-col gap-1.5">
+          {legend.map((e) => (
+            <button key={e.pillar} onClick={() => go(e.pillar)} className="flex items-center gap-2 text-left" style={{ background: "transparent", border: "none", cursor: "pointer", fontFamily: "inherit", padding: "2px 0" }}>
+              <span style={{ width: 20, height: 20, borderRadius: 99, background: MODULES[e.pillar].accent, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10.5, fontWeight: 700, flexShrink: 0 }}>{rankOf[e.pillar]}</span>
+              <span style={{ fontSize: 13 }}>{MODULES[e.pillar].emoji}</span>
+              <span style={{ fontSize: 13, minWidth: 76 }}>{MODULES[e.pillar].label}</span>
+              <b style={{ fontSize: 13 }}>{e.pct}%</b>
+            </button>
+          ))}
         </div>
+      </div>
 
-        {/* right: ranked order, energy allocation, calendar */}
-        <div className="flex flex-col gap-4" style={{ minWidth: 0 }}>
-          <div className="rounded-2xl p-4" style={{ ...card, borderRadius: 18 }}>
-            <div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 600, fontSize: 15, marginBottom: 2 }}>Do this first ⬆️</div>
-            <div style={{ fontSize: 11.5, color: MUT, marginBottom: 10 }}>Ordered by total outstanding volume + urgency, not just the nearest date.</div>
-            <div className="flex flex-col gap-2">
-              {ranked.slice(0, 8).map((t, i) => {
-                const mod = MODULES[t.pillar];
-                const tint = t.bucket === "Urgent" ? C.rose : t.bucket === "Medium" ? C.amber : MUT;
-                return (
-                  <button key={t.id} onClick={() => go(t.pillar)} className="flex items-center gap-2 rounded-xl px-2.5 py-2 text-left" style={{ background: C.soft, border: `1px solid ${LINE}`, borderLeft: `3px solid ${tint}`, cursor: "pointer", fontFamily: "inherit", color: "inherit", width: "100%" }}>
-                    <span style={{ width: 20, height: 20, borderRadius: 7, background: C.card, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10.5, fontWeight: 700, color: MUT, flexShrink: 0 }}>{i + 1}</span>
-                    <span style={{ fontSize: 13 }}>{mod.emoji}</span>
-                    <div style={{ minWidth: 0, flex: 1 }}>
-                      <div style={{ fontSize: 12.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.title}</div>
-                      <div style={{ fontSize: 10, color: MUT }}>{mod.label}</div>
-                    </div>
-                    {t.due && <DueChip due={t.due} />}
-                  </button>
-                );
-              })}
-              {ranked.length === 0 && <div style={{ fontSize: 12.5, color: FAINT, textAlign: "center", padding: "10px 0" }}>Nothing open. Clear runway.</div>}
-            </div>
-          </div>
-
-          {ranked.length > 0 && (
-            <div className="rounded-2xl p-4" style={{ ...card, borderRadius: 18 }}>
-              <div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 600, fontSize: 15, marginBottom: 10 }}>Where today's energy should go 🔋</div>
-              <div className="flex items-center gap-3">
-                <Donut segments={alloc.map((s) => ({ value: s.pct, color: s.color }))} size={110} thick={16} centerTop={`${alloc[0] ? alloc[0].pct : 0}%`} centerSub="top item" />
-                <div className="flex flex-col gap-1.5" style={{ minWidth: 0, flex: 1 }}>
-                  {alloc.map((s, i) => (
-                    <div key={i} className="flex items-center gap-2" style={{ fontSize: 11 }}>
-                      <span style={{ width: 8, height: 8, borderRadius: 3, background: s.color, flexShrink: 0 }} />
-                      <span style={{ flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.title}</span>
-                      <b style={{ marginLeft: "auto" }}>{s.pct}%</b>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-
-          <div className="rounded-2xl p-4" style={{ ...card, borderRadius: 18 }}>
-            <div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 600, fontSize: 15, marginBottom: 10 }}>📅 {monthName()} {new Date().getFullYear()}</div>
-            <MiniCalendar marks={marks} />
-            <div className="flex gap-3 mt-3 flex-wrap" style={{ fontSize: 10.5, color: MUT }}>
-              <span className="flex items-center gap-1"><span style={{ width: 7, height: 7, borderRadius: 99, background: C.rose }} /> urgent</span>
-              <span className="flex items-center gap-1"><span style={{ width: 7, height: 7, borderRadius: 99, background: C.pink }} /> deal due</span>
-              <span className="flex items-center gap-1"><span style={{ width: 7, height: 7, borderRadius: 99, background: C.amber }} /> report due</span>
-            </div>
-          </div>
-        </div>
+      {/* cards underneath the pie, ranked left to right */}
+      <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))" }}>
+        {[...PRIORITY_PILLARS].sort((a, b) => rankOf[a] - rankOf[b]).map((k) => (
+          <PriorityPillarCard key={k} pillarKey={k} tasks={byPillar[k]} go={go} rank={rankOf[k]} />
+        ))}
       </div>
     </section>
   );
@@ -630,33 +569,33 @@ function PriorityDashboard({ ally, mama, go }) {
 
 const PRIORITY_COL_TINT = { Urgent: C.rose, Medium: C.amber, Low: MUT };
 
-function PriorityPillarCard({ pillarKey, tasks, go }) {
+function PriorityPillarCard({ pillarKey, tasks, go, rank }) {
   const mod = MODULES[pillarKey];
   const cols = ["Urgent", "Medium", "Low"];
   return (
-    <div className="rounded-2xl p-4" style={{ ...card, borderRadius: 18, borderLeft: `3px solid ${mod.accent}` }}>
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2 min-w-0">
-          <span style={{ width: 28, height: 28, borderRadius: 9, background: mod.bg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, flexShrink: 0 }}>{mod.emoji}</span>
-          <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 600, fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{mod.label}</span>
-          <span style={{ fontSize: 11, color: MUT, flexShrink: 0 }}>{tasks.length} open</span>
+    <div className="rounded-2xl p-3" style={{ ...card, borderRadius: 16, borderLeft: `3px solid ${mod.accent}` }}>
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <span style={{ width: 22, height: 22, borderRadius: 99, background: mod.accent, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 11.5, flexShrink: 0 }}>{rank}</span>
+          <span style={{ fontSize: 13, flexShrink: 0 }}>{mod.emoji}</span>
+          <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 600, fontSize: 12.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{mod.label}</span>
         </div>
-        <button onClick={() => go(pillarKey)} style={iconBtn} aria-label={`Open ${mod.label}`}><ArrowUpRight size={15} /></button>
+        <button onClick={() => go(pillarKey)} style={{ ...iconBtn, padding: 2 }} aria-label={`Open ${mod.label}`}><ArrowUpRight size={13} /></button>
       </div>
-      <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+      <div className="grid gap-1.5" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
         {cols.map((col) => {
           const items = tasks.filter((t) => t.bucket === col).sort((a, b) => b.score - a.score);
           return (
             <div key={col} style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 9.5, letterSpacing: "0.05em", textTransform: "uppercase", color: PRIORITY_COL_TINT[col], fontWeight: 700, marginBottom: 5 }}>{col} <span style={{ color: MUT, fontWeight: 400 }}>{items.length}</span></div>
-              <div className="flex flex-col gap-1.5">
-                {items.slice(0, 4).map((t) => (
-                  <div key={t.id} className="rounded-lg px-2 py-1.5" style={{ background: C.soft, border: `1px solid ${LINE}`, borderLeft: `2px solid ${PRIORITY_COL_TINT[col]}` }}>
-                    <div style={{ fontSize: 11, lineHeight: 1.3 }}>{t.title}</div>
-                    {t.daysUntilDue !== null && <div style={{ fontSize: 9.5, color: PRIORITY_COL_TINT[col], marginTop: 1 }}>{t.daysUntilDue < 0 ? `${-t.daysUntilDue}d overdue` : t.daysUntilDue === 0 ? "due today" : `due in ${t.daysUntilDue}d`}</div>}
+              <div style={{ fontSize: 9, letterSpacing: "0.04em", textTransform: "uppercase", color: PRIORITY_COL_TINT[col], fontWeight: 700, marginBottom: 4 }}>{col} <span style={{ color: MUT, fontWeight: 400 }}>{items.length}</span></div>
+              <div className="flex flex-col gap-1">
+                {items.slice(0, 3).map((t) => (
+                  <div key={t.id} className="rounded-lg px-1.5 py-1" style={{ background: C.soft, border: `1px solid ${LINE}`, borderLeft: `2px solid ${PRIORITY_COL_TINT[col]}` }}>
+                    <div style={{ fontSize: 10.5, lineHeight: 1.25 }}>{t.title}</div>
+                    {t.daysUntilDue !== null && <div style={{ fontSize: 9, color: PRIORITY_COL_TINT[col], marginTop: 1 }}>{t.daysUntilDue < 0 ? `${-t.daysUntilDue}d overdue` : t.daysUntilDue === 0 ? "today" : `${t.daysUntilDue}d`}</div>}
                   </div>
                 ))}
-                {items.length === 0 && <div style={{ fontSize: 10.5, color: FAINT, padding: "6px 0" }}>—</div>}
+                {items.length === 0 && <div style={{ fontSize: 10, color: FAINT, padding: "4px 0" }}>—</div>}
               </div>
             </div>
           );
@@ -729,22 +668,22 @@ function ContentModule({ data, setData, q }) {
       <SectionHead title="Content engine" sub="Comedy pipeline. The runway tells you when to think, film, edit, and post." />
 
       {/* compact stat bar: since-post ring + message + inline legend, no separate donut card */}
-      <div className="flex items-center gap-4 flex-wrap mb-3" style={{ ...card, borderRadius: 12, padding: "12px 16px" }}>
-        <RingDark value={h.since === null ? 0 : Math.min(h.since, content.cadence)} max={content.cadence} label={h.since === null ? "—" : `${h.since}d`} tint={h.tint} size={58} />
-        <div className="flex-1" style={{ minWidth: 200 }}>
-          <div style={{ fontSize: 13, fontWeight: 500, color: h.tint }}>{h.msg}</div>
-          <div className="flex items-center gap-2 mt-1 flex-wrap" style={{ fontSize: 11, color: MUT }}>
+      <div className="flex items-center gap-5 flex-wrap mb-4" style={{ ...card, borderRadius: 16, padding: "18px 22px" }}>
+        <RingDark value={h.since === null ? 0 : Math.min(h.since, content.cadence)} max={content.cadence} label={h.since === null ? "—" : `${h.since}d`} tint={h.tint} size={74} />
+        <div className="flex-1" style={{ minWidth: 220 }}>
+          <div style={{ fontSize: 15, fontWeight: 500, color: h.tint }}>{h.msg}</div>
+          <div className="flex items-center gap-2 mt-2 flex-wrap" style={{ fontSize: 12, color: MUT }}>
             last posted
-            <input type="date" value={content.lastPosted || ""} onChange={(e) => patch({ lastPosted: e.target.value || null })} className="rounded-md" style={{ ...darkInput, fontSize: 11, padding: "3px 6px" }} />
+            <input type="date" value={content.lastPosted || ""} onChange={(e) => patch({ lastPosted: e.target.value || null })} className="rounded-md" style={{ ...darkInput, fontSize: 12, padding: "4px 7px" }} />
             every
-            <input type="number" min="1" max="14" value={content.cadence} onChange={(e) => patch({ cadence: Math.min(14, Math.max(1, Number(e.target.value) || 1)) })} className="rounded-md" style={{ ...darkInput, width: 38, fontSize: 11, padding: "3px 6px" }} />d
+            <input type="number" min="1" max="14" value={content.cadence} onChange={(e) => patch({ cadence: Math.min(14, Math.max(1, Number(e.target.value) || 1)) })} className="rounded-md" style={{ ...darkInput, width: 42, fontSize: 12, padding: "4px 7px" }} />d
           </div>
         </div>
         {donutTotal > 0 && (
-          <div className="flex items-center gap-3 flex-wrap" style={{ fontSize: 11, color: MUT }}>
+          <div className="flex items-center gap-4 flex-wrap" style={{ fontSize: 12.5, color: MUT }}>
             {donutSegs.map((s) => (
               <span key={s.label} className="flex items-center gap-1.5">
-                <span style={{ width: 6, height: 6, borderRadius: 2, background: s.color }} />
+                <span style={{ width: 7, height: 7, borderRadius: 2, background: s.color }} />
                 {s.label} <b style={{ color: C.ink, fontWeight: 600 }}>{s.value}</b>
               </span>
             ))}
@@ -752,36 +691,36 @@ function ContentModule({ data, setData, q }) {
         )}
       </div>
 
-      <div className="flex gap-2 flex-wrap mb-3" style={{ ...card, borderRadius: 10, padding: 8 }}>
-        <input value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} placeholder="Drop a skit idea in the bank…" className="flex-1 rounded-lg px-3 py-1.5" style={{ ...inputStyle, minWidth: 200, fontSize: 12.5 }} />
-        <button onClick={add} style={{ ...pillDark, fontSize: 12, padding: "6px 13px" }}><Plus size={12} style={{ display: "inline", marginRight: 4 }} />Add idea</button>
+      <div className="flex gap-2 flex-wrap mb-4" style={{ ...card, borderRadius: 12, padding: 12 }}>
+        <input value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} placeholder="Drop a skit idea in the bank…" className="flex-1 rounded-lg px-3 py-2" style={{ ...inputStyle, minWidth: 200, fontSize: 13.5 }} />
+        <button onClick={add} style={{ ...pillDark, fontSize: 13, padding: "8px 16px" }}><Plus size={13} style={{ display: "inline", marginRight: 4 }} />Add idea</button>
       </div>
 
-      <div className="grid gap-0" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", background: LINE, gap: 1, border: `1px solid ${LINE}`, borderRadius: 12, overflow: "hidden" }}>
+      <div className="grid gap-0" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", background: LINE, gap: 1, border: `1px solid ${LINE}`, borderRadius: 14, overflow: "hidden" }}>
         {CONTENT_COLS.map((col) => {
           let cItems = content.items.filter((i) => i.status === col);
           if (ql) cItems = cItems.filter((i) => i.title.toLowerCase().includes(ql));
           const shown = col === "Posted" ? cItems.slice(0, 6) : cItems;
           return (
-            <div key={col} style={{ background: C.canvas, padding: 10, display: "flex", flexDirection: "column", gap: 6 }}>
-              <div className="flex items-center justify-between px-0.5" style={{ paddingBottom: 6, borderBottom: `1px solid ${LINE}`, marginBottom: 2 }}>
-                <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 10, letterSpacing: "0.05em", textTransform: "uppercase", color: CONTENT_TINT[col] }}>{col}</span>
-                <span style={{ fontSize: 10.5, color: MUT }}>{cItems.length}</span>
+            <div key={col} style={{ background: C.canvas, padding: 14, display: "flex", flexDirection: "column", gap: 8 }}>
+              <div className="flex items-center justify-between px-0.5" style={{ paddingBottom: 8, borderBottom: `1px solid ${LINE}`, marginBottom: 2 }}>
+                <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 11.5, letterSpacing: "0.05em", textTransform: "uppercase", color: CONTENT_TINT[col] }}>{col}</span>
+                <span style={{ fontSize: 11.5, color: MUT }}>{cItems.length}</span>
               </div>
-              <div className="flex flex-col gap-1.5">
+              <div className="flex flex-col gap-2">
                 {shown.map((i) => (
-                  <div key={i.id} className="rounded-lg" style={{ background: "rgba(255,255,255,0.035)", border: `1px solid ${LINE}`, borderLeft: `2px solid ${CONTENT_TINT[col]}`, borderRadius: 8, padding: "7px 9px", opacity: col === "Posted" ? 0.55 : 1 }}>
+                  <div key={i.id} className="rounded-lg" style={{ background: "rgba(255,255,255,0.035)", border: `1px solid ${LINE}`, borderLeft: `2px solid ${CONTENT_TINT[col]}`, borderRadius: 10, padding: "10px 12px", opacity: col === "Posted" ? 0.55 : 1 }}>
                     <InlineEdit value={i.title} onChange={(v) => updateItem(i.id, { title: v })} />
-                    {col === "Posted" && i.postedDate && <div style={{ fontSize: 10, color: FAINT, marginTop: 2 }}>posted {i.postedDate}</div>}
+                    {col === "Posted" && i.postedDate && <div style={{ fontSize: 11, color: FAINT, marginTop: 2 }}>posted {i.postedDate}</div>}
                     {col !== "Posted" && <PriorityControls item={i} onChange={(p) => updateItem(i.id, p)} />}
-                    <div className="flex items-center gap-1 mt-1"><span className="ml-auto flex gap-1">
+                    <div className="flex items-center gap-1 mt-1.5"><span className="ml-auto flex gap-1">
                       {col !== "Idea" && <button onClick={() => move(i.id, -1)} style={{ ...iconBtn, padding: 2 }} aria-label="Back">←</button>}
                       {col !== "Posted" && <button onClick={() => move(i.id, 1)} style={{ ...iconBtn, padding: 2, color: C.mint }} aria-label="Forward">→</button>}
                       <button onClick={() => remove(i.id)} style={{ ...iconBtn, padding: 2 }} aria-label="Delete"><X size={11} /></button>
                     </span></div>
                   </div>
                 ))}
-                {shown.length === 0 && <div className="rounded-lg text-center" style={{ border: `1px dashed ${LINE}`, fontSize: 11, color: FAINT, borderRadius: 8, padding: "10px 6px" }}>{ql ? "No match" : "Empty"}</div>}
+                {shown.length === 0 && <div className="rounded-lg text-center" style={{ border: `1px dashed ${LINE}`, fontSize: 12, color: FAINT, borderRadius: 10, padding: "14px 6px" }}>{ql ? "No match" : "Empty"}</div>}
               </div>
             </div>
           );
@@ -817,30 +756,41 @@ function SongModule({ data, setData }) {
   const done = song.stages.filter((s) => s.status === "done").length;
   const gearTotal = song.gear.reduce((s, g) => s + (Number(g.price) || 0), 0);
   const gearSpent = song.gear.filter((g) => g.bought).reduce((s, g) => s + (Number(g.price) || 0), 0);
-  const ST = { todo: FAINT, active: C.amber, done: C.mint }, SL = { todo: "To do", active: "Active", done: "Done" };
+
+  /* completing the current stage unlocks (activates) the very next one in the chain */
+  const completeStage = (i) => patch({
+    stages: song.stages.map((st, j) => {
+      if (j === i) return { ...st, status: "done", lastProgress: todayISO() };
+      if (j === i + 1 && st.status !== "done") return { ...st, status: "active" };
+      return st;
+    }),
+  });
+  const reopenStage = (i) => updateStage(song.stages[i].id, { status: "active" });
 
   return (
     <section>
-      <SectionHead title="Get a song out" sub="One roadmap from sing test to release. The gates are explicit so the next move is never vague." />
-      <div className="rounded-2xl mb-6 flex items-center gap-4" style={{ ...card, borderRadius: 16, padding: 16 }}>
+      <SectionHead title="Get a song out" sub="One roadmap from sing test to release. Only the stage you're on right now carries a deadline — finish it to unlock the next." />
+      <div className="rounded-2xl mb-6 flex items-center gap-4" style={{ ...card, borderRadius: 16, padding: 16, background: `linear-gradient(135deg, ${C.lilacBg}, ${C.card})`, border: `1px solid ${C.lilac}33` }}>
         <Ring pct={done / song.stages.length} tint={C.lilac} size={58} thick={7} label={`${done}`} />
         <div className="flex-1"><div style={{ fontSize: 13, color: MUT, marginBottom: 6 }}>{done} of {song.stages.length} stages done</div><Bar pct={done / song.stages.length} tint={C.lilac} /></div>
       </div>
       <div className="flex flex-col">
-        {song.stages.map((s, i) => (
-          <div key={s.id} className="flex gap-4">
+        {song.stages.map((s, i) => {
+          const isDone = s.status === "done", isCurrent = s.status === "active", isLocked = !isDone && !isCurrent;
+          const tint = isDone ? C.mint : isCurrent ? AURAS[i % AURAS.length] : FAINT;
+          return (
+          <div key={s.id} className="flex gap-4" style={{ opacity: isLocked ? 0.55 : 1 }}>
             <div className="flex flex-col items-center" style={{ width: 36, flexShrink: 0 }}>
-              <div style={{ width: 34, height: 34, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", background: s.status === "done" ? C.mint : s.status === "active" ? `${C.amber}22` : C.card, border: `1px solid ${s.status === "done" ? C.mint : s.status === "active" ? C.amber : LINE}`, fontFamily: "'Bricolage Grotesque', sans-serif", fontSize: 13, fontWeight: 600, color: s.status === "done" ? "#fff" : s.status === "active" ? C.amber : MUT }}>
-                {s.status === "done" ? <Check size={16} strokeWidth={3} /> : i + 1}
-              </div>
-              {i < song.stages.length - 1 && <div style={{ width: 2, flex: 1, minHeight: 22, background: s.status === "done" ? `${C.mint}66` : LINE }} />}
+              <button onClick={() => (isDone ? reopenStage(i) : isCurrent ? completeStage(i) : null)} disabled={isLocked} aria-label={isDone ? "Mark not done" : "Mark done"}
+                style={{ width: 34, height: 34, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", cursor: isLocked ? "default" : "pointer", background: isDone ? C.mint : isCurrent ? `${tint}22` : C.card, border: `1px solid ${isDone ? C.mint : isCurrent ? tint : LINE}`, fontFamily: "'Bricolage Grotesque', sans-serif", fontSize: 13, fontWeight: 600, color: isDone ? "#fff" : isCurrent ? tint : MUT }}>
+                {isDone ? <Check size={16} strokeWidth={3} /> : isLocked ? <Lock size={14} /> : i + 1}
+              </button>
+              {i < song.stages.length - 1 && <div style={{ width: 2, flex: 1, minHeight: 22, background: isDone ? `${C.mint}66` : LINE }} />}
             </div>
-            <div className="rounded-2xl p-4 mb-4 flex-1" style={{ ...card, borderRadius: 16, borderLeft: `3px solid ${ST[s.status]}` }}>
+            <div className="rounded-2xl p-4 mb-4 flex-1" style={{ ...card, borderRadius: 16, borderLeft: `3px solid ${tint}`, background: isCurrent ? `${tint}0d` : card.background }}>
               <div className="flex items-center gap-2 flex-wrap">
-                <div className="flex-1" style={{ minWidth: 140 }}><InlineEdit value={s.name} onChange={(v) => updateStage(s.id, { name: v })} strong /></div>
-                <div className="flex gap-1">{["todo", "active", "done"].map((st) => (
-                  <button key={st} onClick={() => updateStage(s.id, { status: st })} className="rounded-full px-3 py-1" style={{ fontSize: 11, cursor: "pointer", fontFamily: "inherit", background: s.status === st ? `${ST[st]}22` : FILL, border: `1px solid ${s.status === st ? ST[st] : LINE}`, color: s.status === st ? ST[st] : MUT }}>{SL[st]}</button>
-                ))}</div>
+                <div className="flex-1" style={{ minWidth: 140, textDecoration: isDone ? "line-through" : "none" }}><InlineEdit value={s.name} onChange={(v) => updateStage(s.id, { name: v })} strong /></div>
+                <span className="rounded-full px-3 py-1" style={{ fontSize: 11, fontWeight: 600, background: `${tint}1e`, border: `1px solid ${tint}55`, color: tint }}>{isDone ? "Done" : isCurrent ? "Current" : "Locked"}</span>
               </div>
               <div style={{ fontSize: 12.5, color: MUT, margin: "4px 0 6px" }}>{s.desc}</div>
               {s.kind === "gear" && (
@@ -866,10 +816,10 @@ function SongModule({ data, setData }) {
                 ))}</div>
               )}
               <InlineEdit value={s.note} onChange={(v) => updateStage(s.id, { note: v })} placeholder="Notes…" dim />
-              {s.status !== "done" && <PriorityControls item={s} onChange={(p) => updateStage(s.id, p)} />}
+              {isCurrent && <PriorityControls item={s} onChange={(p) => updateStage(s.id, p)} />}
             </div>
           </div>
-        ))}
+        ); })}
       </div>
     </section>
   );
@@ -1078,6 +1028,92 @@ function ApartmentModule({ data, setData, unlocked, go, q }) {
 }
 
 /* ================= DEALS ================= */
+const CLIENT_TINT = { Lead: C.sky, Active: C.mint, Paused: MUT };
+const DEAL_TYPE_TINT = { Active: C.mint, Prospect: C.amber };
+
+/* shared mini task tracker: used under each brand deal and each client so granular
+   action items ("reply to email", "send rate card"...) get their own due date + priority
+   and feed straight into the Priorities dashboard via collectPriorityTasks. */
+function MiniTaskList({ tasks, onChange }) {
+  const [title, setTitle] = useState("");
+  const list = tasks || [];
+  const add = () => { const t = title.trim(); if (!t) return; onChange([{ id: uid(), title: t, due: null, priority: "Medium", lastProgress: null, done: false, created: todayISO() }, ...list]); setTitle(""); };
+  const update = (id, p) => onChange(list.map((t) => (t.id === id ? { ...t, ...p } : t)));
+  const remove = (id) => onChange(list.filter((t) => t.id !== id));
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex gap-1.5">
+        <input value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} placeholder="Add a task (e.g. Reply to email)…" className="flex-1 rounded-lg px-2 py-1.5" style={{ ...inputStyle, fontSize: 12 }} />
+        <button onClick={add} style={{ ...pillDark, fontSize: 11, padding: "5px 10px" }}><Plus size={11} style={{ display: "inline", marginRight: 3 }} />Add</button>
+      </div>
+      {list.length === 0 && <div style={{ fontSize: 11.5, color: FAINT }}>No tasks yet.</div>}
+      {list.map((t) => (
+        <div key={t.id} className="rounded-lg px-2.5 py-2" style={{ background: C.soft, border: `1px solid ${LINE}`, opacity: t.done ? 0.5 : 1 }}>
+          <div className="flex items-center gap-2">
+            <button onClick={() => update(t.id, { done: !t.done })} aria-label="Toggle done" style={{ width: 18, height: 18, borderRadius: 6, cursor: "pointer", flexShrink: 0, background: t.done ? C.mint : C.card, border: `1px solid ${t.done ? C.mint : LINE}`, display: "flex", alignItems: "center", justifyContent: "center" }}>{t.done && <Check size={11} color="#fff" strokeWidth={3} />}</button>
+            <div className="flex-1 min-w-0" style={{ textDecoration: t.done ? "line-through" : "none" }}><InlineEdit value={t.title} onChange={(v) => update(t.id, { title: v })} /></div>
+            <button onClick={() => remove(t.id)} style={{ ...iconBtn, padding: 2 }} aria-label="Delete"><X size={11} /></button>
+          </div>
+          {!t.done && <PriorityControls item={t} onChange={(p) => update(t.id, p)} />}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DealCard({ x, open, onToggleOpen, update, remove, isProspect }) {
+  const tint = AURAS[(x.aura || 0) % AURAS.length];
+  const idx = DEAL_STAGES.indexOf(x.stage);
+  const typeTint = DEAL_TYPE_TINT[isProspect ? "Prospect" : "Active"];
+  return (
+    <div className="rounded-2xl p-4" style={{ ...card, borderRadius: 16, borderLeft: `3px solid ${tint}`, opacity: x.stage === "Posted" ? 0.65 : 1 }}>
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex-1" style={{ minWidth: 150 }}><InlineEdit value={x.brand} onChange={(v) => update(x.id, { brand: v })} strong /><InlineEdit value={x.deliverable} onChange={(v) => update(x.id, { deliverable: v })} placeholder="Deliverable (e.g. 1x Reel + story)" dim /></div>
+        <button onClick={() => update(x.id, { type: isProspect ? "Active" : "Prospect" })} className="rounded-full px-2.5 py-1" style={{ fontSize: 10.5, cursor: "pointer", fontFamily: "inherit", background: `${typeTint}1a`, border: `1px solid ${typeTint}55`, color: typeTint, whiteSpace: "nowrap" }}>{isProspect ? "→ mark active" : "→ mark prospect"}</button>
+        {x.due && <DueChip due={x.due} />}
+        <input type="date" value={x.due || ""} onChange={(e) => update(x.id, { due: e.target.value })} className="rounded-lg px-2 py-1" style={{ ...inputStyle, fontSize: 12 }} aria-label="Due" />
+        <button onClick={onToggleOpen} style={iconBtn} aria-label="Expand">{open ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</button>
+      </div>
+      {!isProspect && (
+        <div className="flex gap-1 mt-3 flex-wrap">{DEAL_STAGES.map((s, i) => (
+          <button key={s} onClick={() => update(x.id, { stage: s })} className="rounded-full px-2.5 py-1" style={{ fontSize: 10.5, cursor: "pointer", fontFamily: "inherit", background: i < idx ? `${tint}14` : x.stage === s ? `${tint}2b` : FILL, border: `1px solid ${x.stage === s ? tint : i < idx ? `${tint}55` : LINE}`, color: x.stage === s ? tint : i < idx ? tint : MUT }}>{i < idx ? "✓ " : ""}{s}</button>
+        ))}</div>
+      )}
+      {(isProspect || x.stage !== "Posted") && <PriorityControls item={x} onChange={(p) => update(x.id, p)} hideDue />}
+      <div className="mt-3">
+        <Label text="Tasks" />
+        <MiniTaskList tasks={x.tasks} onChange={(tasks) => update(x.id, { tasks })} />
+      </div>
+      {open && (
+        <div className="mt-4 flex flex-col gap-3">
+          <div style={{ minWidth: 160 }}><Label text="Rate" /><InlineEdit value={x.rate} onChange={(v) => update(x.id, { rate: v })} placeholder="e.g. R6,000" /></div>
+          <div><Label text="Caption" /><AutoTextarea value={x.caption} onChange={(v) => update(x.id, { caption: v })} placeholder="Approved caption, hashtags, promo code…" /></div>
+          <div><Label text="Posting instructions" /><AutoTextarea value={x.instructions} onChange={(v) => update(x.id, { instructions: v })} placeholder="Collab handle, spark code, whitelisting, tags…" /></div>
+          <div><Label text="Notes" /><AutoTextarea value={x.notes} onChange={(v) => update(x.id, { notes: v })} placeholder="Feedback rounds, contacts, anything else…" /></div>
+          <button onClick={() => remove(x.id)} className="self-end flex items-center gap-1" style={{ ...iconBtn, fontSize: 12, color: C.rose }}><Trash2 size={12} /> Remove deal</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ClientCard({ c, updateClient, removeClient }) {
+  return (
+    <div className="rounded-2xl p-4" style={{ ...card, borderRadius: 16, borderLeft: `3px solid ${CLIENT_TINT[c.status]}` }}>
+      <div className="flex items-center gap-2"><div className="flex-1 min-w-0"><InlineEdit value={c.name} onChange={(v) => updateClient(c.id, { name: v })} strong /></div><button onClick={() => removeClient(c.id)} style={iconBtn} aria-label="Delete"><Trash2 size={13} /></button></div>
+      <InlineEdit value={c.service} onChange={(v) => updateClient(c.id, { service: v })} placeholder="Service / retainer" dim />
+      <div className="flex gap-1 mt-2">{CLIENT_STATUSES.map((s) => (
+        <button key={s} onClick={() => updateClient(c.id, { status: s })} className="rounded-full px-3 py-1 flex-1" style={{ fontSize: 11, cursor: "pointer", fontFamily: "inherit", background: c.status === s ? `${CLIENT_TINT[s]}22` : FILL, border: `1px solid ${c.status === s ? CLIENT_TINT[s] : LINE}`, color: c.status === s ? CLIENT_TINT[s] : MUT }}>{s}</button>
+      ))}</div>
+      <div className="mt-2"><InlineEdit value={c.notes} onChange={(v) => updateClient(c.id, { notes: v })} placeholder="Notes…" dim /></div>
+      <div className="mt-3">
+        <Label text="Tasks" />
+        <MiniTaskList tasks={c.tasks} onChange={(tasks) => updateClient(c.id, { tasks })} />
+      </div>
+    </div>
+  );
+}
+
 function DealsModule({ data, setData, q }) {
   const [openId, setOpenId] = useState(null);
   const deals = data.deals.deals, clients = data.deals.clients;
@@ -1085,68 +1121,59 @@ function DealsModule({ data, setData, q }) {
   const patch = (p) => setData((d) => ({ ...d, deals: { ...d.deals, ...p } }));
   const update = (id, p) => patch({ deals: deals.map((x) => (x.id === id ? { ...x, ...p } : x)) });
   const remove = (id) => patch({ deals: deals.filter((x) => x.id !== id) });
-  const add = () => { const x = { id: uid(), brand: "New brand", deliverable: "", stage: "Brief", due: "", rate: "", caption: "", instructions: "", notes: "", aura: Math.floor(Math.random() * AURAS.length), priority: "Medium", lastProgress: null, created: todayISO() }; patch({ deals: [x, ...deals] }); setOpenId(x.id); };
+  const add = (type) => { const x = { id: uid(), brand: "New brand", deliverable: "", stage: "Brief", due: "", rate: "", caption: "", instructions: "", notes: "", aura: Math.floor(Math.random() * AURAS.length), priority: "Medium", lastProgress: null, created: todayISO(), type: type || "Prospect", tasks: [] }; patch({ deals: [x, ...deals] }); setOpenId(x.id); };
   const updateClient = (id, p) => patch({ clients: clients.map((c) => (c.id === id ? { ...c, ...p } : c)) });
-  const addClient = () => patch({ clients: [{ id: uid(), name: "New client", service: "", status: "Lead", notes: "" }, ...clients] });
+  const addClient = () => patch({ clients: [{ id: uid(), name: "New client", service: "", status: "Lead", notes: "", tasks: [] }, ...clients] });
   const removeClient = (id) => patch({ clients: clients.filter((c) => c.id !== id) });
-  const CT = { Lead: C.sky, Active: C.mint, Paused: MUT };
 
-  let list = [...deals].sort((a, b) => { const ap = a.stage === "Posted", bp = b.stage === "Posted"; if (ap !== bp) return ap ? 1 : -1; if (a.due && b.due) return a.due.localeCompare(b.due); return a.due ? -1 : b.due ? 1 : 0; });
-  if (ql) list = list.filter((x) => x.brand.toLowerCase().includes(ql) || (x.deliverable || "").toLowerCase().includes(ql));
-  const stageBars = DEAL_STAGES.slice(0, 6).map((s, i) => ({ label: s.split(" ")[0], value: deals.filter((d) => d.stage === s).length, color: AURAS[i % AURAS.length] }));
+  const matchDeal = (x) => !ql || x.brand.toLowerCase().includes(ql) || (x.deliverable || "").toLowerCase().includes(ql);
+  const matchClient = (c) => !ql || c.name.toLowerCase().includes(ql) || (c.service || "").toLowerCase().includes(ql);
+
+  const activeDeals = deals.filter((x) => (x.type || "Active") === "Active" && matchDeal(x))
+    .sort((a, b) => { const ap = a.stage === "Posted", bp = b.stage === "Posted"; if (ap !== bp) return ap ? 1 : -1; if (a.due && b.due) return a.due.localeCompare(b.due); return a.due ? -1 : b.due ? 1 : 0; });
+  const prospectDeals = deals.filter((x) => (x.type || "Active") === "Prospect" && matchDeal(x));
+  const activeClients = clients.filter((c) => c.status !== "Lead" && matchClient(c));
+  const prospectClients = clients.filter((c) => c.status === "Lead" && matchClient(c));
+
+  const stageBars = DEAL_STAGES.slice(0, 6).map((s, i) => ({ label: s.split(" ")[0], value: activeDeals.filter((d) => d.stage === s).length, color: AURAS[i % AURAS.length] }));
 
   return (
     <section>
-      <SectionHead title="Brand deals" sub="One card per deal: stage, deadline, and everything posting needs (caption, collab, spark code)." action={<AddBtn onClick={add} label="Add deal" />} />
-      {deals.length > 0 && (
+      <SectionHead title="Brand deals" sub="Split into active (confirmed, in motion) and prospective (still in discussion). Every deal and task here feeds the Priorities dashboard." action={<AddBtn onClick={() => add("Prospect")} label="Add deal" />} />
+      {activeDeals.length > 0 && (
         <div className="rounded-2xl p-4 mb-5" style={{ ...card, borderRadius: 18 }}>
-          <div style={{ fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase", color: MUT, marginBottom: 6 }}>Where deals sit 📊</div>
+          <div style={{ fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase", color: MUT, marginBottom: 6 }}>Where active deals sit 📊</div>
           <Bars data={stageBars} height={120} />
         </div>
       )}
-      <div className="flex flex-col gap-3 mb-10">
-        {list.map((x) => {
-          const tint = AURAS[(x.aura || 0) % AURAS.length], open = openId === x.id, idx = DEAL_STAGES.indexOf(x.stage);
-          return (
-            <div key={x.id} className="rounded-2xl p-4" style={{ ...card, borderRadius: 16, borderLeft: `3px solid ${tint}`, opacity: x.stage === "Posted" ? 0.65 : 1 }}>
-              <div className="flex items-center gap-3 flex-wrap">
-                <div className="flex-1" style={{ minWidth: 150 }}><InlineEdit value={x.brand} onChange={(v) => update(x.id, { brand: v })} strong /><InlineEdit value={x.deliverable} onChange={(v) => update(x.id, { deliverable: v })} placeholder="Deliverable (e.g. 1x Reel + story)" dim /></div>
-                {x.due && <DueChip due={x.due} />}
-                <input type="date" value={x.due || ""} onChange={(e) => update(x.id, { due: e.target.value })} className="rounded-lg px-2 py-1" style={{ ...inputStyle, fontSize: 12 }} aria-label="Due" />
-                <button onClick={() => setOpenId(open ? null : x.id)} style={iconBtn} aria-label="Expand">{open ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</button>
-              </div>
-              <div className="flex gap-1 mt-3 flex-wrap">{DEAL_STAGES.map((s, i) => (
-                <button key={s} onClick={() => update(x.id, { stage: s })} className="rounded-full px-2.5 py-1" style={{ fontSize: 10.5, cursor: "pointer", fontFamily: "inherit", background: i < idx ? `${tint}14` : x.stage === s ? `${tint}2b` : FILL, border: `1px solid ${x.stage === s ? tint : i < idx ? `${tint}55` : LINE}`, color: x.stage === s ? tint : i < idx ? tint : MUT }}>{i < idx ? "✓ " : ""}{s}</button>
-              ))}</div>
-              {x.stage !== "Posted" && <PriorityControls item={x} onChange={(p) => update(x.id, p)} hideDue />}
-              {open && (
-                <div className="mt-4 flex flex-col gap-3">
-                  <div style={{ minWidth: 160 }}><Label text="Rate" /><InlineEdit value={x.rate} onChange={(v) => update(x.id, { rate: v })} placeholder="e.g. R6,000" /></div>
-                  <div><Label text="Caption" /><AutoTextarea value={x.caption} onChange={(v) => update(x.id, { caption: v })} placeholder="Approved caption, hashtags, promo code…" /></div>
-                  <div><Label text="Posting instructions" /><AutoTextarea value={x.instructions} onChange={(v) => update(x.id, { instructions: v })} placeholder="Collab handle, spark code, whitelisting, tags…" /></div>
-                  <div><Label text="Notes" /><AutoTextarea value={x.notes} onChange={(v) => update(x.id, { notes: v })} placeholder="Feedback rounds, contacts, anything else…" /></div>
-                  <button onClick={() => remove(x.id)} className="self-end flex items-center gap-1" style={{ ...iconBtn, fontSize: 12, color: C.rose }}><Trash2 size={12} /> Remove deal</button>
-                </div>
-              )}
-            </div>
-          );
-        })}
-        {list.length === 0 && <Empty text={ql ? "No deal matches your search." : "No deals in the pipeline. Add one when Tarryn sends the next brief."} />}
-      </div>
-      <SectionHead title="Personal clients" sub="Your own SMM roster. Empty for now, ready when it isn't." action={<AddBtn onClick={addClient} label="Add client" />} />
-      <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
-        {clients.map((c) => (
-          <div key={c.id} className="rounded-2xl p-4" style={{ ...card, borderRadius: 16, borderLeft: `3px solid ${CT[c.status]}` }}>
-            <div className="flex items-center gap-2"><div className="flex-1 min-w-0"><InlineEdit value={c.name} onChange={(v) => updateClient(c.id, { name: v })} strong /></div><button onClick={() => removeClient(c.id)} style={iconBtn} aria-label="Delete"><Trash2 size={13} /></button></div>
-            <InlineEdit value={c.service} onChange={(v) => updateClient(c.id, { service: v })} placeholder="Service / retainer" dim />
-            <div className="flex gap-1 mt-2">{CLIENT_STATUSES.map((s) => (
-              <button key={s} onClick={() => updateClient(c.id, { status: s })} className="rounded-full px-3 py-1 flex-1" style={{ fontSize: 11, cursor: "pointer", fontFamily: "inherit", background: c.status === s ? `${CT[s]}22` : FILL, border: `1px solid ${c.status === s ? CT[s] : LINE}`, color: c.status === s ? CT[s] : MUT }}>{s}</button>
-            ))}</div>
-            <div className="mt-2"><InlineEdit value={c.notes} onChange={(v) => updateClient(c.id, { notes: v })} placeholder="Notes…" dim /></div>
-          </div>
+
+      <SectionHead title="Active brand deals" sub="Confirmed and in motion." />
+      <div className="flex flex-col gap-3 mb-8">
+        {activeDeals.map((x) => (
+          <DealCard key={x.id} x={x} open={openId === x.id} onToggleOpen={() => setOpenId(openId === x.id ? null : x.id)} update={update} remove={remove} isProspect={false} />
         ))}
+        {activeDeals.length === 0 && <Empty text={ql ? "No active deal matches your search." : "No active deals yet. Promote a prospect once it's confirmed."} />}
       </div>
-      {clients.length === 0 && <Empty text="No personal clients right now. This section wakes up when you land one." />}
+
+      <SectionHead title="Prospective brand deals" sub="In discussion, nothing solidified yet." action={<AddBtn onClick={() => add("Prospect")} label="Add prospect" />} />
+      <div className="flex flex-col gap-3 mb-10">
+        {prospectDeals.map((x) => (
+          <DealCard key={x.id} x={x} open={openId === x.id} onToggleOpen={() => setOpenId(openId === x.id ? null : x.id)} update={update} remove={remove} isProspect={true} />
+        ))}
+        {prospectDeals.length === 0 && <Empty text={ql ? "No prospect matches your search." : "No prospects right now. Add one the moment a brand reaches out."} />}
+      </div>
+
+      <SectionHead title="Clients" sub="Active retainer or paid SMM work." action={<AddBtn onClick={addClient} label="Add client" />} />
+      <div className="grid gap-3 mb-8" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
+        {activeClients.map((c) => <ClientCard key={c.id} c={c} updateClient={updateClient} removeClient={removeClient} />)}
+      </div>
+      {activeClients.length === 0 && <Empty text={ql ? "No client matches your search." : "No active clients right now. This wakes up when a lead converts."} />}
+
+      <SectionHead title="Prospective clients" sub="Leads and conversations, not yet signed." />
+      <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
+        {prospectClients.map((c) => <ClientCard key={c.id} c={c} updateClient={updateClient} removeClient={removeClient} />)}
+      </div>
+      {prospectClients.length === 0 && <Empty text={ql ? "No lead matches your search." : "No leads in the pipeline yet."} />}
     </section>
   );
 }
@@ -1188,7 +1215,7 @@ function Creators({ data, setData, q }) {
   const ql = (q || "").toLowerCase();
   const update = (id, patch) => setData((d) => ({ ...d, creators: d.creators.map((c) => (c.id === id ? { ...c, ...patch } : c)) }));
   const remove = (id) => setData((d) => ({ ...d, creators: d.creators.filter((c) => c.id !== id) }));
-  const add = () => { const c = { id: uid(), name: "New creator", niche: "", goals: [], aura: Math.floor(Math.random() * AURAS.length), links: [], notes: [] }; setData((d) => ({ ...d, creators: [c, ...d.creators] })); setOpenId(c.id); };
+  const add = () => { const c = { id: uid(), name: "New creator", niche: "", goals: [], aura: Math.floor(Math.random() * AURAS.length), links: [], notes: [], tasks: [] }; setData((d) => ({ ...d, creators: [c, ...d.creators] })); setOpenId(c.id); };
   let list = data.creators;
   if (ql) list = list.filter((c) => c.name.toLowerCase().includes(ql) || (c.niche || "").toLowerCase().includes(ql));
   return (
@@ -1222,6 +1249,10 @@ function CreatorCard({ c, open, onToggle, onUpdate, onRemove, openTaskCount }) {
         ))}
       </div>
       <div className="flex items-center gap-3 mt-3" style={{ fontSize: 12, color: MUT }}><span><StickyNote size={11} style={{ display: "inline", marginRight: 4 }} />{c.notes.length} notes</span><span><LinkIcon size={11} style={{ display: "inline", marginRight: 4 }} />{c.links.length} links</span>{openTaskCount > 0 && <span style={{ color: aura }}>{openTaskCount} open task{openTaskCount > 1 ? "s" : ""}</span>}</div>
+      <div className="mt-3">
+        <Label text="Tasks" />
+        <MiniTaskList tasks={c.tasks} onChange={(tasks) => onUpdate({ tasks })} />
+      </div>
       {open && (
         <div className="mt-4 flex flex-col gap-4">
           <div>
@@ -1293,7 +1324,7 @@ function Tasks({ data, setData }) {
 }
 
 function Tools({ data, setData }) {
-  const add = () => setData((d) => ({ ...d, tools: [{ id: uid(), name: "New tool", problem: "", status: "Idea", next: "" }, ...d.tools] }));
+  const add = () => setData((d) => ({ ...d, tools: [{ id: uid(), name: "New tool", problem: "", status: "Idea", next: "", tasks: [] }, ...d.tools] }));
   const update = (id, patch) => setData((d) => ({ ...d, tools: d.tools.map((t) => (t.id === id ? { ...t, ...patch } : t)) }));
   const remove = (id) => setData((d) => ({ ...d, tools: d.tools.filter((t) => t.id !== id) }));
   const ST = { Idea: C.amber, Building: C.lilac, Shipped: C.mint };
@@ -1307,6 +1338,7 @@ function Tools({ data, setData }) {
             <div className="flex gap-1">{TOOL_STAGES.map((s) => (<button key={s} onClick={() => update(t.id, { status: s })} className="rounded-full px-3 py-1 flex-1" style={{ fontSize: 11, cursor: "pointer", fontFamily: "inherit", background: t.status === s ? `${ST[s]}22` : FILL, border: `1px solid ${t.status === s ? ST[s] : LINE}`, color: t.status === s ? ST[s] : MUT }}>{s}</button>))}</div>
             <div><Label text="Problem it solves" /><AutoTextarea value={t.problem} onChange={(v) => update(t.id, { problem: v })} placeholder="What small problem does this fix?" /></div>
             <div><Label text="Next step" /><InlineEdit value={t.next} onChange={(v) => update(t.id, { next: v })} placeholder="The very next action" /></div>
+            <div><Label text="Tasks" /><MiniTaskList tasks={t.tasks} onChange={(tasks) => update(t.id, { tasks })} /></div>
           </div>
         ))}
       </div>
@@ -1320,7 +1352,7 @@ function Reports({ data, setData }) {
   const doneCount = data.reports.filter((r) => r.done.includes(mk)).length, total = data.reports.length, pct = total ? doneCount / total : 0;
   const toggle = (id) => setData((d) => ({ ...d, reports: d.reports.map((r) => r.id === id ? { ...r, done: r.done.includes(mk) ? r.done.filter((m) => m !== mk) : [...r.done, mk] } : r) }));
   const update = (id, patch) => setData((d) => ({ ...d, reports: d.reports.map((r) => (r.id === id ? { ...r, ...patch } : r)) }));
-  const add = () => setData((d) => ({ ...d, reports: [...d.reports, { id: uid(), name: "New recurring report", dueDay: 28, done: [] }] }));
+  const add = () => setData((d) => ({ ...d, reports: [...d.reports, { id: uid(), name: "New recurring report", dueDay: 28, done: [], tasks: [] }] }));
   const remove = (id) => setData((d) => ({ ...d, reports: d.reports.filter((r) => r.id !== id) }));
   const today = new Date().getDate();
   return (
@@ -1332,10 +1364,13 @@ function Reports({ data, setData }) {
         </div>
         <div className="flex-1 flex flex-col gap-3" style={{ minWidth: 280 }}>
           {data.reports.map((r) => { const done = r.done.includes(mk); const overdue = !done && today > r.dueDay; return (
-            <div key={r.id} className="rounded-2xl p-4 flex items-center gap-3 flex-wrap" style={{ ...card, borderRadius: 16, borderLeft: `3px solid ${done ? C.mint : overdue ? C.rose : C.amber}` }}>
-              <button onClick={() => toggle(r.id)} aria-label="Toggle done" style={{ width: 26, height: 26, borderRadius: 9, cursor: "pointer", flexShrink: 0, background: done ? C.mint : C.card, border: `1px solid ${done ? C.mint : LINE}`, display: "flex", alignItems: "center", justifyContent: "center" }}>{done && <Check size={15} color="#fff" strokeWidth={3} />}</button>
-              <div className="flex-1 min-w-0"><InlineEdit value={r.name} onChange={(v) => update(r.id, { name: v })} strong /><div style={{ fontSize: 12, color: overdue ? C.rose : MUT }}>Due day <input type="number" min="1" max="31" value={r.dueDay} onChange={(e) => update(r.id, { dueDay: Math.min(31, Math.max(1, Number(e.target.value) || 1)) })} style={{ ...inputStyle, width: 50, padding: "1px 6px", borderRadius: 6, fontSize: 12, display: "inline-block" }} /> each month{overdue && " · overdue"}{done && ` · done`}</div></div>
-              <button onClick={() => remove(r.id)} style={iconBtn} aria-label="Delete"><Trash2 size={13} /></button>
+            <div key={r.id} className="rounded-2xl p-4" style={{ ...card, borderRadius: 16, borderLeft: `3px solid ${done ? C.mint : overdue ? C.rose : C.amber}` }}>
+              <div className="flex items-center gap-3 flex-wrap">
+                <button onClick={() => toggle(r.id)} aria-label="Toggle done" style={{ width: 26, height: 26, borderRadius: 9, cursor: "pointer", flexShrink: 0, background: done ? C.mint : C.card, border: `1px solid ${done ? C.mint : LINE}`, display: "flex", alignItems: "center", justifyContent: "center" }}>{done && <Check size={15} color="#fff" strokeWidth={3} />}</button>
+                <div className="flex-1 min-w-0"><InlineEdit value={r.name} onChange={(v) => update(r.id, { name: v })} strong /><div style={{ fontSize: 12, color: overdue ? C.rose : MUT }}>Due day <input type="number" min="1" max="31" value={r.dueDay} onChange={(e) => update(r.id, { dueDay: Math.min(31, Math.max(1, Number(e.target.value) || 1)) })} style={{ ...inputStyle, width: 50, padding: "1px 6px", borderRadius: 6, fontSize: 12, display: "inline-block" }} /> each month{overdue && " · overdue"}{done && ` · done`}</div></div>
+                <button onClick={() => remove(r.id)} style={iconBtn} aria-label="Delete"><Trash2 size={13} /></button>
+              </div>
+              <div className="mt-3"><Label text="Tasks" /><MiniTaskList tasks={r.tasks} onChange={(tasks) => update(r.id, { tasks })} /></div>
             </div>
           ); })}
           {total === 0 && <Empty text="No recurring reports set up." />}
@@ -1356,7 +1391,7 @@ const pillAccent = (tint) => ({ background: tint, color: onTint(tint), border: "
 function SectionHead({ title, sub, action }) {
   return (
     <div className="flex items-end justify-between gap-3 mb-4 flex-wrap">
-      <div><h2 style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 600, fontSize: 20, margin: 0, letterSpacing: "-0.01em" }}>{title}</h2><p style={{ fontSize: 13, color: MUT, margin: "4px 0 0", maxWidth: 560 }}>{sub}</p></div>
+      <div><h2 style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 27, margin: 0, letterSpacing: "-0.01em" }}>{title}</h2><p style={{ fontSize: 13.5, color: MUT, margin: "5px 0 0", maxWidth: 620 }}>{sub}</p></div>
       {action}
     </div>
   );
