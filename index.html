@@ -159,10 +159,16 @@ function collectPriorityTasks(ally, mama) {
     id: i.id, pillar: "content", title: i.title, due: i.due || null,
     priority: i.priority || "Medium", lastProgress: i.lastProgress || null, created: i.created || null,
   }));
-  ally.song.stages.filter((s) => s.status === "active").forEach((s) => out.push({
-    id: s.id, pillar: "song", title: s.name, due: s.due || null,
-    priority: s.priority || "Medium", lastProgress: s.lastProgress || null, created: s.created || null,
-  }));
+  {
+    const songCurrentIdx = ally.song.stages.findIndex((s) => s.status !== "done");
+    if (songCurrentIdx !== -1) {
+      const s = ally.song.stages[songCurrentIdx];
+      out.push({
+        id: s.id, pillar: "song", title: s.name, due: s.due || null,
+        priority: s.priority || "Medium", lastProgress: s.lastProgress || null, created: s.created || null,
+      });
+    }
+  }
   ((ally.unlocks.ecosystem && ally.unlocks.ecosystem.pillars) || []).flatMap((p) => p.benefits).filter((b) => b.state === "progress").forEach((b) => out.push({
     id: b.id, pillar: "unlocks", title: b.label, due: b.due || null,
     priority: b.priority || "Medium", lastProgress: b.lastProgress || null, created: b.created || null,
@@ -454,23 +460,23 @@ function AllyCRM() {
       <div className="flex" style={{ height: "100%", fontFamily: "'Outfit', sans-serif", color: C.ink }}>
 
         {/* ===== sidebar rail (fixed, does not scroll with page content) ===== */}
-        <aside className="flex flex-col items-center" style={{ width: 84, flexShrink: 0, borderRight: `1px solid ${LINE}`, padding: "20px 0", gap: 6, background: "#0E0E11", height: "100%", overflowY: "auto" }}>
-          <div style={{ width: 42, height: 42, borderRadius: 12, background: "rgba(255,255,255,0.08)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 14, fontSize: 19, fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700 }}>🅰️</div>
+        <aside className="flex flex-col items-center" style={{ width: 104, flexShrink: 0, borderRight: `1px solid ${LINE}`, padding: "22px 0", gap: 8, background: "#0E0E11", height: "100%", overflowY: "auto" }}>
+          <div style={{ width: 48, height: 48, borderRadius: 13, background: "rgba(255,255,255,0.08)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 16, fontSize: 22, fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700 }}>🅰️</div>
           {TAB_ORDER.map((t) => {
             const on = tab === t; const info = MODULES[t];
             const locked = t === "apartment" && !aptUnlocked;
             return (
               <button key={t} className="railbtn" onClick={() => go(t)} title={info.label} aria-label={info.label}
-                style={{ width: 54, height: 54, borderRadius: 14, border: on ? `1px solid ${LINE}` : "1px solid transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", position: "relative",
-                  background: on ? "rgba(255,255,255,0.1)" : "transparent", fontSize: 24, transition: "background 0.15s" }}>
+                style={{ width: 68, height: 68, borderRadius: 16, border: on ? `1px solid ${LINE}` : "1px solid transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", position: "relative",
+                  background: on ? "rgba(255,255,255,0.1)" : "transparent", fontSize: 32, transition: "background 0.15s" }}>
                 <span style={{ filter: on ? "none" : "saturate(0.85)", opacity: locked ? 0.4 : on ? 1 : 0.7 }}>{info.emoji}</span>
-                {locked && <span style={{ position: "absolute", top: 5, right: 7, fontSize: 10 }}>🔒</span>}
-                {badges[t] ? <span style={{ position: "absolute", top: 4, right: 4, minWidth: 16, height: 16, borderRadius: 99, background: info.accent, color: "#fff", fontSize: 9.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 4px" }}>{badges[t]}</span> : null}
+                {locked && <span style={{ position: "absolute", top: 6, right: 8, fontSize: 11 }}>🔒</span>}
+                {badges[t] ? <span style={{ position: "absolute", top: 5, right: 5, minWidth: 18, height: 18, borderRadius: 99, background: info.accent, color: "#fff", fontSize: 10.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 5px" }}>{badges[t]}</span> : null}
               </button>
             );
           })}
           <div style={{ flex: 1 }} />
-          <div style={{ width: 40, height: 40, borderRadius: 99, background: `linear-gradient(135deg, ${C.lilac}, ${C.pink})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }} title="Ally">🧑🏻</div>
+          <div style={{ width: 48, height: 48, borderRadius: 99, background: `linear-gradient(135deg, ${C.lilac}, ${C.pink})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }} title="Ally">🧑🏻</div>
         </aside>
 
         {/* ===== main column ===== */}
@@ -497,15 +503,20 @@ function AllyCRM() {
             </div>
           </header>
 
-          {/* scroll area — the only part of the page that scrolls; sidebar and header stay put */}
-          <div className="scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "26px 32px" }}>
-            {tab === "overview" && <PriorityDashboard ally={ally} mama={mama} go={go} />}
-            {tab === "content" && <ContentModule data={ally} setData={setAlly} q={q} />}
-            {tab === "song" && <SongModule data={ally} setData={setAlly} />}
-            {tab === "unlocks" && <UnlocksModule data={ally} setData={setAlly} />}
-            {tab === "apartment" && <ApartmentModule data={ally} setData={setAlly} unlocked={aptUnlocked} go={go} q={q} />}
-            {tab === "deals" && <DealsModule data={ally} setData={setAlly} q={q} />}
-            {tab === "mama" && <MamaModule data={mama} setData={setMama} q={q} />}
+          {/* scroll area — the only part of the page that scrolls; sidebar and header stay put.
+              inner wrapper uses vertical auto-margins: short pages center in the available space
+              (no dead strip at the bottom), long pages (Unlocks, long chains) just scroll normally
+              since auto-margins collapse to 0 once content is taller than the viewport. */}
+          <div className="scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "28px 36px", display: "flex", flexDirection: "column", alignItems: "center" }}>
+            <div style={{ width: "100%", maxWidth: 1360, margin: "auto 0", paddingBottom: 44 }}>
+              {tab === "overview" && <PriorityDashboard ally={ally} mama={mama} go={go} />}
+              {tab === "content" && <ContentModule data={ally} setData={setAlly} q={q} />}
+              {tab === "song" && <SongModule data={ally} setData={setAlly} />}
+              {tab === "unlocks" && <UnlocksModule data={ally} setData={setAlly} />}
+              {tab === "apartment" && <ApartmentModule data={ally} setData={setAlly} unlocked={aptUnlocked} go={go} q={q} />}
+              {tab === "deals" && <DealsModule data={ally} setData={setAlly} q={q} />}
+              {tab === "mama" && <MamaModule data={mama} setData={setMama} q={q} />}
+            </div>
           </div>
         </div>
       </div>
@@ -537,28 +548,28 @@ function PriorityDashboard({ ally, mama, go }) {
 
   return (
     <section>
-      <div style={{ marginBottom: 14 }}>
-        <h1 style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: "clamp(22px,4vw,30px)", margin: 0, letterSpacing: "-0.02em" }}>Priorities right now 🎯</h1>
-        <p style={{ fontSize: 13, color: MUT, margin: "4px 0 0" }}>{tasks.length} open item{tasks.length === 1 ? "" : "s"} across all 5 pillars. The wedges are each pillar's share of priority right now, recalculated every time you open this.</p>
+      <div style={{ marginBottom: 20 }}>
+        <h1 style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: "clamp(28px,4.5vw,38px)", margin: 0, letterSpacing: "-0.02em" }}>Priorities right now 🎯</h1>
+        <p style={{ fontSize: 15, color: MUT, margin: "6px 0 0" }}>{tasks.length} open item{tasks.length === 1 ? "" : "s"} across all 5 pillars. The wedges are each pillar's share of priority right now, recalculated every time you open this.</p>
       </div>
 
       {/* hero: the pie is always 100% full, one wedge per pillar */}
-      <div className="flex items-center justify-center gap-8 flex-wrap" style={{ ...card, borderRadius: 20, padding: "18px 24px", marginBottom: 16 }}>
-        <Donut segments={donutSegs} size={170} thick={26} centerTop={`${MODULES[topEntry.pillar].emoji}`} centerSub={MODULES[topEntry.pillar].label} />
-        <div className="flex flex-col gap-1.5">
+      <div className="flex items-center justify-center gap-12 flex-wrap" style={{ ...card, borderRadius: 24, padding: "32px 36px", marginBottom: 22 }}>
+        <Donut segments={donutSegs} size={230} thick={34} centerTop={`${MODULES[topEntry.pillar].emoji}`} centerSub={MODULES[topEntry.pillar].label} />
+        <div className="flex flex-col gap-2.5">
           {legend.map((e) => (
-            <button key={e.pillar} onClick={() => go(e.pillar)} className="flex items-center gap-2 text-left" style={{ background: "transparent", border: "none", cursor: "pointer", fontFamily: "inherit", padding: "2px 0" }}>
-              <span style={{ width: 20, height: 20, borderRadius: 99, background: MODULES[e.pillar].accent, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10.5, fontWeight: 700, flexShrink: 0 }}>{rankOf[e.pillar]}</span>
-              <span style={{ fontSize: 13 }}>{MODULES[e.pillar].emoji}</span>
-              <span style={{ fontSize: 13, minWidth: 76 }}>{MODULES[e.pillar].label}</span>
-              <b style={{ fontSize: 13 }}>{e.pct}%</b>
+            <button key={e.pillar} onClick={() => go(e.pillar)} className="flex items-center gap-3 text-left" style={{ background: "transparent", border: "none", cursor: "pointer", fontFamily: "inherit", padding: "3px 0" }}>
+              <span style={{ width: 27, height: 27, borderRadius: 99, background: MODULES[e.pillar].accent, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13.5, fontWeight: 700, flexShrink: 0 }}>{rankOf[e.pillar]}</span>
+              <span style={{ fontSize: 17 }}>{MODULES[e.pillar].emoji}</span>
+              <span style={{ fontSize: 17, minWidth: 110 }}>{MODULES[e.pillar].label}</span>
+              <b style={{ fontSize: 18 }}>{e.pct}%</b>
             </button>
           ))}
         </div>
       </div>
 
       {/* cards underneath the pie, ranked left to right */}
-      <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))" }}>
+      <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))" }}>
         {[...PRIORITY_PILLARS].sort((a, b) => rankOf[a] - rankOf[b]).map((k) => (
           <PriorityPillarCard key={k} pillarKey={k} tasks={byPillar[k]} go={go} rank={rankOf[k]} />
         ))}
@@ -573,29 +584,29 @@ function PriorityPillarCard({ pillarKey, tasks, go, rank }) {
   const mod = MODULES[pillarKey];
   const cols = ["Urgent", "Medium", "Low"];
   return (
-    <div className="rounded-2xl p-3" style={{ ...card, borderRadius: 16, borderLeft: `3px solid ${mod.accent}` }}>
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-1.5 min-w-0">
-          <span style={{ width: 22, height: 22, borderRadius: 99, background: mod.accent, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 11.5, flexShrink: 0 }}>{rank}</span>
-          <span style={{ fontSize: 13, flexShrink: 0 }}>{mod.emoji}</span>
-          <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 600, fontSize: 12.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{mod.label}</span>
+    <div className="rounded-2xl p-5" style={{ ...card, borderRadius: 18, borderLeft: `4px solid ${mod.accent}` }}>
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2 min-w-0">
+          <span style={{ width: 28, height: 28, borderRadius: 99, background: mod.accent, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 14, flexShrink: 0 }}>{rank}</span>
+          <span style={{ fontSize: 17, flexShrink: 0 }}>{mod.emoji}</span>
+          <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 16, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{mod.label}</span>
         </div>
-        <button onClick={() => go(pillarKey)} style={{ ...iconBtn, padding: 2 }} aria-label={`Open ${mod.label}`}><ArrowUpRight size={13} /></button>
+        <button onClick={() => go(pillarKey)} style={{ ...iconBtn, padding: 3 }} aria-label={`Open ${mod.label}`}><ArrowUpRight size={16} /></button>
       </div>
-      <div className="grid gap-1.5" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+      <div className="grid gap-2.5" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
         {cols.map((col) => {
           const items = tasks.filter((t) => t.bucket === col).sort((a, b) => b.score - a.score);
           return (
             <div key={col} style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 9, letterSpacing: "0.04em", textTransform: "uppercase", color: PRIORITY_COL_TINT[col], fontWeight: 700, marginBottom: 4 }}>{col} <span style={{ color: MUT, fontWeight: 400 }}>{items.length}</span></div>
-              <div className="flex flex-col gap-1">
+              <div style={{ fontSize: 11, letterSpacing: "0.04em", textTransform: "uppercase", color: PRIORITY_COL_TINT[col], fontWeight: 700, marginBottom: 6 }}>{col} <span style={{ color: MUT, fontWeight: 400 }}>{items.length}</span></div>
+              <div className="flex flex-col gap-1.5">
                 {items.slice(0, 3).map((t) => (
-                  <div key={t.id} className="rounded-lg px-1.5 py-1" style={{ background: C.soft, border: `1px solid ${LINE}`, borderLeft: `2px solid ${PRIORITY_COL_TINT[col]}` }}>
-                    <div style={{ fontSize: 10.5, lineHeight: 1.25 }}>{t.title}</div>
-                    {t.daysUntilDue !== null && <div style={{ fontSize: 9, color: PRIORITY_COL_TINT[col], marginTop: 1 }}>{t.daysUntilDue < 0 ? `${-t.daysUntilDue}d overdue` : t.daysUntilDue === 0 ? "today" : `${t.daysUntilDue}d`}</div>}
+                  <div key={t.id} className="rounded-lg px-2 py-1.5" style={{ background: C.soft, border: `1px solid ${LINE}`, borderLeft: `2px solid ${PRIORITY_COL_TINT[col]}` }}>
+                    <div style={{ fontSize: 12.5, lineHeight: 1.3 }}>{t.title}</div>
+                    {t.daysUntilDue !== null && <div style={{ fontSize: 11, color: PRIORITY_COL_TINT[col], marginTop: 2 }}>{t.daysUntilDue < 0 ? `${-t.daysUntilDue}d overdue` : t.daysUntilDue === 0 ? "today" : `${t.daysUntilDue}d`}</div>}
                   </div>
                 ))}
-                {items.length === 0 && <div style={{ fontSize: 10, color: FAINT, padding: "4px 0" }}>—</div>}
+                {items.length === 0 && <div style={{ fontSize: 12, color: FAINT, padding: "4px 0" }}>—</div>}
               </div>
             </div>
           );
@@ -757,15 +768,14 @@ function SongModule({ data, setData }) {
   const gearTotal = song.gear.reduce((s, g) => s + (Number(g.price) || 0), 0);
   const gearSpent = song.gear.filter((g) => g.bought).reduce((s, g) => s + (Number(g.price) || 0), 0);
 
-  /* completing the current stage unlocks (activates) the very next one in the chain */
-  const completeStage = (i) => patch({
-    stages: song.stages.map((st, j) => {
-      if (j === i) return { ...st, status: "done", lastProgress: todayISO() };
-      if (j === i + 1 && st.status !== "done") return { ...st, status: "active" };
-      return st;
-    }),
-  });
-  const reopenStage = (i) => updateStage(song.stages[i].id, { status: "active" });
+  /* the "current" stage is derived — the first not-done stage in order — never stored.
+     that way it can never get stuck: toggle any stage's checkbox to mark it done (which
+     unlocks the next one) or undo it, and the current step always recalculates from that. */
+  const currentIdx = song.stages.findIndex((s) => s.status !== "done");
+  const toggleStage = (i) => {
+    const wasDone = song.stages[i].status === "done";
+    patch({ stages: song.stages.map((st, j) => (j === i ? { ...st, status: wasDone ? "todo" : "done", lastProgress: wasDone ? st.lastProgress : todayISO() } : st)) });
+  };
 
   return (
     <section>
@@ -776,13 +786,13 @@ function SongModule({ data, setData }) {
       </div>
       <div className="flex flex-col">
         {song.stages.map((s, i) => {
-          const isDone = s.status === "done", isCurrent = s.status === "active", isLocked = !isDone && !isCurrent;
+          const isDone = s.status === "done", isCurrent = !isDone && i === currentIdx, isLocked = !isDone && !isCurrent;
           const tint = isDone ? C.mint : isCurrent ? AURAS[i % AURAS.length] : FAINT;
           return (
-          <div key={s.id} className="flex gap-4" style={{ opacity: isLocked ? 0.55 : 1 }}>
+          <div key={s.id} className="flex gap-4" style={{ opacity: isLocked ? 0.7 : 1 }}>
             <div className="flex flex-col items-center" style={{ width: 36, flexShrink: 0 }}>
-              <button onClick={() => (isDone ? reopenStage(i) : isCurrent ? completeStage(i) : null)} disabled={isLocked} aria-label={isDone ? "Mark not done" : "Mark done"}
-                style={{ width: 34, height: 34, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", cursor: isLocked ? "default" : "pointer", background: isDone ? C.mint : isCurrent ? `${tint}22` : C.card, border: `1px solid ${isDone ? C.mint : isCurrent ? tint : LINE}`, fontFamily: "'Bricolage Grotesque', sans-serif", fontSize: 13, fontWeight: 600, color: isDone ? "#fff" : isCurrent ? tint : MUT }}>
+              <button onClick={() => toggleStage(i)} aria-label={isDone ? "Mark not done" : "Mark done"} title={isLocked ? "Out of order — click to mark done anyway and skip ahead" : isDone ? "Mark not done" : "Mark done"}
+                style={{ width: 34, height: 34, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", background: isDone ? C.mint : isCurrent ? `${tint}22` : C.card, border: `1px solid ${isDone ? C.mint : isCurrent ? tint : LINE}`, fontFamily: "'Bricolage Grotesque', sans-serif", fontSize: 13, fontWeight: 600, color: isDone ? "#fff" : isCurrent ? tint : MUT }}>
                 {isDone ? <Check size={16} strokeWidth={3} /> : isLocked ? <Lock size={14} /> : i + 1}
               </button>
               {i < song.stages.length - 1 && <div style={{ width: 2, flex: 1, minHeight: 22, background: isDone ? `${C.mint}66` : LINE }} />}
@@ -1002,23 +1012,23 @@ function ApartmentModule({ data, setData, unlocked, go, q }) {
           <span>Opened early. Normally gated until move-in.</span><button onClick={() => patch({ unlockedOverride: false })} style={{ ...iconBtn, fontSize: 12, color: C.amber }}>Re-lock</button>
         </div>
       )}
-      <div className="rounded-2xl p-5 mb-6 flex items-center gap-5 flex-wrap" style={{ ...card, borderRadius: 18 }}>
-        <Ring pct={budgetTotal ? spent / budgetTotal : 0} tint={over ? C.rose : C.mint} size={72} thick={9} label={`${Math.round((budgetTotal ? spent / budgetTotal : 0) * 100)}%`} />
-        <div className="flex-1" style={{ minWidth: 200 }}>
-          <div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontSize: 24, fontWeight: 700, color: over ? C.rose : C.ink }}>{fmtR(spent)} <span style={{ fontSize: 13, color: MUT, fontWeight: 400 }}>of {fmtR(budgetTotal)} plan</span></div>
-          <div style={{ fontSize: 12.5, color: C.mint, marginBottom: 6 }}>{boughtCount}/{items.length} items bought</div>
+      <div className="rounded-2xl p-7 mb-7 flex items-center gap-7 flex-wrap" style={{ ...card, borderRadius: 20 }}>
+        <Ring pct={budgetTotal ? spent / budgetTotal : 0} tint={over ? C.rose : C.mint} size={100} thick={12} label={`${Math.round((budgetTotal ? spent / budgetTotal : 0) * 100)}%`} />
+        <div className="flex-1" style={{ minWidth: 240 }}>
+          <div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontSize: 32, fontWeight: 700, color: over ? C.rose : C.ink }}>{fmtR(spent)} <span style={{ fontSize: 15, color: MUT, fontWeight: 400 }}>of {fmtR(budgetTotal)} plan</span></div>
+          <div style={{ fontSize: 14.5, color: C.mint, marginBottom: 8 }}>{boughtCount}/{items.length} items bought</div>
           <Bar pct={budgetTotal ? spent / budgetTotal : 0} tint={over ? C.rose : C.mint} />
-          <div style={{ fontSize: 11, color: FAINT, marginTop: 8 }}>Tiers: budget ~R26k · medium R38-45k · high R55-65k</div>
+          <div style={{ fontSize: 12.5, color: FAINT, marginTop: 10 }}>Tiers: budget ~R26k · medium R38-45k · high R55-65k</div>
         </div>
       </div>
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-3">
         {shown.map((i) => (
-          <div key={i.id} className="rounded-2xl px-4 py-3 flex items-center gap-3 flex-wrap" style={{ ...card, borderRadius: 14, borderLeft: `3px solid ${ST[i.status]}` }}>
-            <button onClick={() => update(i.id, { status: cycleStatus(i.status) })} className="rounded-full px-3 py-1" style={{ fontSize: 11, cursor: "pointer", fontFamily: "inherit", width: 92, flexShrink: 0, background: `${ST[i.status]}1a`, border: `1px solid ${ST[i.status]}55`, color: ST[i.status] }}>{i.status}</button>
-            <div className="flex-1" style={{ minWidth: 160 }}><InlineEdit value={i.name} onChange={(v) => update(i.id, { name: v })} strong /><InlineEdit value={i.source} onChange={(v) => update(i.id, { source: v })} placeholder="Source…" dim /></div>
-            <div style={{ fontSize: 11, color: MUT }}>budget<input type="number" min="0" value={i.budget || ""} placeholder="0" onChange={(e) => update(i.id, { budget: Number(e.target.value) || 0 })} className="rounded-lg px-2 py-1 ml-1" style={{ ...inputStyle, width: 78, fontSize: 12 }} /></div>
-            <div style={{ fontSize: 11, color: i.status === "Bought" ? C.mint : MUT }}>paid<input type="number" min="0" value={i.paid || ""} placeholder="0" onChange={(e) => update(i.id, { paid: Number(e.target.value) || 0 })} className="rounded-lg px-2 py-1 ml-1" style={{ ...inputStyle, width: 78, fontSize: 12 }} /></div>
-            <button onClick={() => remove(i.id)} style={iconBtn} aria-label="Delete"><Trash2 size={13} /></button>
+          <div key={i.id} className="rounded-2xl px-5 py-4 flex items-center gap-4 flex-wrap" style={{ ...card, borderRadius: 16, borderLeft: `3px solid ${ST[i.status]}` }}>
+            <button onClick={() => update(i.id, { status: cycleStatus(i.status) })} className="rounded-full px-3.5 py-1.5" style={{ fontSize: 12.5, cursor: "pointer", fontFamily: "inherit", width: 108, flexShrink: 0, background: `${ST[i.status]}1a`, border: `1px solid ${ST[i.status]}55`, color: ST[i.status] }}>{i.status}</button>
+            <div className="flex-1" style={{ minWidth: 220 }}><InlineEdit value={i.name} onChange={(v) => update(i.id, { name: v })} strong /><InlineEdit value={i.source} onChange={(v) => update(i.id, { source: v })} placeholder="Source…" dim /></div>
+            <div style={{ fontSize: 12.5, color: MUT }}>budget<input type="number" min="0" value={i.budget || ""} placeholder="0" onChange={(e) => update(i.id, { budget: Number(e.target.value) || 0 })} className="rounded-lg px-2.5 py-1.5 ml-1.5" style={{ ...inputStyle, width: 96, fontSize: 13.5 }} /></div>
+            <div style={{ fontSize: 12.5, color: i.status === "Bought" ? C.mint : MUT }}>paid<input type="number" min="0" value={i.paid || ""} placeholder="0" onChange={(e) => update(i.id, { paid: Number(e.target.value) || 0 })} className="rounded-lg px-2.5 py-1.5 ml-1.5" style={{ ...inputStyle, width: 96, fontSize: 13.5 }} /></div>
+            <button onClick={() => remove(i.id)} style={iconBtn} aria-label="Delete"><Trash2 size={15} /></button>
           </div>
         ))}
         {shown.length === 0 && <Empty text={ql ? "No item matches your search." : "No items. Add what the apartment needs."} />}
@@ -1196,8 +1206,8 @@ function MamaModule({ data, setData, q }) {
         {subs.map(({ id, emoji, label, count }) => {
           const on = sub === id;
           return (
-            <button key={id} onClick={() => setSub(id)} className="flex items-center gap-2 rounded-full px-3.5 py-1.5" style={{ background: on ? C.dark : C.card, border: `1px solid ${on ? C.dark : LINE}`, color: on ? "#fff" : C.ink, cursor: "pointer", fontSize: 13, fontFamily: "inherit" }}>
-              <span>{emoji}</span><span>{label}</span><span style={{ fontSize: 10.5, background: on ? "rgba(255,255,255,0.2)" : FILL2, color: on ? "#fff" : MUT, borderRadius: 99, padding: "1px 6px" }}>{count}</span>
+            <button key={id} onClick={() => setSub(id)} className="flex items-center gap-2 rounded-full px-4 py-2" style={{ background: on ? C.dark : C.card, border: `1px solid ${on ? C.dark : LINE}`, color: on ? C.canvas : C.ink, cursor: "pointer", fontSize: 14, fontWeight: on ? 600 : 400, fontFamily: "inherit" }}>
+              <span>{emoji}</span><span>{label}</span><span style={{ fontSize: 11, background: on ? "rgba(11,11,13,0.15)" : FILL2, color: on ? C.canvas : MUT, borderRadius: 99, padding: "1px 7px" }}>{count}</span>
             </button>
           );
         })}
