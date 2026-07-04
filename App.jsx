@@ -1,0 +1,1269 @@
+import { useState, useEffect, useRef } from "react";
+import {
+  Plus, Trash2, Link as LinkIcon, ChevronDown, ChevronUp, ChevronLeft,
+  X, Check, StickyNote, ExternalLink, Sparkles, Search, Lock, ArrowUpRight
+} from "lucide-react";
+
+/* ---------- palette (dark, compact) ---------- */
+const C = {
+  canvas: "#0B0B0D", frame: "#0B0B0D", card: "#131316", soft: "#0E0E11", dark: "#F2F2F4",
+  ink: "#F2F2F4", ink2: "rgba(242,242,244,0.72)",
+  /* accents */
+  mint: "#2FA37C", pink: "#E0688F", yellow: "#D69A00", lilac: "#7B67E0", sky: "#3E8FD6", peach: "#E07B3E", rose: "#E5484D",
+  /* soft tiles (translucent tints on dark) */
+  mintBg: "rgba(47,163,124,0.16)", pinkBg: "rgba(224,104,143,0.16)", yellowBg: "rgba(214,154,0,0.16)", lilacBg: "rgba(123,103,224,0.16)", skyBg: "rgba(62,143,214,0.16)", peachBg: "rgba(224,123,62,0.16)",
+  /* aliases used across modules */
+  violet: "#7B67E0", teal: "#2FA37C", coral: "#E07B3E", amber: "#D69A00",
+};
+const MUT = "rgba(242,242,244,0.5)", FAINT = "rgba(242,242,244,0.3)";
+const FILL = "rgba(255,255,255,0.06)", FILL2 = "rgba(255,255,255,0.1)", LINE = "rgba(255,255,255,0.09)";
+const AURAS = [C.lilac, C.mint, C.pink, C.sky, C.peach];
+const onTint = () => "#fff";
+
+const card = { background: C.card, border: `1px solid ${LINE}`, boxShadow: "none" };
+const cardSoft = { background: C.soft, border: `1px solid ${LINE}` };
+
+/* module identity: emoji + accent + tile bg */
+const MODULES = {
+  overview:  { emoji: "🏠", label: "Overview",  accent: C.mint,  bg: C.mintBg },
+  content:   { emoji: "🎬", label: "Content",   accent: C.sky,   bg: C.skyBg },
+  song:      { emoji: "🎵", label: "Song",      accent: C.lilac, bg: C.lilacBg },
+  unlocks:   { emoji: "🔓", label: "Unlocks",   accent: C.yellow, bg: C.yellowBg },
+  apartment: { emoji: "🛋️", label: "Apartment", accent: C.peach, bg: C.peachBg },
+  deals:     { emoji: "🤝", label: "Deals",     accent: C.pink,  bg: C.pinkBg },
+  mama:      { emoji: "💼", label: "Mama",      accent: C.sky,   bg: C.skyBg },
+};
+const TAB_ORDER = ["overview", "content", "song", "unlocks", "apartment", "deals", "mama"];
+
+/* ---------- storage shim: window.storage in the app, localStorage in the repo ---------- */
+const store = {
+  async get(k) {
+    if (typeof window !== "undefined" && window.storage && window.storage.get) {
+      try { const r = await window.storage.get(k, false); return r ? r.value : null; } catch (e) { return null; }
+    }
+    try { return localStorage.getItem(k); } catch (e) { return null; }
+  },
+  async set(k, v) {
+    if (typeof window !== "undefined" && window.storage && window.storage.set) {
+      try { await window.storage.set(k, v, false); return; } catch (e) {}
+    }
+    try { localStorage.setItem(k, v); } catch (e) {}
+  },
+};
+
+/* ---------- helpers ---------- */
+const uid = () => Math.random().toString(36).slice(2, 9);
+const todayISO = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+const daysSince = (iso) => { if (!iso) return null; const n = new Date(); n.setHours(0, 0, 0, 0); return Math.max(0, Math.round((n - new Date(iso + "T00:00:00")) / 86400000)); };
+const daysUntil = (iso) => { if (!iso) return null; const n = new Date(); n.setHours(0, 0, 0, 0); return Math.round((new Date(iso + "T00:00:00") - n) / 86400000); };
+const fmtR = (n) => "R" + (Number(n) || 0).toLocaleString("en-ZA");
+const monthKey = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; };
+const monthName = () => new Date().toLocaleDateString("en-ZA", { month: "long" });
+const isApartmentUnlocked = (ally) => !!ally.apartment.unlockedOverride || ally.unlocks.chains.some((ch) => ch.nodes.some((n) => /move\s*in/i.test(n.label) && n.status === "done"));
+
+/* ---------- pipeline constants ---------- */
+const CONTENT_COLS = ["Idea", "Scripted", "Filmed", "Edited", "Posted"];
+const CONTENT_TINT = { Idea: C.sky, Scripted: C.lilac, Filmed: C.amber, Edited: C.mint, Posted: FAINT };
+const DEAL_STAGES = ["Brief", "Script", "Script approval", "Film", "Edit", "Final approval", "Posted"];
+const CLIENT_STATUSES = ["Lead", "Active", "Paused"];
+const MIX_ROUTES = ["Fiverr", "Crighton", "Cassidy's boyfriend", "DIY"];
+const SOURCES = ["Discord", "Basecamp", "Email", "Sheets", "Meeting", "Self"];
+const SOURCE_TINT = { Discord: C.lilac, Basecamp: C.amber, Email: C.sky, Sheets: C.mint, Meeting: C.pink, Self: MUT };
+const TASK_COLS = ["To do", "Doing", "Done"];
+const TOOL_STAGES = ["Idea", "Building", "Shipped"];
+
+/* ================= CHARTS ================= */
+function Ring({ pct, tint, size = 66, thick = 8, label, sub }) {
+  const r = (size - thick) / 2, c = 2 * Math.PI * r;
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img" aria-label={label ? `${label} ${sub || ""}` : `${Math.round(pct * 100)} percent`} style={{ flexShrink: 0 }}>
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(28,28,34,0.08)" strokeWidth={thick} />
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={tint} strokeWidth={thick} strokeLinecap="round"
+        strokeDasharray={c} strokeDashoffset={c * (1 - Math.min(1, pct))} transform={`rotate(-90 ${size / 2} ${size / 2})`} style={{ transition: "stroke-dashoffset 0.6s ease" }} />
+      {label !== undefined && <text x={size / 2} y={size / 2 + 1} textAnchor="middle" fill={C.ink} style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontSize: size * 0.24, fontWeight: 700 }}>{label}</text>}
+      {sub && <text x={size / 2} y={size / 2 + size * 0.2} textAnchor="middle" fill={MUT} style={{ fontSize: size * 0.11, letterSpacing: "0.06em" }}>{sub}</text>}
+    </svg>
+  );
+}
+
+function Donut({ segments, size = 150, thick = 20, centerTop, centerSub }) {
+  const r = (size - thick) / 2, c = 2 * Math.PI * r;
+  const total = segments.reduce((s, x) => s + x.value, 0) || 1;
+  let off = 0;
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img" aria-label="distribution donut chart">
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(28,28,34,0.06)" strokeWidth={thick} />
+      {segments.map((seg, i) => {
+        const frac = seg.value / total, dash = frac * c;
+        const el = <circle key={i} cx={size / 2} cy={size / 2} r={r} fill="none" stroke={seg.color} strokeWidth={thick}
+          strokeDasharray={`${dash} ${c - dash}`} strokeDashoffset={-off} transform={`rotate(-90 ${size / 2} ${size / 2})`} style={{ transition: "stroke-dasharray 0.5s ease" }} />;
+        off += dash; return el;
+      })}
+      {centerTop !== undefined && <text x={size / 2} y={size / 2 - 2} textAnchor="middle" fill={C.ink} style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontSize: size * 0.2, fontWeight: 700 }}>{centerTop}</text>}
+      {centerSub && <text x={size / 2} y={size / 2 + size * 0.13} textAnchor="middle" fill={MUT} style={{ fontSize: size * 0.075, letterSpacing: "0.08em", textTransform: "uppercase" }}>{centerSub}</text>}
+    </svg>
+  );
+}
+
+function Bars({ data, height = 130 }) {
+  const max = Math.max(...data.map((d) => d.value), 1);
+  return (
+    <div className="flex items-end justify-between gap-2" style={{ height }}>
+      {data.map((d, i) => (
+        <div key={i} className="flex flex-col items-center gap-1.5" style={{ flex: 1, height: "100%", justifyContent: "flex-end" }}>
+          <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontSize: 13, fontWeight: 700, color: d.value ? C.ink : FAINT }}>{d.value}</span>
+          <div style={{ width: "100%", maxWidth: 34, height: `${(d.value / max) * (height - 44)}px`, minHeight: 4, borderRadius: 8, background: d.color, transition: "height 0.5s ease" }} />
+          <span style={{ fontSize: 10.5, color: MUT, textAlign: "center", lineHeight: 1.1 }}>{d.label}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Bar({ pct, tint }) {
+  return (
+    <div style={{ height: 8, borderRadius: 99, background: "rgba(28,28,34,0.07)", overflow: "hidden" }}>
+      <div style={{ height: "100%", width: `${Math.min(100, Math.round(pct * 100))}%`, borderRadius: 99, background: tint, transition: "width 0.5s ease" }} />
+    </div>
+  );
+}
+
+function MiniCalendar({ marks }) {
+  const now = new Date();
+  const y = now.getFullYear(), m = now.getMonth();
+  const first = new Date(y, m, 1);
+  const startDow = (first.getDay() + 6) % 7; /* Mon=0 */
+  const days = new Date(y, m + 1, 0).getDate();
+  const today = now.getDate();
+  const cells = [];
+  for (let i = 0; i < startDow; i++) cells.push(null);
+  for (let d = 1; d <= days; d++) cells.push(d);
+  const wd = ["M", "T", "W", "T", "F", "S", "S"];
+  return (
+    <div>
+      <div className="grid" style={{ gridTemplateColumns: "repeat(7,1fr)", gap: 2, marginBottom: 4 }}>
+        {wd.map((w, i) => <div key={i} style={{ textAlign: "center", fontSize: 10, color: FAINT, fontWeight: 500 }}>{w}</div>)}
+      </div>
+      <div className="grid" style={{ gridTemplateColumns: "repeat(7,1fr)", gap: 2 }}>
+        {cells.map((d, i) => {
+          if (!d) return <div key={i} />;
+          const iso = `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+          const mk = marks[iso];
+          const isToday = d === today;
+          return (
+            <div key={i} style={{ position: "relative", aspectRatio: "1", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12,
+              borderRadius: 9, background: isToday ? C.dark : "transparent", color: isToday ? "#fff" : C.ink2, fontWeight: isToday ? 700 : 400 }}>
+              {d}
+              {mk && !isToday && <span style={{ position: "absolute", bottom: 3, width: 5, height: 5, borderRadius: 99, background: mk }} />}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ---------- seed ---------- */
+const ALLY_SEED = {
+  content: { lastPosted: null, cadence: 3, items: [] },
+  song: {
+    stages: [
+      { id: uid(), kind: "plain", name: "Sing test", desc: "Fully sing one of your own songs. Honest call: is the voice release-ready right now?", status: "active", note: "" },
+      { id: uid(), kind: "plain", name: "Go / no-go", desc: "Decide: proceed to the release pipeline, or train vocals first.", status: "todo", note: "" },
+      { id: uid(), kind: "gear", name: "Buy gear", desc: "Home vocal recording setup. Tick items off as they arrive.", status: "todo", note: "" },
+      { id: uid(), kind: "plain", name: "Record vocals", desc: "Track the vocals for the project.", status: "todo", note: "" },
+      { id: uid(), kind: "mix", name: "Mix and master", desc: "Pick a route. You said external is most likely.", status: "todo", note: "" },
+      { id: uid(), kind: "plain", name: "Release", desc: "Distribution, artwork, out the door.", status: "todo", note: "" },
+    ],
+    gear: [
+      { id: uid(), name: "Rode NT1 Signature", price: 0, bought: false },
+      { id: uid(), name: "Focusrite Scarlett Solo", price: 0, bought: false },
+      { id: uid(), name: "Microphone stand", price: 0, bought: false },
+    ],
+    mixRoute: "",
+  },
+  unlocks: {
+    /* keystone: the credit card. Its ID is referenced by amplifier tags below. */
+    ecosystem: {
+      keystoneNote: "The Discovery Bank credit card is the keystone. It lifts HealthyFood to 50%, adds the 20% fuel Miles layer, and deepens the Vitality rewards loop. Each pillar feeds Vitality status; status feeds cashback rates; engagement feeds status. It is a loop, not a ladder.",
+      pillars: [
+        { id: uid(), name: "Vitality", emoji: "\u2b50", accent: C.yellow, role: "The engine. Status drives every cashback rate below. You engage, status rises, rates rise.", benefits: [
+          { id: uid(), label: "Vitality assessments", state: "live", note: "Done. Age assessment complete." },
+          { id: uid(), label: "Activity rewards", state: "live", note: "Walking, running, gym. Feeds status.", amp: [] },
+          { id: uid(), label: "Healthy sleep rewards", state: "live", note: "Tracked, feeds points.", amp: [] },
+          { id: uid(), label: "Vitality status tier", state: "progress", note: "Higher tier = higher cashback % across food and fuel." },
+        ] },
+        { id: uid(), name: "Bank", emoji: "\ud83d\udcb3", accent: C.lilac, role: "The keystone pillar. The credit card multiplies several branches at once.", benefits: [
+          { id: uid(), label: "Credit card", state: "progress", keystone: true, note: "Resubmit statements + letter. If declined, wait a month, reapply with payslip 3, get approved." },
+          { id: uid(), label: "Discovery Miles on fuel (20%)", state: "locked", note: "Needs the card. Paid at bp with the Discovery card.", ampFrom: "Credit card" },
+          { id: uid(), label: "Credit score building", state: "progress", note: "Card approval + on-time use builds the score." },
+        ] },
+        { id: uid(), name: "Health", emoji: "\ud83e\ude7a", accent: C.mint, role: "The pillar hosting food cashback, the Personal Health Fund, and preventative care. Most benefits already accrue as a dependant.", benefits: [
+          { id: uid(), label: "HealthyFood 25%", state: "live", note: "Live. Woolies 25%.", },
+          { id: uid(), label: "Checkers as primary partner", state: "progress", note: "Mom to switch primary (main-member only). Checkers 10% \u2192 25%." },
+          { id: uid(), label: "HealthyFood 50% boost", state: "locked", note: "Card lifts the rate from 25% to 50%.", ampFrom: "Credit card" },
+          { id: uid(), label: "Personal Health Fund", state: "live", note: "Accrues via completed health actions." },
+          { id: uid(), label: "Preventative care (HIV, screenings)", state: "live", note: "Covered. Available as dependant too." },
+          { id: uid(), label: "Own plan: Active Smart", state: "parked", note: "R1,350/mo. Control, not benefit access. Parked." },
+        ] },
+        { id: uid(), name: "Insure", emoji: "\ud83d\ude97", accent: C.sky, role: "The pillar for fuel cashback and the car. Gated on moving the Corsa to Discovery Insure, which is passive for now.", benefits: [
+          { id: uid(), label: "Move Corsa to Discovery Insure", state: "parked", note: "Passive. Premium likely rises on a solo policy. Awaiting quote + Jacqui's premium." },
+          { id: uid(), label: "Fuel cashback (base)", state: "locked", note: "Up to R1,500/mo at bp/Shell. Needs the Insure switch.", ampFrom: "Move Corsa to Discovery Insure" },
+          { id: uid(), label: "Fuel Miles layer (20%)", state: "locked", note: "Stacks on base. Needs both the switch and the card.", ampFrom: "Credit card" },
+        ] },
+      ],
+    },
+    /* chains preserved for gating (apartment furnishing) + passive car ownership track */
+    chains: [
+      { id: uid(), name: "Apartment", nodes: [
+        { id: uid(), label: "Payslip 3 of 3", sub: "Lands end of July", status: "active" },
+        { id: uid(), label: "Apply: 8 Kingsbury, Rondebosch", sub: "1-year lease application", status: "locked" },
+        { id: uid(), label: "Lease signed, deposit paid", sub: "", status: "locked" },
+        { id: uid(), label: "Move in", sub: "Target mid-August. Unlocks the furnishing module", status: "locked" },
+      ] },
+      { id: uid(), name: "Car ownership", nodes: [
+        { id: uid(), label: "Installments remaining", sub: "Curiosity. Awaiting figure from dad", status: "active" },
+        { id: uid(), label: "Finance settled (MFC / Nedbank)", sub: "Long horizon", status: "locked" },
+        { id: uid(), label: "Transfer into my name", sub: "Only possible once MFC finance is cleared", status: "locked" },
+      ] },
+    ],
+  },
+  apartment: {
+    unlockedOverride: false,
+    items: [
+      { id: uid(), name: "Fridge (250-350L)", source: "Second-hand", budget: 4000, status: "To source", paid: 0 },
+      { id: uid(), name: "Electric hob (4 plate)", source: "New", budget: 2000, status: "To source", paid: 0 },
+      { id: uid(), name: "Cutlery (16-24 pcs)", source: "Temu / Shein", budget: 350, status: "To source", paid: 0 },
+      { id: uid(), name: "Crockery (plates, bowls, mugs)", source: "Temu / Shein / Mr Price Home", budget: 600, status: "To source", paid: 0 },
+      { id: uid(), name: "Work desk", source: "Marketplace / local", budget: 2500, status: "To source", paid: 0 },
+      { id: uid(), name: "Ergonomic office chair", source: "New", budget: 4000, status: "To source", paid: 0 },
+      { id: uid(), name: "Fake plants (5-10)", source: "Temu / Shein", budget: 1000, status: "To source", paid: 0 },
+      { id: uid(), name: "LED lights (5 strips)", source: "Temu", budget: 700, status: "To source", paid: 0 },
+      { id: uid(), name: "LED humidifiers (2)", source: "Temu", budget: 700, status: "To source", paid: 0 },
+      { id: uid(), name: "Microwave", source: "Second-hand", budget: 1200, status: "To source", paid: 0 },
+      { id: uid(), name: '27" monitor (1440p)', source: "Second-hand", budget: 3000, status: "To source", paid: 0 },
+      { id: uid(), name: "L-shaped couch", source: "Second-hand", budget: 6000, status: "To source", paid: 0 },
+    ],
+  },
+  deals: { deals: [], clients: [] },
+};
+const MAMA_SEED = {
+  creators: [
+    { id: uid(), name: "Yoni Weinberg", niche: "Substack / newsletter", goals: [{ id: uid(), text: "Grow the Substack" }], aura: 0, links: [], notes: [] },
+    { id: uid(), name: "Natalia Mehlman Petrzela", niche: "Politics / history commentary", goals: [], aura: 4, links: [], notes: [] },
+    { id: uid(), name: "Amir Grunhaus", niche: "", goals: [], aura: 2, links: [], notes: [] },
+    { id: uid(), name: "Rami Even-Esh", niche: "", goals: [], aura: 1, links: [], notes: [] },
+    { id: uid(), name: "Keren Picker", niche: "", goals: [], aura: 3, links: [], notes: [] },
+    { id: uid(), name: "Joshua Washington", niche: "", goals: [], aura: 0, links: [], notes: [] },
+  ],
+  tasks: [],
+  tools: [{ id: uid(), name: "Small HTML tools", problem: "Single-file tools for small Amplified problems. Kickoff scheduled.", status: "Idea", next: "Scope the first tool with the AI team" }],
+  reports: [{ id: uid(), name: "Monthly creator reports", dueDay: 28, done: [] }, { id: uid(), name: "Creator deep dive reports", dueDay: 15, done: [] }],
+};
+const ALLY_KEY = "ally-crm-v1";
+const MAMA_KEY = "creator-strategy-hq-v1";
+
+/* ================= APP SHELL ================= */
+export default function AllyCRM() {
+  const [ally, setAlly] = useState(null);
+  const [mama, setMama] = useState(null);
+  const [tab, setTab] = useState("overview");
+  const [history, setHistory] = useState([]);
+  const [q, setQ] = useState("");
+  const [saveState, setSaveState] = useState("idle");
+  const loaded = useRef(false);
+  const timers = useRef({});
+
+  useEffect(() => {
+    (async () => {
+      let a = ALLY_SEED, m = MAMA_SEED;
+      const ra = await store.get(ALLY_KEY); if (ra) { try { a = JSON.parse(ra); } catch (e) {} }
+      const rm = await store.get(MAMA_KEY); if (rm) { try { m = JSON.parse(rm); } catch (e) {} }
+      if (!a.apartment) a.apartment = ALLY_SEED.apartment;
+      m = { ...m, creators: (m.creators || []).map((c) => c.goals ? c : { ...c, goals: c.goal ? [{ id: uid(), text: c.goal }] : [] }) };
+      setAlly(a); setMama(m); loaded.current = true;
+    })();
+  }, []);
+
+  const useSave = (key, data) => {
+    useEffect(() => {
+      if (!loaded.current || !data) return;
+      setSaveState("saving"); clearTimeout(timers.current[key]);
+      timers.current[key] = setTimeout(async () => {
+        try { await store.set(key, JSON.stringify(data)); setSaveState("saved"); setTimeout(() => setSaveState("idle"), 1400); } catch (e) { setSaveState("error"); }
+      }, 600);
+      return () => clearTimeout(timers.current[key]);
+    }, [data]);
+  };
+  useSave(ALLY_KEY, ally);
+  useSave(MAMA_KEY, mama);
+
+  const go = (next) => { if (next === tab) return; setHistory((h) => [...h, tab].slice(-20)); setTab(next); setQ(""); };
+  const back = () => { setHistory((h) => { if (!h.length) return h; const prev = h[h.length - 1]; setTab(prev); setQ(""); return h.slice(0, -1); }); };
+
+  if (!ally || !mama) {
+    return <div style={{ background: C.canvas, minHeight: "100vh" }} className="flex items-center justify-center"><div style={{ color: MUT, fontFamily: "Outfit, sans-serif" }}>Opening ALLY CRM…</div></div>;
+  }
+
+  const aptUnlocked = isApartmentUnlocked(ally);
+  const badges = {
+    content: ally.content.items.filter((i) => i.status !== "Posted").length,
+    song: ally.song.stages.filter((s) => s.status === "done").length,
+    unlocks: (ally.unlocks.ecosystem?.pillars || []).flatMap((p) => p.benefits).filter((b) => b.state === "progress").length + ally.unlocks.chains.flatMap((c) => c.nodes).filter((n) => n.status === "active").length,
+    apartment: aptUnlocked ? ally.apartment.items.filter((i) => i.status === "Bought").length : null,
+    deals: ally.deals.deals.filter((d) => d.stage !== "Posted").length,
+    mama: mama.tasks.filter((t) => t.status !== "Done").length,
+  };
+  const mod = MODULES[tab];
+
+  return (
+    <div style={{ background: C.canvas, minHeight: "100vh", color: C.ink }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700&family=Outfit:wght@300;400;500;600&display=swap');
+        * { box-sizing: border-box; }
+        html, body { background: ${C.canvas}; }
+        ::placeholder { color: ${FAINT}; }
+        input, textarea, select { outline: none; }
+        input:focus, textarea:focus { border-color: ${C.lilac} !important; }
+        button:focus-visible { outline: 2px solid ${C.lilac}; outline-offset: 2px; }
+        input[type="date"]::-webkit-calendar-picker-indicator { cursor: pointer; opacity: 0.5; filter: invert(1); }
+        .scroll::-webkit-scrollbar { width: 9px; }
+        .scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 99px; }
+        @media (prefers-reduced-motion: reduce) { .pulse-dot { animation: none !important; } }
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+        .pulse-dot { animation: pulse 2s ease-in-out infinite; }
+        .railbtn:hover { background: ${FILL} !important; }
+      `}</style>
+
+      <div className="flex" style={{ minHeight: "100vh", fontFamily: "'Outfit', sans-serif", color: C.ink }}>
+
+        {/* ===== sidebar rail ===== */}
+        <aside className="flex flex-col items-center" style={{ width: 60, flexShrink: 0, borderRight: `1px solid ${LINE}`, padding: "16px 0", gap: 4, background: "#0E0E11" }}>
+          <div style={{ width: 32, height: 32, borderRadius: 9, background: "rgba(255,255,255,0.08)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 10, fontSize: 14, fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700 }}>🅰️</div>
+          {TAB_ORDER.map((t) => {
+            const on = tab === t; const info = MODULES[t];
+            const locked = t === "apartment" && !aptUnlocked;
+            return (
+              <button key={t} className="railbtn" onClick={() => go(t)} title={info.label} aria-label={info.label}
+                style={{ width: 38, height: 38, borderRadius: 10, border: on ? `1px solid ${LINE}` : "1px solid transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", position: "relative",
+                  background: on ? "rgba(255,255,255,0.1)" : "transparent", fontSize: 16, transition: "background 0.15s" }}>
+                <span style={{ filter: on ? "none" : "saturate(0.85)", opacity: locked ? 0.4 : on ? 1 : 0.7 }}>{info.emoji}</span>
+                {locked && <span style={{ position: "absolute", top: 4, right: 5, fontSize: 8 }}>🔒</span>}
+                {badges[t] ? <span style={{ position: "absolute", top: 3, right: 3, minWidth: 13, height: 13, borderRadius: 99, background: info.accent, color: "#fff", fontSize: 8, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 3px" }}>{badges[t]}</span> : null}
+              </button>
+            );
+          })}
+          <div style={{ flex: 1 }} />
+          <div style={{ width: 32, height: 32, borderRadius: 99, background: `linear-gradient(135deg, ${C.lilac}, ${C.pink})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14 }} title="Ally">🧑🏻</div>
+        </aside>
+
+        {/* ===== main column ===== */}
+        <div className="flex flex-col" style={{ flex: 1, minWidth: 0 }}>
+          {/* top bar (persistent) */}
+          <header className="flex items-center gap-3" style={{ padding: "12px 20px", borderBottom: `1px solid ${LINE}`, flexShrink: 0 }}>
+            <button onClick={back} disabled={!history.length} aria-label="Back"
+              style={{ width: 32, height: 32, borderRadius: 9, border: `1px solid ${LINE}`, background: history.length ? C.card : "transparent", cursor: history.length ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", color: history.length ? C.ink : FAINT, flexShrink: 0 }}>
+              <ChevronLeft size={16} />
+            </button>
+            <div style={{ width: 32, height: 32, borderRadius: 9, background: mod.bg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, flexShrink: 0 }}>{mod.emoji}</div>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 600, fontSize: 15, lineHeight: 1.1 }}>{mod.label}</div>
+              <div style={{ fontSize: 10.5, color: MUT }}>{new Date().toLocaleDateString("en-ZA", { weekday: "long", day: "numeric", month: "long" })}</div>
+            </div>
+            <div className="flex-1" />
+            <div className="flex items-center gap-2" style={{ background: "rgba(255,255,255,0.04)", border: `1px solid ${LINE}`, borderRadius: 9, padding: "6px 10px", maxWidth: 220, flex: "1 1 140px" }}>
+              <Search size={13} color={MUT} />
+              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search this page…" style={{ background: "transparent", border: "none", fontSize: 12.5, color: C.ink, width: "100%", fontFamily: "inherit" }} />
+              {q && <button onClick={() => setQ("")} style={{ ...iconBtn, padding: 0 }} aria-label="Clear"><X size={12} /></button>}
+            </div>
+            <div style={{ fontSize: 10.5, color: saveState === "error" ? C.rose : FAINT, minWidth: 42, textAlign: "right" }}>
+              {saveState === "saving" ? "saving…" : saveState === "saved" ? "saved ✓" : saveState === "error" ? "retry" : ""}
+            </div>
+          </header>
+
+          {/* scroll area */}
+          <div className="scroll" style={{ flex: 1, overflowY: "auto", padding: "18px 20px" }}>
+            {tab === "overview" && <Overview ally={ally} mama={mama} go={go} aptUnlocked={aptUnlocked} />}
+            {tab === "content" && <ContentModule data={ally} setData={setAlly} q={q} />}
+            {tab === "song" && <SongModule data={ally} setData={setAlly} />}
+            {tab === "unlocks" && <UnlocksModule data={ally} setData={setAlly} />}
+            {tab === "apartment" && <ApartmentModule data={ally} setData={setAlly} unlocked={aptUnlocked} go={go} q={q} />}
+            {tab === "deals" && <DealsModule data={ally} setData={setAlly} q={q} />}
+            {tab === "mama" && <MamaModule data={mama} setData={setMama} q={q} />}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ================= content health ================= */
+function contentHealth(content) {
+  const since = daysSince(content.lastPosted);
+  const counts = Object.fromEntries(CONTENT_COLS.map((c) => [c, content.items.filter((i) => i.status === c).length]));
+  const ready = counts.Edited;
+  let tint = C.mint, msg = "On track. Keep the machine fed.";
+  if (since === null) { tint = C.sky; msg = "Log when you last posted to start the runway clock."; }
+  else if (since >= content.cadence && ready === 0) { tint = C.rose; msg = "Post overdue and nothing edited. Film or edit today."; }
+  else if (since >= content.cadence) { tint = C.amber; msg = `Time to post. ${ready} edited and ready to go.`; }
+  else if (ready === 0 && counts.Filmed === 0) { tint = C.amber; msg = "Downstream pipeline is empty. Script and film next."; }
+  return { since, counts, ready, tint, msg };
+}
+
+/* ================= OVERVIEW ================= */
+function Overview({ ally, mama, go, aptUnlocked }) {
+  const h = contentHealth(ally.content);
+  const stages = ally.song.stages;
+  const songDone = stages.filter((s) => s.status === "done").length;
+  const songPct = songDone / stages.length;
+  const allNodes = ally.unlocks.chains.flatMap((c) => c.nodes);
+  const ecoBenefits = (ally.unlocks.ecosystem?.pillars || []).flatMap((p) => p.benefits);
+  const ecoLive = ecoBenefits.filter((b) => b.state === "live").length;
+  const chainDone = allNodes.filter((n) => n.status === "done").length;
+  const unlockDenom = ecoBenefits.length + allNodes.length;
+  const unlockPct = unlockDenom ? (ecoLive + chainDone) / unlockDenom : 0;
+  const active = ally.deals.deals.filter((d) => d.stage !== "Posted");
+  const items = ally.apartment.items;
+  const budgetTotal = items.reduce((s, i) => s + (Number(i.budget) || 0), 0);
+  const spent = items.filter((i) => i.status === "Bought").reduce((s, i) => s + (Number(i.paid) || 0), 0);
+
+  const tiles = [
+    { key: "content", emoji: "🎬", label: "Content", value: h.counts.Idea + h.counts.Scripted + h.counts.Filmed + h.counts.Edited, bg: C.skyBg, accent: C.sky, ring: Math.min(1, (h.since || 0) / ally.content.cadence), sub: "content pieces" },
+    { key: "song", emoji: "🎵", label: "Song", value: `${Math.round(songPct * 100)}%`, bg: C.lilacBg, accent: C.lilac, ring: songPct, sub: "to release" },
+    { key: "unlocks", emoji: "🔓", label: "Unlocks", value: `${Math.round(unlockPct * 100)}%`, bg: C.yellowBg, accent: C.yellow, ring: unlockPct, sub: "life admin" },
+    { key: "deals", emoji: "🤝", label: "Deals", value: active.length, bg: C.pinkBg, accent: C.pink, ring: active.length ? 0.6 : 0, sub: "active now" },
+  ];
+
+  /* content donut */
+  const donutSegs = ["Idea", "Scripted", "Filmed", "Edited"].map((s) => ({ value: h.counts[s], color: CONTENT_TINT[s], label: s })).filter((s) => s.value > 0);
+  const donutTotal = donutSegs.reduce((s, x) => s + x.value, 0);
+
+  /* budget bars by status */
+  const byStatus = ["To source", "Watching", "Bought"].map((st, i) => ({ label: st, value: items.filter((x) => x.status === st).length, color: [C.peach, C.sky, C.mint][i] }));
+
+  /* song stage mix */
+  const SONG_TINT = { todo: FAINT, active: C.amber, done: C.mint }, SONG_LABEL = { todo: "To do", active: "Active", done: "Done" };
+  const songBars = ["todo", "active", "done"].map((st) => ({ label: SONG_LABEL[st], value: stages.filter((s) => s.status === st).length, color: SONG_TINT[st] }));
+
+  /* unlock mix: ecosystem states + chain node states, mapped to a shared 3-bucket view */
+  const lockedCount = ecoBenefits.filter((b) => b.state === "locked" || b.state === "parked").length + allNodes.filter((n) => n.status === "locked").length;
+  const activeCount = ecoBenefits.filter((b) => b.state === "progress").length + allNodes.filter((n) => n.status === "active").length;
+  const doneCount = ecoLive + chainDone;
+  const unlockBars = [
+    { label: "Locked", value: lockedCount, color: FAINT },
+    { label: "Active", value: activeCount, color: C.yellow },
+    { label: "Live", value: doneCount, color: C.mint },
+  ];
+
+  /* deal stage mix */
+  const dealBars = DEAL_STAGES.slice(0, 6).map((s, i) => ({ label: s.split(" ")[0], value: ally.deals.deals.filter((d) => d.stage === s).length, color: AURAS[i % AURAS.length] }));
+
+  /* mama task mix */
+  const MAMA_TINT = { "To do": FAINT, Doing: C.amber, Done: C.mint };
+  const mamaBars = TASK_COLS.map((s) => ({ label: s, value: mama.tasks.filter((t) => t.status === s).length, color: MAMA_TINT[s] }));
+
+  /* calendar marks + schedule */
+  const marks = {};
+  active.forEach((d) => { if (d.due) marks[d.due] = C.pink; });
+  const mk = monthKey();
+  const now = new Date();
+  mama.reports.forEach((r) => { if (!r.done.includes(mk)) { const iso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(Math.min(r.dueDay, 28)).padStart(2, "0")}`; marks[iso] = C.amber; } });
+
+  const schedule = [];
+  active.filter((d) => d.due).sort((a, b) => a.due.localeCompare(b.due)).slice(0, 3).forEach((d) => schedule.push({ emoji: "🤝", title: d.brand, sub: d.deliverable || d.stage, due: d.due, tint: C.pink }));
+  mama.reports.filter((r) => !r.done.includes(mk)).forEach((r) => schedule.push({ emoji: "📊", title: r.name, sub: `due day ${r.dueDay}`, tint: C.amber }));
+  const activeBenefit = ecoBenefits.find((b) => b.state === "progress");
+  const activeUnlock = allNodes.find((n) => n.status === "active");
+  if (activeBenefit) schedule.push({ emoji: "🔓", title: activeBenefit.label, sub: activeBenefit.note || "in progress", tint: C.yellow });
+  else if (activeUnlock) schedule.push({ emoji: "🔓", title: activeUnlock.label, sub: activeUnlock.sub || "in progress", tint: C.yellow });
+
+  return (
+    <section>
+      <div style={{ marginBottom: 20 }}>
+        <h1 style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: "clamp(24px,4vw,32px)", margin: 0, letterSpacing: "-0.02em" }}>Welcome back 👋</h1>
+        <p style={{ fontSize: 13.5, color: MUT, margin: "4px 0 0" }}>Every pipeline in one place. Tap a tile to dive in.</p>
+      </div>
+
+      {/* stat tiles */}
+      <div className="grid gap-3 mb-5" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
+        {tiles.map((t) => (
+          <button key={t.key} onClick={() => go(t.key)} className="text-left" style={{ background: t.bg, border: "none", borderRadius: 20, padding: 16, cursor: "pointer", fontFamily: "inherit", position: "relative", overflow: "hidden" }}>
+            <div className="flex items-center justify-between mb-2">
+              <span style={{ fontSize: 22 }}>{t.emoji}</span>
+              <span style={{ width: 30, height: 30, borderRadius: 99, background: "rgba(255,255,255,0.7)", display: "flex", alignItems: "center", justifyContent: "center" }}><ArrowUpRight size={15} color={C.ink} /></span>
+            </div>
+            <div style={{ fontSize: 12.5, color: C.ink2, fontWeight: 500 }}>{t.label}</div>
+            <div className="flex items-end justify-between">
+              <div>
+                <div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontSize: 30, fontWeight: 700, lineHeight: 1.1 }}>{t.value}</div>
+                <div style={{ fontSize: 10.5, color: MUT }}>{t.sub}</div>
+              </div>
+              <Ring pct={t.ring} tint={t.accent} size={46} thick={6} />
+            </div>
+          </button>
+        ))}
+      </div>
+
+      {/* charts + calendar */}
+      <div className="grid gap-4" style={{ gridTemplateColumns: "1.3fr 1fr", alignItems: "start" }}>
+        <div className="flex flex-col gap-4" style={{ minWidth: 0 }}>
+          {/* one visual card per section */}
+          <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px,1fr))" }}>
+            <SectionVisualCard go={go} k="content" title="Content pipeline 🎬"
+              caption={<><span style={{ color: h.tint }}>{h.since === null ? "—" : `${h.since}d`}</span> since post · {h.msg.split(".")[0]}</>}>
+              {donutTotal > 0 ? (
+                <div className="flex items-center gap-3">
+                  <Donut segments={donutSegs} size={100} thick={14} centerTop={donutTotal} centerSub="in flight" />
+                  <div className="flex flex-col gap-1.5">
+                    {donutSegs.map((s) => (
+                      <div key={s.label} className="flex items-center gap-2" style={{ fontSize: 11.5 }}>
+                        <span style={{ width: 8, height: 8, borderRadius: 3, background: s.color }} />{s.label} <b style={{ marginLeft: "auto" }}>{s.value}</b>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : <div style={{ fontSize: 12.5, color: FAINT, padding: "18px 0", textAlign: "center" }}>Nothing in the pipeline yet.</div>}
+            </SectionVisualCard>
+
+            <SectionVisualCard go={go} k="song" title="Song 🎵"
+              caption={(stages.find((s) => s.status === "active") || stages.find((s) => s.status !== "done") || {}).name || "Released 🎉"}>
+              <Bars data={songBars} height={100} />
+            </SectionVisualCard>
+
+            <SectionVisualCard go={go} k="unlocks" title="Discovery ecosystem 🔓"
+              caption={`${doneCount}/${unlockDenom} benefits live`}>
+              <Bars data={unlockBars} height={100} />
+            </SectionVisualCard>
+
+            <SectionVisualCard go={go} k="apartment" title="Furnishing 🛋️" locked={!aptUnlocked}
+              caption={aptUnlocked ? `${fmtR(spent)} spent / ${fmtR(budgetTotal)} plan` : "🔒 opens at move-in"}>
+              <Bars data={byStatus} height={100} />
+            </SectionVisualCard>
+
+            <SectionVisualCard go={go} k="deals" title="Brand deals 🤝"
+              caption={`${active.length} active now`}>
+              {ally.deals.deals.length > 0
+                ? <Bars data={dealBars} height={100} />
+                : <div style={{ fontSize: 12.5, color: FAINT, padding: "18px 0", textAlign: "center" }}>No deals in the pipeline yet.</div>}
+            </SectionVisualCard>
+
+            <SectionVisualCard go={go} k="mama" title="Mama · Work HQ 💼"
+              caption={`${mama.tasks.filter((t) => t.status !== "Done").length} open tasks`}>
+              {mama.tasks.length > 0
+                ? <Bars data={mamaBars} height={100} />
+                : <div style={{ fontSize: 12.5, color: FAINT, padding: "18px 0", textAlign: "center" }}>No tasks captured yet.</div>}
+            </SectionVisualCard>
+          </div>
+        </div>
+
+        {/* right: calendar + schedule */}
+        <div className="flex flex-col gap-4" style={{ minWidth: 0 }}>
+          <div className="rounded-2xl p-4" style={{ ...card, borderRadius: 18 }}>
+            <div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 600, fontSize: 15, marginBottom: 10 }}>📅 {monthName()} {new Date().getFullYear()}</div>
+            <MiniCalendar marks={marks} />
+            <div className="flex gap-3 mt-3" style={{ fontSize: 10.5, color: MUT }}>
+              <span className="flex items-center gap-1"><span style={{ width: 7, height: 7, borderRadius: 99, background: C.pink }} /> deal due</span>
+              <span className="flex items-center gap-1"><span style={{ width: 7, height: 7, borderRadius: 99, background: C.amber }} /> report due</span>
+            </div>
+          </div>
+          <div className="rounded-2xl p-4" style={{ ...card, borderRadius: 18 }}>
+            <div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 600, fontSize: 15, marginBottom: 10 }}>⏭️ Coming up</div>
+            <div className="flex flex-col gap-2">
+              {schedule.length === 0 && <div style={{ fontSize: 12.5, color: FAINT }}>Nothing scheduled. Clear runway.</div>}
+              {schedule.slice(0, 5).map((s, i) => (
+                <div key={i} className="flex items-center gap-3 rounded-xl px-3 py-2" style={{ background: C.soft }}>
+                  <span style={{ width: 32, height: 32, borderRadius: 10, background: C.card, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, flexShrink: 0 }}>{s.emoji}</span>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontSize: 13, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.title}</div>
+                    <div style={{ fontSize: 11, color: MUT, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.sub}</div>
+                  </div>
+                  {s.due && <DueChip due={s.due} />}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function SectionVisualCard({ go, k, title, caption, locked, children }) {
+  const tint = MODULES[k].accent;
+  return (
+    <button onClick={() => go(k)} className="text-left rounded-2xl p-4" style={{ ...card, borderRadius: 18, borderLeft: `3px solid ${tint}`, cursor: "pointer", fontFamily: "inherit", color: "inherit", width: "100%" }}>
+      <div className="flex items-center justify-between" style={{ marginBottom: 8 }}>
+        <span style={{ fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase", color: MUT }}>{title}</span>
+        {locked ? <span style={{ fontSize: 10 }}>🔒</span> : <ArrowUpRight size={14} color={FAINT} />}
+      </div>
+      {children}
+      <div style={{ fontSize: 11, color: MUT, marginTop: 8, textAlign: "center" }}>{caption}</div>
+    </button>
+  );
+}
+
+function DueChip({ due, inline }) {
+  const d = daysUntil(due);
+  if (d === null) return null;
+  const tint = d < 0 ? C.rose : d <= 2 ? C.amber : MUT;
+  const text = d < 0 ? `overdue ${-d}d` : d === 0 ? "today" : `${d}d`;
+  if (inline) return <span style={{ color: tint }}>{text}</span>;
+  return <span style={{ fontSize: 10.5, color: tint, background: `${tint}1a`, border: `1px solid ${tint}44`, borderRadius: 99, padding: "2px 8px", flexShrink: 0 }}>{text}</span>;
+}
+
+/* ================= CONTENT ================= */
+function ContentModule({ data, setData, q }) {
+  const content = data.content;
+  const h = contentHealth(content);
+  const [title, setTitle] = useState("");
+  const patch = (p) => setData((d) => ({ ...d, content: { ...d.content, ...p } }));
+  const ql = (q || "").toLowerCase();
+  const add = () => { const t = title.trim(); if (!t) return; patch({ items: [{ id: uid(), title: t, status: "Idea", postedDate: null }, ...content.items] }); setTitle(""); };
+  const move = (id, dir) => setData((d) => {
+    const items = d.content.items.map((i) => { if (i.id !== id) return i; const next = CONTENT_COLS[Math.min(Math.max(CONTENT_COLS.indexOf(i.status) + dir, 0), CONTENT_COLS.length - 1)]; return { ...i, status: next, postedDate: next === "Posted" ? todayISO() : i.postedDate }; });
+    const moved = items.find((i) => i.id === id); const lastPosted = moved && moved.status === "Posted" ? todayISO() : d.content.lastPosted;
+    return { ...d, content: { ...d.content, items, lastPosted } };
+  });
+  const remove = (id) => patch({ items: content.items.filter((i) => i.id !== id) });
+  const updateItem = (id, p) => patch({ items: content.items.map((i) => (i.id === id ? { ...i, ...p } : i)) });
+  const clearPosted = () => patch({ items: content.items.filter((i) => i.status !== "Posted") });
+  const donutSegs = ["Idea", "Scripted", "Filmed", "Edited"].map((s) => ({ value: h.counts[s], color: CONTENT_TINT[s], label: s })).filter((s) => s.value > 0);
+  const donutTotal = donutSegs.reduce((s, x) => s + x.value, 0);
+
+  return (
+    <section>
+      <SectionHead title="Content engine" sub="Comedy pipeline. The runway tells you when to think, film, edit, and post." />
+
+      {/* compact stat bar: since-post ring + message + inline legend, no separate donut card */}
+      <div className="flex items-center gap-4 flex-wrap mb-3" style={{ ...card, borderRadius: 12, padding: "12px 16px" }}>
+        <RingDark value={h.since === null ? 0 : Math.min(h.since, content.cadence)} max={content.cadence} label={h.since === null ? "—" : `${h.since}d`} tint={h.tint} size={58} />
+        <div className="flex-1" style={{ minWidth: 200 }}>
+          <div style={{ fontSize: 13, fontWeight: 500, color: h.tint }}>{h.msg}</div>
+          <div className="flex items-center gap-2 mt-1 flex-wrap" style={{ fontSize: 11, color: MUT }}>
+            last posted
+            <input type="date" value={content.lastPosted || ""} onChange={(e) => patch({ lastPosted: e.target.value || null })} className="rounded-md" style={{ ...darkInput, fontSize: 11, padding: "3px 6px" }} />
+            every
+            <input type="number" min="1" max="14" value={content.cadence} onChange={(e) => patch({ cadence: Math.min(14, Math.max(1, Number(e.target.value) || 1)) })} className="rounded-md" style={{ ...darkInput, width: 38, fontSize: 11, padding: "3px 6px" }} />d
+          </div>
+        </div>
+        {donutTotal > 0 && (
+          <div className="flex items-center gap-3 flex-wrap" style={{ fontSize: 11, color: MUT }}>
+            {donutSegs.map((s) => (
+              <span key={s.label} className="flex items-center gap-1.5">
+                <span style={{ width: 6, height: 6, borderRadius: 2, background: s.color }} />
+                {s.label} <b style={{ color: C.ink, fontWeight: 600 }}>{s.value}</b>
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="flex gap-2 flex-wrap mb-3" style={{ ...card, borderRadius: 10, padding: 8 }}>
+        <input value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} placeholder="Drop a skit idea in the bank…" className="flex-1 rounded-lg px-3 py-1.5" style={{ ...inputStyle, minWidth: 200, fontSize: 12.5 }} />
+        <button onClick={add} style={{ ...pillDark, fontSize: 12, padding: "6px 13px" }}><Plus size={12} style={{ display: "inline", marginRight: 4 }} />Add idea</button>
+      </div>
+
+      <div className="grid gap-0" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", background: LINE, gap: 1, border: `1px solid ${LINE}`, borderRadius: 12, overflow: "hidden" }}>
+        {CONTENT_COLS.map((col) => {
+          let cItems = content.items.filter((i) => i.status === col);
+          if (ql) cItems = cItems.filter((i) => i.title.toLowerCase().includes(ql));
+          const shown = col === "Posted" ? cItems.slice(0, 6) : cItems;
+          return (
+            <div key={col} style={{ background: C.canvas, padding: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+              <div className="flex items-center justify-between px-0.5" style={{ paddingBottom: 6, borderBottom: `1px solid ${LINE}`, marginBottom: 2 }}>
+                <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 10, letterSpacing: "0.05em", textTransform: "uppercase", color: CONTENT_TINT[col] }}>{col}</span>
+                <span style={{ fontSize: 10.5, color: MUT }}>{cItems.length}</span>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                {shown.map((i) => (
+                  <div key={i.id} className="rounded-lg" style={{ background: "rgba(255,255,255,0.035)", border: `1px solid ${LINE}`, borderLeft: `2px solid ${CONTENT_TINT[col]}`, borderRadius: 8, padding: "7px 9px", opacity: col === "Posted" ? 0.55 : 1 }}>
+                    <InlineEdit value={i.title} onChange={(v) => updateItem(i.id, { title: v })} />
+                    {col === "Posted" && i.postedDate && <div style={{ fontSize: 10, color: FAINT, marginTop: 2 }}>posted {i.postedDate}</div>}
+                    <div className="flex items-center gap-1 mt-1"><span className="ml-auto flex gap-1">
+                      {col !== "Idea" && <button onClick={() => move(i.id, -1)} style={{ ...iconBtn, padding: 2 }} aria-label="Back">←</button>}
+                      {col !== "Posted" && <button onClick={() => move(i.id, 1)} style={{ ...iconBtn, padding: 2, color: C.mint }} aria-label="Forward">→</button>}
+                      <button onClick={() => remove(i.id)} style={{ ...iconBtn, padding: 2 }} aria-label="Delete"><X size={11} /></button>
+                    </span></div>
+                  </div>
+                ))}
+                {shown.length === 0 && <div className="rounded-lg text-center" style={{ border: `1px dashed ${LINE}`, fontSize: 11, color: FAINT, borderRadius: 8, padding: "10px 6px" }}>{ql ? "No match" : "Empty"}</div>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {content.items.some((i) => i.status === "Posted") && <button onClick={clearPosted} className="mt-3" style={{ ...iconBtn, fontSize: 11.5 }}>Clear posted archive</button>}
+    </section>
+  );
+}
+
+function RingDark({ value, max, label, tint, size = 100 }) {
+  const r = (size - 9) / 2, c = 2 * Math.PI * r, pct = max ? Math.min(1, value / max) : 0;
+  return (
+    <div className="flex flex-col items-center" style={{ flexShrink: 0, gap: 3 }}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img" aria-label={`${label} since post`} style={{ position: "relative" }}>
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(255,255,255,0.12)" strokeWidth="9" />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={tint} strokeWidth="9" strokeLinecap="round" strokeDasharray={c} strokeDashoffset={c * (1 - pct)} transform={`rotate(-90 ${size / 2} ${size / 2})`} style={{ transition: "stroke-dashoffset 0.6s ease" }} />
+        <text x={size / 2} y={size / 2 + size * 0.08} textAnchor="middle" fill="#fff" style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontSize: size * 0.26, fontWeight: 700 }}>{label}</text>
+      </svg>
+      <span style={{ fontSize: 9, letterSpacing: "0.06em", color: "rgba(255,255,255,0.55)", whiteSpace: "nowrap" }}>SINCE POST</span>
+    </div>
+  );
+}
+
+/* ================= SONG ================= */
+function SongModule({ data, setData }) {
+  const song = data.song;
+  const patch = (p) => setData((d) => ({ ...d, song: { ...d.song, ...p } }));
+  const updateStage = (id, p) => patch({ stages: song.stages.map((s) => (s.id === id ? { ...s, ...p } : s)) });
+  const updateGear = (id, p) => patch({ gear: song.gear.map((g) => (g.id === id ? { ...g, ...p } : g)) });
+  const addGear = () => patch({ gear: [...song.gear, { id: uid(), name: "New item", price: 0, bought: false }] });
+  const removeGear = (id) => patch({ gear: song.gear.filter((g) => g.id !== id) });
+  const done = song.stages.filter((s) => s.status === "done").length;
+  const gearTotal = song.gear.reduce((s, g) => s + (Number(g.price) || 0), 0);
+  const gearSpent = song.gear.filter((g) => g.bought).reduce((s, g) => s + (Number(g.price) || 0), 0);
+  const ST = { todo: FAINT, active: C.amber, done: C.mint }, SL = { todo: "To do", active: "Active", done: "Done" };
+
+  return (
+    <section>
+      <SectionHead title="Get a song out" sub="One roadmap from sing test to release. The gates are explicit so the next move is never vague." />
+      <div className="rounded-2xl mb-6 flex items-center gap-4" style={{ ...card, borderRadius: 16, padding: 16 }}>
+        <Ring pct={done / song.stages.length} tint={C.lilac} size={58} thick={7} label={`${done}`} />
+        <div className="flex-1"><div style={{ fontSize: 13, color: MUT, marginBottom: 6 }}>{done} of {song.stages.length} stages done</div><Bar pct={done / song.stages.length} tint={C.lilac} /></div>
+      </div>
+      <div className="flex flex-col">
+        {song.stages.map((s, i) => (
+          <div key={s.id} className="flex gap-4">
+            <div className="flex flex-col items-center" style={{ width: 36, flexShrink: 0 }}>
+              <div style={{ width: 34, height: 34, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", background: s.status === "done" ? C.mint : s.status === "active" ? `${C.amber}22` : C.card, border: `1px solid ${s.status === "done" ? C.mint : s.status === "active" ? C.amber : LINE}`, fontFamily: "'Bricolage Grotesque', sans-serif", fontSize: 13, fontWeight: 600, color: s.status === "done" ? "#fff" : s.status === "active" ? C.amber : MUT }}>
+                {s.status === "done" ? <Check size={16} strokeWidth={3} /> : i + 1}
+              </div>
+              {i < song.stages.length - 1 && <div style={{ width: 2, flex: 1, minHeight: 22, background: s.status === "done" ? `${C.mint}66` : LINE }} />}
+            </div>
+            <div className="rounded-2xl p-4 mb-4 flex-1" style={{ ...card, borderRadius: 16, borderLeft: `3px solid ${ST[s.status]}` }}>
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="flex-1" style={{ minWidth: 140 }}><InlineEdit value={s.name} onChange={(v) => updateStage(s.id, { name: v })} strong /></div>
+                <div className="flex gap-1">{["todo", "active", "done"].map((st) => (
+                  <button key={st} onClick={() => updateStage(s.id, { status: st })} className="rounded-full px-3 py-1" style={{ fontSize: 11, cursor: "pointer", fontFamily: "inherit", background: s.status === st ? `${ST[st]}22` : FILL, border: `1px solid ${s.status === st ? ST[st] : LINE}`, color: s.status === st ? ST[st] : MUT }}>{SL[st]}</button>
+                ))}</div>
+              </div>
+              <div style={{ fontSize: 12.5, color: MUT, margin: "4px 0 6px" }}>{s.desc}</div>
+              {s.kind === "gear" && (
+                <div className="rounded-xl p-3 my-2" style={{ ...cardSoft, borderRadius: 12 }}>
+                  {song.gear.map((g) => (
+                    <div key={g.id} className="flex items-center gap-2 py-1 flex-wrap">
+                      <button onClick={() => updateGear(g.id, { bought: !g.bought })} aria-label="Toggle bought" style={{ width: 22, height: 22, borderRadius: 7, cursor: "pointer", flexShrink: 0, background: g.bought ? C.mint : C.card, border: `1px solid ${g.bought ? C.mint : LINE}`, display: "flex", alignItems: "center", justifyContent: "center" }}>{g.bought && <Check size={13} color="#fff" strokeWidth={3} />}</button>
+                      <div className="flex-1" style={{ minWidth: 130, textDecoration: g.bought ? "line-through" : "none", opacity: g.bought ? 0.55 : 1 }}><InlineEdit value={g.name} onChange={(v) => updateGear(g.id, { name: v })} /></div>
+                      <span style={{ fontSize: 12, color: MUT }}>R</span>
+                      <input type="number" min="0" value={g.price || ""} placeholder="0" onChange={(e) => updateGear(g.id, { price: Number(e.target.value) || 0 })} className="rounded-lg px-2 py-1" style={{ ...inputStyle, width: 86, fontSize: 12 }} />
+                      <button onClick={() => removeGear(g.id)} style={iconBtn} aria-label="Remove"><X size={12} /></button>
+                    </div>
+                  ))}
+                  <div className="flex items-center justify-between mt-2 flex-wrap gap-2">
+                    <button onClick={addGear} className="flex items-center gap-1" style={{ ...iconBtn, color: C.lilac, fontSize: 12 }}><Plus size={12} /> Add item</button>
+                    <span style={{ fontSize: 12, color: MUT }}>Spent <b style={{ color: C.mint }}>{fmtR(gearSpent)}</b> of {fmtR(gearTotal)}</span>
+                  </div>
+                </div>
+              )}
+              {s.kind === "mix" && (
+                <div className="flex gap-2 my-2 flex-wrap">{MIX_ROUTES.map((r) => (
+                  <button key={r} onClick={() => patch({ mixRoute: song.mixRoute === r ? "" : r })} className="rounded-full px-3 py-1.5" style={{ fontSize: 12, cursor: "pointer", fontFamily: "inherit", background: song.mixRoute === r ? `${C.coral}22` : FILL, border: `1px solid ${song.mixRoute === r ? C.coral : LINE}`, color: song.mixRoute === r ? C.coral : MUT }}>{r}{song.mixRoute === r ? " ✓" : ""}</button>
+                ))}</div>
+              )}
+              <InlineEdit value={s.note} onChange={(v) => updateStage(s.id, { note: v })} placeholder="Notes…" dim />
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/* ================= UNLOCKS (Discovery ecosystem) ================= */
+const ECO_STATE = {
+  live:     { label: "Live",        tint: C.mint,   dot: C.mint },
+  progress: { label: "In progress", tint: C.yellow, dot: C.yellow },
+  locked:   { label: "Locked",      tint: FAINT,    dot: FAINT },
+  parked:   { label: "Parked",      tint: C.sky,    dot: C.sky },
+};
+const ECO_CYCLE = { locked: "progress", progress: "live", live: "parked", parked: "locked" };
+
+function UnlocksModule({ data, setData }) {
+  const eco = data.unlocks.ecosystem;
+
+  const patchBenefit = (pid, bid, p) => setData((d) => ({ ...d, unlocks: { ...d.unlocks, ecosystem: { ...d.unlocks.ecosystem, pillars: d.unlocks.ecosystem.pillars.map((pl) => pl.id === pid ? { ...pl, benefits: pl.benefits.map((b) => b.id === bid ? { ...b, ...p } : b) } : pl) } } }));
+  const addBenefit = (pid) => setData((d) => ({ ...d, unlocks: { ...d.unlocks, ecosystem: { ...d.unlocks.ecosystem, pillars: d.unlocks.ecosystem.pillars.map((pl) => pl.id === pid ? { ...pl, benefits: [...pl.benefits, { id: uid(), label: "New benefit", state: "locked", note: "" }] } : pl) } } }));
+  const removeBenefit = (pid, bid) => setData((d) => ({ ...d, unlocks: { ...d.unlocks, ecosystem: { ...d.unlocks.ecosystem, pillars: d.unlocks.ecosystem.pillars.map((pl) => pl.id === pid ? { ...pl, benefits: pl.benefits.filter((b) => b.id !== bid) } : pl) } } }));
+
+  /* chains (apartment gating + car ownership) */
+  const updateNode = (cid, nid, p) => setData((d) => ({ ...d, unlocks: { ...d.unlocks, chains: d.unlocks.chains.map((c) => c.id === cid ? { ...c, nodes: c.nodes.map((n) => (n.id === nid ? { ...n, ...p } : n)) } : c) } }));
+  const cycle = { locked: "active", active: "done", done: "locked" };
+
+  const allB = eco.pillars.flatMap((p) => p.benefits);
+  const liveN = allB.filter((b) => b.state === "live").length;
+
+  return (
+    <section>
+      <SectionHead title="Discovery ecosystem" sub="Not a checklist, a loop. Each pillar feeds Vitality status; status feeds cashback rates; engagement feeds status. Tap a state dot to cycle it." />
+
+      {/* keystone banner */}
+      <div className="rounded-2xl p-4 mb-4" style={{ ...cardSoft, borderRadius: 16, borderLeft: `3px solid ${C.lilac}` }}>
+        <div className="flex items-center gap-2 mb-1"><span style={{ fontSize: 14 }}>🗝️</span><span style={{ fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase", color: C.lilac, fontWeight: 600 }}>Keystone</span></div>
+        <p style={{ fontSize: 13, color: MUT, margin: 0, lineHeight: 1.5 }}>{eco.keystoneNote}</p>
+      </div>
+
+      {/* pillars */}
+      <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))" }}>
+        {eco.pillars.map((pl) => {
+          const live = pl.benefits.filter((b) => b.state === "live").length;
+          return (
+            <div key={pl.id} className="rounded-2xl p-4" style={{ ...card, borderRadius: 18, borderTop: `2px solid ${pl.accent}` }}>
+              <div className="flex items-center gap-2 mb-1">
+                <span style={{ fontSize: 20 }}>{pl.emoji}</span>
+                <div className="flex-1"><span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 600, fontSize: 16 }}>{pl.name}</span></div>
+                <span style={{ fontSize: 11, color: MUT }}>{live}/{pl.benefits.length} live</span>
+              </div>
+              <p style={{ fontSize: 12, color: MUT, margin: "0 0 12px", lineHeight: 1.45 }}>{pl.role}</p>
+              <div className="flex flex-col gap-2">
+                {pl.benefits.map((b) => {
+                  const st = ECO_STATE[b.state] || ECO_STATE.locked;
+                  return (
+                    <div key={b.id} className="rounded-xl p-2.5" style={{ ...cardSoft, borderRadius: 12, opacity: b.state === "locked" ? 0.62 : 1, borderLeft: b.keystone ? `2px solid ${C.lilac}` : `1px solid ${LINE}` }}>
+                      <div className="flex items-start gap-2">
+                        <button onClick={() => patchBenefit(pl.id, b.id, { state: ECO_CYCLE[b.state] })} aria-label={`State ${b.state}`} className={b.state === "progress" ? "pulse-dot" : ""} style={{ width: 12, height: 12, borderRadius: 99, marginTop: 4, flexShrink: 0, cursor: "pointer", background: st.dot, border: "none" }} />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1">
+                            <div className="flex-1 min-w-0"><InlineEdit value={b.label} onChange={(v) => patchBenefit(pl.id, b.id, { label: v })} strong /></div>
+                            {b.keystone && <span style={{ fontSize: 13 }} title="Keystone">🗝️</span>}
+                            <button onClick={() => removeBenefit(pl.id, b.id)} style={iconBtn} aria-label="Remove"><X size={11} /></button>
+                          </div>
+                          <div className="flex items-center gap-1.5 flex-wrap" style={{ marginTop: 2 }}>
+                            <span style={{ fontSize: 10, letterSpacing: "0.04em", textTransform: "uppercase", color: st.tint, fontWeight: 600 }}>{st.label}</span>
+                            {b.ampFrom && <span className="rounded" style={{ fontSize: 10, color: C.lilac, background: "rgba(123,103,224,0.14)", padding: "1px 6px", borderRadius: 6 }}>↑ amplified by {b.ampFrom}</span>}
+                          </div>
+                          <InlineEdit value={b.note || ""} onChange={(v) => patchBenefit(pl.id, b.id, { note: v })} placeholder="Detail…" dim />
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <button onClick={() => addBenefit(pl.id)} className="flex items-center gap-1 mt-2" style={{ ...iconBtn, color: pl.accent, fontSize: 12 }}><Plus size={12} /> Add benefit</button>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* legend */}
+      <div className="flex items-center gap-4 flex-wrap mt-4 mb-6" style={{ fontSize: 11, color: MUT }}>
+        {Object.values(ECO_STATE).map((s) => (
+          <span key={s.label} className="flex items-center gap-1.5"><span style={{ width: 9, height: 9, borderRadius: 99, background: s.dot }} />{s.label}</span>
+        ))}
+        <span className="flex items-center gap-1.5" style={{ color: C.lilac }}>🗝️ keystone · unlocks multiple branches</span>
+      </div>
+
+      {/* gated tracks (linear by nature: apartment + car ownership) */}
+      <SectionHead title="Sequential tracks" sub="These are genuinely linear, each step gates the next. Tap the icon to cycle locked, in progress, done." />
+      <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))" }}>
+        {data.unlocks.chains.map((ch) => {
+          const tint = /apartment/i.test(ch.name) ? C.peach : C.sky;
+          const done = ch.nodes.filter((n) => n.status === "done").length;
+          return (
+            <div key={ch.id} className="rounded-2xl p-4" style={{ ...card, borderRadius: 18 }}>
+              <div className="flex items-center gap-3 mb-3">
+                <Ring pct={ch.nodes.length ? done / ch.nodes.length : 0} tint={tint} size={50} thick={6} label={`${done}`} />
+                <div className="flex-1"><span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 600, fontSize: 15 }}>{ch.name}</span><div style={{ fontSize: 12, color: MUT }}>{done}/{ch.nodes.length} done</div></div>
+              </div>
+              <div className="flex flex-col">
+                {ch.nodes.map((n, i) => (
+                  <div key={n.id} className="flex gap-3">
+                    <div className="flex flex-col items-center" style={{ width: 30, flexShrink: 0 }}>
+                      <button onClick={() => updateNode(ch.id, n.id, { status: cycle[n.status] })} aria-label={`Status ${n.status}`} className={n.status === "active" ? "pulse-dot" : ""} style={{ width: 28, height: 28, borderRadius: 10, cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: n.status === "done" ? tint : n.status === "active" ? `${tint}22` : C.card, border: `1px solid ${n.status === "done" ? tint : n.status === "active" ? tint : LINE}` }}>
+                        {n.status === "done" && <Check size={14} color="#fff" strokeWidth={3} />}
+                        {n.status === "active" && <Sparkles size={13} color={tint} />}
+                        {n.status === "locked" && <Lock size={12} color={FAINT} />}
+                      </button>
+                      {i < ch.nodes.length - 1 && <div style={{ width: 2, flex: 1, minHeight: 16, background: n.status === "done" ? `${tint}66` : LINE }} />}
+                    </div>
+                    <div className="flex-1 pb-3" style={{ opacity: n.status === "locked" ? 0.6 : 1, minWidth: 0 }}>
+                      <InlineEdit value={n.label} onChange={(v) => updateNode(ch.id, n.id, { label: v })} strong />
+                      <InlineEdit value={n.sub} onChange={(v) => updateNode(ch.id, n.id, { sub: v })} placeholder="Detail…" dim />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+/* ================= APARTMENT ================= */
+function ApartmentModule({ data, setData, unlocked, go, q }) {
+  const items = data.apartment.items;
+  const ql = (q || "").toLowerCase();
+  const patch = (p) => setData((d) => ({ ...d, apartment: { ...d.apartment, ...p } }));
+  const update = (id, p) => patch({ items: items.map((i) => (i.id === id ? { ...i, ...p } : i)) });
+  const add = () => patch({ items: [...items, { id: uid(), name: "New item", source: "", budget: 0, status: "To source", paid: 0 }] });
+  const remove = (id) => patch({ items: items.filter((i) => i.id !== id) });
+  const ITEM_STATUSES = ["To source", "Watching", "Bought"], ST = { "To source": MUT, Watching: C.sky, Bought: C.mint };
+  const cycleStatus = (s) => ITEM_STATUSES[(ITEM_STATUSES.indexOf(s) + 1) % ITEM_STATUSES.length];
+  const budgetTotal = items.reduce((s, i) => s + (Number(i.budget) || 0), 0);
+  const spent = items.filter((i) => i.status === "Bought").reduce((s, i) => s + (Number(i.paid) || 0), 0);
+  const boughtCount = items.filter((i) => i.status === "Bought").length;
+  const over = spent > budgetTotal;
+
+  if (!unlocked) {
+    const apt = data.unlocks.chains.find((ch) => /apartment/i.test(ch.name)) || data.unlocks.chains.find((ch) => ch.nodes.some((n) => /move\s*in/i.test(n.label)));
+    const nodes = apt ? apt.nodes : [];
+    const done = nodes.filter((n) => n.status === "done").length;
+    return (
+      <section>
+        <SectionHead title="8 Kingsbury · furnishing" sub="Locked until you move in. It opens automatically when the Move-in step is done." />
+        <div className="rounded-2xl p-8 text-center" style={{ ...card, borderRadius: 20, maxWidth: 560, margin: "0 auto" }}>
+          <div style={{ fontSize: 40, marginBottom: 8 }}>🛋️🔒</div>
+          <h3 style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 600, fontSize: 19, margin: "0 0 6px" }}>Furnishing opens after move-in</h3>
+          <p style={{ fontSize: 13.5, color: MUT, margin: "0 auto 16px", maxWidth: 380, lineHeight: 1.5 }}>The {fmtR(budgetTotal)} plan and all {items.length} items are ready. This unlocks the moment you tick Move in on the Apartment chain.</p>
+          <div className="rounded-xl p-4 text-left" style={{ ...cardSoft, borderRadius: 14, maxWidth: 420, margin: "0 auto 16px" }}>
+            <div className="flex items-center justify-between mb-2"><span style={{ fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: MUT }}>Apartment chain</span><span style={{ fontSize: 12, color: C.yellow }}>{done}/{nodes.length}</span></div>
+            {nodes.map((n) => (
+              <div key={n.id} className="flex items-center gap-2 py-1" style={{ fontSize: 13, opacity: n.status === "locked" ? 0.55 : 1 }}>
+                {n.status === "done" ? <Check size={14} color={C.mint} strokeWidth={3} /> : n.status === "active" ? <Sparkles size={13} color={C.yellow} /> : <Lock size={12} color={FAINT} />}
+                <span style={{ textDecoration: n.status === "done" ? "line-through" : "none", fontWeight: /move\s*in/i.test(n.label) ? 600 : 400 }}>{n.label}</span>
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-2 justify-center flex-wrap">
+            <button onClick={() => go("unlocks")} style={pillDark}>Open the Apartment chain</button>
+            <button onClick={() => patch({ unlockedOverride: true })} style={pillGhost}>Open early anyway</button>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  let shown = items;
+  if (ql) shown = items.filter((i) => i.name.toLowerCase().includes(ql) || (i.source || "").toLowerCase().includes(ql));
+  return (
+    <section>
+      <SectionHead title="8 Kingsbury · furnishing" sub="From your Apartment Budget note. Tap a status pill to cycle it, log the real price when you buy." action={<AddBtn onClick={add} label="Add item" />} />
+      {data.apartment.unlockedOverride && (
+        <div className="rounded-xl px-3 py-2 mb-4 flex items-center justify-between flex-wrap gap-2" style={{ background: `${C.amber}14`, border: `1px solid ${C.amber}44`, borderRadius: 12, fontSize: 12.5 }}>
+          <span>Opened early. Normally gated until move-in.</span><button onClick={() => patch({ unlockedOverride: false })} style={{ ...iconBtn, fontSize: 12, color: C.amber }}>Re-lock</button>
+        </div>
+      )}
+      <div className="rounded-2xl p-5 mb-6 flex items-center gap-5 flex-wrap" style={{ ...card, borderRadius: 18 }}>
+        <Ring pct={budgetTotal ? spent / budgetTotal : 0} tint={over ? C.rose : C.mint} size={72} thick={9} label={`${Math.round((budgetTotal ? spent / budgetTotal : 0) * 100)}%`} />
+        <div className="flex-1" style={{ minWidth: 200 }}>
+          <div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontSize: 24, fontWeight: 700, color: over ? C.rose : C.ink }}>{fmtR(spent)} <span style={{ fontSize: 13, color: MUT, fontWeight: 400 }}>of {fmtR(budgetTotal)} plan</span></div>
+          <div style={{ fontSize: 12.5, color: C.mint, marginBottom: 6 }}>{boughtCount}/{items.length} items bought</div>
+          <Bar pct={budgetTotal ? spent / budgetTotal : 0} tint={over ? C.rose : C.mint} />
+          <div style={{ fontSize: 11, color: FAINT, marginTop: 8 }}>Tiers: budget ~R26k · medium R38-45k · high R55-65k</div>
+        </div>
+      </div>
+      <div className="flex flex-col gap-2">
+        {shown.map((i) => (
+          <div key={i.id} className="rounded-2xl px-4 py-3 flex items-center gap-3 flex-wrap" style={{ ...card, borderRadius: 14, borderLeft: `3px solid ${ST[i.status]}` }}>
+            <button onClick={() => update(i.id, { status: cycleStatus(i.status) })} className="rounded-full px-3 py-1" style={{ fontSize: 11, cursor: "pointer", fontFamily: "inherit", width: 92, flexShrink: 0, background: `${ST[i.status]}1a`, border: `1px solid ${ST[i.status]}55`, color: ST[i.status] }}>{i.status}</button>
+            <div className="flex-1" style={{ minWidth: 160 }}><InlineEdit value={i.name} onChange={(v) => update(i.id, { name: v })} strong /><InlineEdit value={i.source} onChange={(v) => update(i.id, { source: v })} placeholder="Source…" dim /></div>
+            <div style={{ fontSize: 11, color: MUT }}>budget<input type="number" min="0" value={i.budget || ""} placeholder="0" onChange={(e) => update(i.id, { budget: Number(e.target.value) || 0 })} className="rounded-lg px-2 py-1 ml-1" style={{ ...inputStyle, width: 78, fontSize: 12 }} /></div>
+            <div style={{ fontSize: 11, color: i.status === "Bought" ? C.mint : MUT }}>paid<input type="number" min="0" value={i.paid || ""} placeholder="0" onChange={(e) => update(i.id, { paid: Number(e.target.value) || 0 })} className="rounded-lg px-2 py-1 ml-1" style={{ ...inputStyle, width: 78, fontSize: 12 }} /></div>
+            <button onClick={() => remove(i.id)} style={iconBtn} aria-label="Delete"><Trash2 size={13} /></button>
+          </div>
+        ))}
+        {shown.length === 0 && <Empty text={ql ? "No item matches your search." : "No items. Add what the apartment needs."} />}
+      </div>
+    </section>
+  );
+}
+
+/* ================= DEALS ================= */
+function DealsModule({ data, setData, q }) {
+  const [openId, setOpenId] = useState(null);
+  const deals = data.deals.deals, clients = data.deals.clients;
+  const ql = (q || "").toLowerCase();
+  const patch = (p) => setData((d) => ({ ...d, deals: { ...d.deals, ...p } }));
+  const update = (id, p) => patch({ deals: deals.map((x) => (x.id === id ? { ...x, ...p } : x)) });
+  const remove = (id) => patch({ deals: deals.filter((x) => x.id !== id) });
+  const add = () => { const x = { id: uid(), brand: "New brand", deliverable: "", stage: "Brief", due: "", rate: "", caption: "", instructions: "", notes: "", aura: Math.floor(Math.random() * AURAS.length) }; patch({ deals: [x, ...deals] }); setOpenId(x.id); };
+  const updateClient = (id, p) => patch({ clients: clients.map((c) => (c.id === id ? { ...c, ...p } : c)) });
+  const addClient = () => patch({ clients: [{ id: uid(), name: "New client", service: "", status: "Lead", notes: "" }, ...clients] });
+  const removeClient = (id) => patch({ clients: clients.filter((c) => c.id !== id) });
+  const CT = { Lead: C.sky, Active: C.mint, Paused: MUT };
+
+  let list = [...deals].sort((a, b) => { const ap = a.stage === "Posted", bp = b.stage === "Posted"; if (ap !== bp) return ap ? 1 : -1; if (a.due && b.due) return a.due.localeCompare(b.due); return a.due ? -1 : b.due ? 1 : 0; });
+  if (ql) list = list.filter((x) => x.brand.toLowerCase().includes(ql) || (x.deliverable || "").toLowerCase().includes(ql));
+  const stageBars = DEAL_STAGES.slice(0, 6).map((s, i) => ({ label: s.split(" ")[0], value: deals.filter((d) => d.stage === s).length, color: AURAS[i % AURAS.length] }));
+
+  return (
+    <section>
+      <SectionHead title="Brand deals" sub="One card per deal: stage, deadline, and everything posting needs (caption, collab, spark code)." action={<AddBtn onClick={add} label="Add deal" />} />
+      {deals.length > 0 && (
+        <div className="rounded-2xl p-4 mb-5" style={{ ...card, borderRadius: 18 }}>
+          <div style={{ fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase", color: MUT, marginBottom: 6 }}>Where deals sit 📊</div>
+          <Bars data={stageBars} height={120} />
+        </div>
+      )}
+      <div className="flex flex-col gap-3 mb-10">
+        {list.map((x) => {
+          const tint = AURAS[(x.aura || 0) % AURAS.length], open = openId === x.id, idx = DEAL_STAGES.indexOf(x.stage);
+          return (
+            <div key={x.id} className="rounded-2xl p-4" style={{ ...card, borderRadius: 16, borderLeft: `3px solid ${tint}`, opacity: x.stage === "Posted" ? 0.65 : 1 }}>
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="flex-1" style={{ minWidth: 150 }}><InlineEdit value={x.brand} onChange={(v) => update(x.id, { brand: v })} strong /><InlineEdit value={x.deliverable} onChange={(v) => update(x.id, { deliverable: v })} placeholder="Deliverable (e.g. 1x Reel + story)" dim /></div>
+                {x.due && <DueChip due={x.due} />}
+                <input type="date" value={x.due || ""} onChange={(e) => update(x.id, { due: e.target.value })} className="rounded-lg px-2 py-1" style={{ ...inputStyle, fontSize: 12 }} aria-label="Due" />
+                <button onClick={() => setOpenId(open ? null : x.id)} style={iconBtn} aria-label="Expand">{open ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</button>
+              </div>
+              <div className="flex gap-1 mt-3 flex-wrap">{DEAL_STAGES.map((s, i) => (
+                <button key={s} onClick={() => update(x.id, { stage: s })} className="rounded-full px-2.5 py-1" style={{ fontSize: 10.5, cursor: "pointer", fontFamily: "inherit", background: i < idx ? `${tint}14` : x.stage === s ? `${tint}2b` : FILL, border: `1px solid ${x.stage === s ? tint : i < idx ? `${tint}55` : LINE}`, color: x.stage === s ? tint : i < idx ? tint : MUT }}>{i < idx ? "✓ " : ""}{s}</button>
+              ))}</div>
+              {open && (
+                <div className="mt-4 flex flex-col gap-3">
+                  <div style={{ minWidth: 160 }}><Label text="Rate" /><InlineEdit value={x.rate} onChange={(v) => update(x.id, { rate: v })} placeholder="e.g. R6,000" /></div>
+                  <div><Label text="Caption" /><AutoTextarea value={x.caption} onChange={(v) => update(x.id, { caption: v })} placeholder="Approved caption, hashtags, promo code…" /></div>
+                  <div><Label text="Posting instructions" /><AutoTextarea value={x.instructions} onChange={(v) => update(x.id, { instructions: v })} placeholder="Collab handle, spark code, whitelisting, tags…" /></div>
+                  <div><Label text="Notes" /><AutoTextarea value={x.notes} onChange={(v) => update(x.id, { notes: v })} placeholder="Feedback rounds, contacts, anything else…" /></div>
+                  <button onClick={() => remove(x.id)} className="self-end flex items-center gap-1" style={{ ...iconBtn, fontSize: 12, color: C.rose }}><Trash2 size={12} /> Remove deal</button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {list.length === 0 && <Empty text={ql ? "No deal matches your search." : "No deals in the pipeline. Add one when Tarryn sends the next brief."} />}
+      </div>
+      <SectionHead title="Personal clients" sub="Your own SMM roster. Empty for now, ready when it isn't." action={<AddBtn onClick={addClient} label="Add client" />} />
+      <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
+        {clients.map((c) => (
+          <div key={c.id} className="rounded-2xl p-4" style={{ ...card, borderRadius: 16, borderLeft: `3px solid ${CT[c.status]}` }}>
+            <div className="flex items-center gap-2"><div className="flex-1 min-w-0"><InlineEdit value={c.name} onChange={(v) => updateClient(c.id, { name: v })} strong /></div><button onClick={() => removeClient(c.id)} style={iconBtn} aria-label="Delete"><Trash2 size={13} /></button></div>
+            <InlineEdit value={c.service} onChange={(v) => updateClient(c.id, { service: v })} placeholder="Service / retainer" dim />
+            <div className="flex gap-1 mt-2">{CLIENT_STATUSES.map((s) => (
+              <button key={s} onClick={() => updateClient(c.id, { status: s })} className="rounded-full px-3 py-1 flex-1" style={{ fontSize: 11, cursor: "pointer", fontFamily: "inherit", background: c.status === s ? `${CT[s]}22` : FILL, border: `1px solid ${c.status === s ? CT[s] : LINE}`, color: c.status === s ? CT[s] : MUT }}>{s}</button>
+            ))}</div>
+            <div className="mt-2"><InlineEdit value={c.notes} onChange={(v) => updateClient(c.id, { notes: v })} placeholder="Notes…" dim /></div>
+          </div>
+        ))}
+      </div>
+      {clients.length === 0 && <Empty text="No personal clients right now. This section wakes up when you land one." />}
+    </section>
+  );
+}
+
+/* ================= MAMA ================= */
+function MamaModule({ data, setData, q }) {
+  const [sub, setSub] = useState("creators");
+  const mk = monthKey();
+  const openTasks = data.tasks.filter((t) => t.status !== "Done").length;
+  const reportsDue = data.reports.filter((r) => !r.done.includes(mk)).length;
+  const subs = [
+    { id: "creators", emoji: "🧑‍🎤", label: "Creators", count: data.creators.length },
+    { id: "tasks", emoji: "✅", label: "Tasks", count: openTasks },
+    { id: "tools", emoji: "🛠️", label: "AI Tools", count: data.tools.filter((t) => t.status !== "Shipped").length },
+    { id: "reports", emoji: "📊", label: "Reports", count: reportsDue },
+  ];
+  return (
+    <section>
+      <nav className="flex gap-2 mb-6 flex-wrap">
+        {subs.map(({ id, emoji, label, count }) => {
+          const on = sub === id;
+          return (
+            <button key={id} onClick={() => setSub(id)} className="flex items-center gap-2 rounded-full px-3.5 py-1.5" style={{ background: on ? C.dark : C.card, border: `1px solid ${on ? C.dark : LINE}`, color: on ? "#fff" : C.ink, cursor: "pointer", fontSize: 13, fontFamily: "inherit" }}>
+              <span>{emoji}</span><span>{label}</span><span style={{ fontSize: 10.5, background: on ? "rgba(255,255,255,0.2)" : FILL2, color: on ? "#fff" : MUT, borderRadius: 99, padding: "1px 6px" }}>{count}</span>
+            </button>
+          );
+        })}
+      </nav>
+      {sub === "creators" && <Creators data={data} setData={setData} q={q} />}
+      {sub === "tasks" && <Tasks data={data} setData={setData} />}
+      {sub === "tools" && <Tools data={data} setData={setData} />}
+      {sub === "reports" && <Reports data={data} setData={setData} />}
+    </section>
+  );
+}
+
+function Creators({ data, setData, q }) {
+  const [openId, setOpenId] = useState(null);
+  const ql = (q || "").toLowerCase();
+  const update = (id, patch) => setData((d) => ({ ...d, creators: d.creators.map((c) => (c.id === id ? { ...c, ...patch } : c)) }));
+  const remove = (id) => setData((d) => ({ ...d, creators: d.creators.filter((c) => c.id !== id) }));
+  const add = () => { const c = { id: uid(), name: "New creator", niche: "", goals: [], aura: Math.floor(Math.random() * AURAS.length), links: [], notes: [] }; setData((d) => ({ ...d, creators: [c, ...d.creators] })); setOpenId(c.id); };
+  let list = data.creators;
+  if (ql) list = list.filter((c) => c.name.toLowerCase().includes(ql) || (c.niche || "").toLowerCase().includes(ql));
+  return (
+    <section>
+      <SectionHead title="Creator roster" sub="Everything you know per creator: their goal, your research, the links that matter." action={<AddBtn onClick={add} label="Add creator" />} />
+      <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))" }}>
+        {list.map((c) => <CreatorCard key={c.id} c={c} open={openId === c.id} onToggle={() => setOpenId(openId === c.id ? null : c.id)} onUpdate={(p) => update(c.id, p)} onRemove={() => remove(c.id)} openTaskCount={data.tasks.filter((t) => t.creatorId === c.id && t.status !== "Done").length} />)}
+      </div>
+      {list.length === 0 && <Empty text={ql ? "No creator matches your search." : "No creators yet."} />}
+    </section>
+  );
+}
+
+function CreatorCard({ c, open, onToggle, onUpdate, onRemove, openTaskCount }) {
+  const aura = AURAS[c.aura % AURAS.length];
+  const [noteDraft, setNoteDraft] = useState(""); const [linkLabel, setLinkLabel] = useState(""); const [linkUrl, setLinkUrl] = useState("");
+  const addNote = () => { const text = noteDraft.trim(); if (!text) return; onUpdate({ notes: [{ id: uid(), text, date: new Date().toISOString().slice(0, 10) }, ...c.notes] }); setNoteDraft(""); };
+  const addLink = () => { if (!linkUrl.trim()) return; const url = linkUrl.trim().startsWith("http") ? linkUrl.trim() : `https://${linkUrl.trim()}`; onUpdate({ links: [...c.links, { id: uid(), label: linkLabel.trim() || url.replace(/^https?:\/\//, "").slice(0, 30), url }] }); setLinkLabel(""); setLinkUrl(""); };
+  return (
+    <div className="rounded-2xl p-4" style={{ ...card, borderRadius: 18, boxShadow: open ? `0 0 0 1px ${aura}44, ${card.boxShadow}` : card.boxShadow }}>
+      <div className="flex items-start gap-3">
+        <div style={{ width: 42, height: 42, borderRadius: 14, flexShrink: 0, background: aura, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 600, fontSize: 15, color: "#fff" }}>{c.name.split(" ").map((w) => w[0]).slice(0, 2).join("")}</div>
+        <div className="flex-1 min-w-0"><InlineEdit value={c.name} onChange={(v) => onUpdate({ name: v })} strong /><InlineEdit value={c.niche} onChange={(v) => onUpdate({ niche: v })} placeholder="Niche / platform" dim /></div>
+        <button onClick={onToggle} style={iconBtn} aria-label="Expand">{open ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</button>
+      </div>
+      <div className="mt-3 rounded-xl px-3 py-2" style={{ ...cardSoft, borderRadius: 12, borderLeft: `2px solid ${aura}` }}>
+        <div className="flex items-center justify-between"><div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: MUT }}>Goal{c.goals.length > 1 ? "s" : ""}</div><button onClick={() => onUpdate({ goals: [...c.goals, { id: uid(), text: "" }] })} style={{ ...iconBtn, color: aura, fontSize: 11, display: "flex", alignItems: "center", gap: 3 }}><Plus size={11} /> Add goal</button></div>
+        {c.goals.length === 0 && <div style={{ fontSize: 13, color: FAINT }}>What are they trying to achieve?</div>}
+        {c.goals.map((g, i) => (
+          <div key={g.id} className="flex items-center gap-1"><span style={{ color: aura, fontSize: 13, flexShrink: 0 }}>{c.goals.length > 1 ? `${i + 1}.` : "◆"}</span><InlineEdit value={g.text} onChange={(v) => onUpdate({ goals: c.goals.map((x) => x.id === g.id ? { ...x, text: v } : x) })} placeholder="What are they trying to achieve?" /><button onClick={() => onUpdate({ goals: c.goals.filter((x) => x.id !== g.id) })} style={iconBtn} aria-label="Remove goal"><X size={11} /></button></div>
+        ))}
+      </div>
+      <div className="flex items-center gap-3 mt-3" style={{ fontSize: 12, color: MUT }}><span><StickyNote size={11} style={{ display: "inline", marginRight: 4 }} />{c.notes.length} notes</span><span><LinkIcon size={11} style={{ display: "inline", marginRight: 4 }} />{c.links.length} links</span>{openTaskCount > 0 && <span style={{ color: aura }}>{openTaskCount} open task{openTaskCount > 1 ? "s" : ""}</span>}</div>
+      {open && (
+        <div className="mt-4 flex flex-col gap-4">
+          <div>
+            <Label text="Research log" />
+            <div className="flex gap-2"><input value={noteDraft} onChange={(e) => setNoteDraft(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addNote()} placeholder="Add a research note, insight, or idea…" className="flex-1 rounded-lg px-3 py-2" style={inputStyle} /><button onClick={addNote} style={pillAccent(aura)}>Add</button></div>
+            <div className="mt-2 flex flex-col gap-2" style={{ maxHeight: 220, overflowY: "auto" }}>{c.notes.map((n) => (<div key={n.id} className="rounded-lg px-3 py-2 flex items-start gap-2" style={{ ...cardSoft, borderRadius: 10 }}><div className="flex-1" style={{ fontSize: 13, lineHeight: 1.45 }}>{n.text}<span style={{ fontSize: 10.5, color: FAINT, marginLeft: 8 }}>{n.date}</span></div><button onClick={() => onUpdate({ notes: c.notes.filter((x) => x.id !== n.id) })} style={iconBtn} aria-label="Delete note"><X size={11} /></button></div>))}</div>
+          </div>
+          <div>
+            <Label text="Links" />
+            <div className="flex gap-2 flex-wrap mb-2">{c.links.map((l) => (<span key={l.id} className="rounded-full px-3 py-1 flex items-center gap-1.5" style={{ ...cardSoft, borderRadius: 99, fontSize: 12 }}><a href={l.url} target="_blank" rel="noreferrer" style={{ color: C.sky, textDecoration: "none", display: "flex", alignItems: "center", gap: 4 }}><ExternalLink size={11} />{l.label}</a><button onClick={() => onUpdate({ links: c.links.filter((x) => x.id !== l.id) })} style={{ ...iconBtn, padding: 0 }} aria-label="Remove link"><X size={11} /></button></span>))}</div>
+            <div className="flex gap-2 flex-wrap"><input value={linkLabel} onChange={(e) => setLinkLabel(e.target.value)} placeholder="Label" className="rounded-lg px-3 py-2" style={{ ...inputStyle, width: 110 }} /><input value={linkUrl} onChange={(e) => setLinkUrl(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addLink()} placeholder="URL (Basecamp, doc, Creator IQ…)" className="flex-1 rounded-lg px-3 py-2" style={{ ...inputStyle, minWidth: 160 }} /><button onClick={addLink} style={pillAccent(aura)}>Add</button></div>
+          </div>
+          <button onClick={onRemove} className="self-end flex items-center gap-1" style={{ ...iconBtn, fontSize: 12, color: C.rose }}><Trash2 size={12} /> Remove creator</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---- tasks ---- */
+function Tasks({ data, setData }) {
+  const [title, setTitle] = useState(""); const [source, setSource] = useState("Discord"); const [link, setLink] = useState(""); const [creatorId, setCreatorId] = useState("");
+  const add = () => { const t = title.trim(); if (!t) return; setData((d) => ({ ...d, tasks: [{ id: uid(), title: t, source, link: link.trim(), creatorId: creatorId || null, status: "To do", created: new Date().toISOString().slice(0, 10) }, ...d.tasks] })); setTitle(""); setLink(""); };
+  const advance = (id) => setData((d) => ({ ...d, tasks: d.tasks.map((t) => t.id === id ? { ...t, status: TASK_COLS[Math.min(TASK_COLS.indexOf(t.status) + 1, 2)] } : t) }));
+  const back = (id) => setData((d) => ({ ...d, tasks: d.tasks.map((t) => t.id === id ? { ...t, status: TASK_COLS[Math.max(TASK_COLS.indexOf(t.status) - 1, 0)] } : t) }));
+  const remove = (id) => setData((d) => ({ ...d, tasks: d.tasks.filter((t) => t.id !== id) }));
+  const clearDone = () => setData((d) => ({ ...d, tasks: d.tasks.filter((t) => t.status !== "Done") }));
+  const creatorById = Object.fromEntries(data.creators.map((c) => [c.id, c]));
+  const bars = SOURCES.map((s) => ({ label: s.slice(0, 4), value: data.tasks.filter((t) => t.source === s && t.status !== "Done").length, color: SOURCE_TINT[s] }));
+  return (
+    <section>
+      <SectionHead title="Task capture" sub="One place for the strays: Discord pings, Basecamp tags, email asks. Tap a card to move it forward." />
+      {data.tasks.some((t) => t.status !== "Done") && (
+        <div className="rounded-2xl p-4 mb-5" style={{ ...card, borderRadius: 18 }}><div style={{ fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase", color: MUT, marginBottom: 6 }}>Open tasks by source 📥</div><Bars data={bars} height={110} /></div>
+      )}
+      <div className="rounded-2xl p-4 mb-6" style={{ ...card, borderRadius: 16 }}>
+        <div className="flex gap-2 flex-wrap mb-3">{SOURCES.map((s) => (<button key={s} onClick={() => setSource(s)} className="rounded-full px-3 py-1" style={{ fontSize: 12, cursor: "pointer", fontFamily: "inherit", background: source === s ? `${SOURCE_TINT[s]}22` : FILL, border: `1px solid ${source === s ? SOURCE_TINT[s] : LINE}`, color: source === s ? SOURCE_TINT[s] : MUT }}>{s}</button>))}</div>
+        <div className="flex gap-2 flex-wrap">
+          <input value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} placeholder={`What came in via ${source}?`} className="flex-1 rounded-lg px-3 py-2" style={{ ...inputStyle, minWidth: 200 }} />
+          <input value={link} onChange={(e) => setLink(e.target.value)} placeholder="Link (optional)" className="rounded-lg px-3 py-2" style={{ ...inputStyle, width: 160 }} />
+          <select value={creatorId} onChange={(e) => setCreatorId(e.target.value)} className="rounded-lg px-3 py-2" style={{ ...inputStyle, width: 150, color: creatorId ? C.ink : FAINT }}><option value="">No creator</option>{data.creators.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
+          <button onClick={add} style={pillDark}><Plus size={14} style={{ display: "inline", marginRight: 4 }} />Capture</button>
+        </div>
+      </div>
+      <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))" }}>
+        {TASK_COLS.map((col) => {
+          const items = data.tasks.filter((t) => t.status === col);
+          return (
+            <div key={col} className="rounded-2xl p-3" style={{ ...cardSoft, borderRadius: 16 }}>
+              <div className="flex items-center justify-between mb-3 px-1"><span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 600, fontSize: 12, letterSpacing: "0.04em", textTransform: "uppercase" }}>{col}</span><span style={{ fontSize: 12, color: MUT }}>{items.length}</span></div>
+              <div className="flex flex-col gap-2">
+                {items.map((t) => { const tint = SOURCE_TINT[t.source] || C.lilac; const cr = t.creatorId ? creatorById[t.creatorId] : null; return (
+                  <div key={t.id} className="rounded-xl p-3" style={{ ...card, borderRadius: 12, borderLeft: `2px solid ${tint}` }}>
+                    <div style={{ fontSize: 13.5, lineHeight: 1.4, textDecoration: col === "Done" ? "line-through" : "none", opacity: col === "Done" ? 0.55 : 1 }}>{t.title}</div>
+                    <div className="flex items-center gap-2 mt-2 flex-wrap" style={{ fontSize: 11, color: MUT }}><span style={{ color: tint }}>{t.source}</span>{cr && <span>· {cr.name}</span>}{t.link && <a href={t.link.startsWith("http") ? t.link : `https://${t.link}`} target="_blank" rel="noreferrer" style={{ color: C.sky }}><ExternalLink size={11} /></a>}<span className="ml-auto flex gap-1">{col !== "To do" && <button onClick={() => back(t.id)} style={iconBtn} aria-label="Back">←</button>}{col !== "Done" && <button onClick={() => advance(t.id)} style={{ ...iconBtn, color: C.mint }} aria-label="Forward">→</button>}<button onClick={() => remove(t.id)} style={iconBtn} aria-label="Delete"><X size={12} /></button></span></div>
+                  </div>
+                ); })}
+                {items.length === 0 && <div className="rounded-xl p-3 text-center" style={{ border: `1px dashed ${LINE}`, fontSize: 12, color: FAINT, borderRadius: 12 }}>Empty</div>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {data.tasks.some((t) => t.status === "Done") && <button onClick={clearDone} className="mt-4" style={{ ...iconBtn, fontSize: 12 }}>Clear done tasks</button>}
+    </section>
+  );
+}
+
+function Tools({ data, setData }) {
+  const add = () => setData((d) => ({ ...d, tools: [{ id: uid(), name: "New tool", problem: "", status: "Idea", next: "" }, ...d.tools] }));
+  const update = (id, patch) => setData((d) => ({ ...d, tools: d.tools.map((t) => (t.id === id ? { ...t, ...patch } : t)) }));
+  const remove = (id) => setData((d) => ({ ...d, tools: d.tools.filter((t) => t.id !== id) }));
+  const ST = { Idea: C.amber, Building: C.lilac, Shipped: C.mint };
+  return (
+    <section>
+      <SectionHead title="AI Team tools" sub="Small single-file tools solving small Amplified problems. One card per tool." action={<AddBtn onClick={add} label="Add tool" />} />
+      <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
+        {data.tools.map((t) => (
+          <div key={t.id} className="rounded-2xl p-4 flex flex-col gap-3" style={{ ...card, borderRadius: 16 }}>
+            <div className="flex items-start justify-between gap-2"><InlineEdit value={t.name} onChange={(v) => update(t.id, { name: v })} strong /><button onClick={() => remove(t.id)} style={iconBtn} aria-label="Delete"><Trash2 size={13} /></button></div>
+            <div className="flex gap-1">{TOOL_STAGES.map((s) => (<button key={s} onClick={() => update(t.id, { status: s })} className="rounded-full px-3 py-1 flex-1" style={{ fontSize: 11, cursor: "pointer", fontFamily: "inherit", background: t.status === s ? `${ST[s]}22` : FILL, border: `1px solid ${t.status === s ? ST[s] : LINE}`, color: t.status === s ? ST[s] : MUT }}>{s}</button>))}</div>
+            <div><Label text="Problem it solves" /><AutoTextarea value={t.problem} onChange={(v) => update(t.id, { problem: v })} placeholder="What small problem does this fix?" /></div>
+            <div><Label text="Next step" /><InlineEdit value={t.next} onChange={(v) => update(t.id, { next: v })} placeholder="The very next action" /></div>
+          </div>
+        ))}
+      </div>
+      {data.tools.length === 0 && <Empty text="No tools yet." />}
+    </section>
+  );
+}
+
+function Reports({ data, setData }) {
+  const mk = monthKey();
+  const doneCount = data.reports.filter((r) => r.done.includes(mk)).length, total = data.reports.length, pct = total ? doneCount / total : 0;
+  const toggle = (id) => setData((d) => ({ ...d, reports: d.reports.map((r) => r.id === id ? { ...r, done: r.done.includes(mk) ? r.done.filter((m) => m !== mk) : [...r.done, mk] } : r) }));
+  const update = (id, patch) => setData((d) => ({ ...d, reports: d.reports.map((r) => (r.id === id ? { ...r, ...patch } : r)) }));
+  const add = () => setData((d) => ({ ...d, reports: [...d.reports, { id: uid(), name: "New recurring report", dueDay: 28, done: [] }] }));
+  const remove = (id) => setData((d) => ({ ...d, reports: d.reports.filter((r) => r.id !== id) }));
+  const today = new Date().getDate();
+  return (
+    <section>
+      <SectionHead title="Recurring reports" sub={`Your ${monthName()} cycle. The ring closes as reports go out.`} action={<AddBtn onClick={add} label="Add report" />} />
+      <div className="flex gap-5 flex-wrap items-start">
+        <div className="rounded-2xl p-6 flex flex-col items-center" style={{ ...card, borderRadius: 18, minWidth: 170 }}>
+          <Ring pct={pct} tint={C.lilac} size={110} thick={11} label={`${doneCount}/${total}`} sub={monthName().slice(0, 3).toUpperCase()} />
+        </div>
+        <div className="flex-1 flex flex-col gap-3" style={{ minWidth: 280 }}>
+          {data.reports.map((r) => { const done = r.done.includes(mk); const overdue = !done && today > r.dueDay; return (
+            <div key={r.id} className="rounded-2xl p-4 flex items-center gap-3 flex-wrap" style={{ ...card, borderRadius: 16, borderLeft: `3px solid ${done ? C.mint : overdue ? C.rose : C.amber}` }}>
+              <button onClick={() => toggle(r.id)} aria-label="Toggle done" style={{ width: 26, height: 26, borderRadius: 9, cursor: "pointer", flexShrink: 0, background: done ? C.mint : C.card, border: `1px solid ${done ? C.mint : LINE}`, display: "flex", alignItems: "center", justifyContent: "center" }}>{done && <Check size={15} color="#fff" strokeWidth={3} />}</button>
+              <div className="flex-1 min-w-0"><InlineEdit value={r.name} onChange={(v) => update(r.id, { name: v })} strong /><div style={{ fontSize: 12, color: overdue ? C.rose : MUT }}>Due day <input type="number" min="1" max="31" value={r.dueDay} onChange={(e) => update(r.id, { dueDay: Math.min(31, Math.max(1, Number(e.target.value) || 1)) })} style={{ ...inputStyle, width: 50, padding: "1px 6px", borderRadius: 6, fontSize: 12, display: "inline-block" }} /> each month{overdue && " · overdue"}{done && ` · done`}</div></div>
+              <button onClick={() => remove(r.id)} style={iconBtn} aria-label="Delete"><Trash2 size={13} /></button>
+            </div>
+          ); })}
+          {total === 0 && <Empty text="No recurring reports set up." />}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* ================= shared ================= */
+const inputStyle = { background: "rgba(255,255,255,0.05)", border: `1px solid ${LINE}`, color: C.ink, fontSize: 13.5, fontFamily: "'Outfit', sans-serif" };
+const darkInput = { background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.14)", color: "#fff", fontSize: 13.5, fontFamily: "'Outfit', sans-serif" };
+const iconBtn = { background: "transparent", border: "none", color: MUT, cursor: "pointer", padding: 4, borderRadius: 6, fontFamily: "'Outfit', sans-serif" };
+const pillDark = { background: "#F2F2F4", color: "#0B0B0D", border: "none", fontWeight: 600, fontSize: 13, borderRadius: 99, padding: "8px 16px", cursor: "pointer", fontFamily: "'Outfit', sans-serif" };
+const pillGhost = { background: "transparent", color: C.ink, border: `1px solid ${LINE}`, fontWeight: 500, fontSize: 13, borderRadius: 99, padding: "8px 16px", cursor: "pointer", fontFamily: "'Outfit', sans-serif" };
+const pillAccent = (tint) => ({ background: tint, color: onTint(tint), border: "none", fontWeight: 600, fontSize: 13, borderRadius: 10, padding: "8px 16px", cursor: "pointer", fontFamily: "'Outfit', sans-serif" });
+
+function SectionHead({ title, sub, action }) {
+  return (
+    <div className="flex items-end justify-between gap-3 mb-4 flex-wrap">
+      <div><h2 style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 600, fontSize: 20, margin: 0, letterSpacing: "-0.01em" }}>{title}</h2><p style={{ fontSize: 13, color: MUT, margin: "4px 0 0", maxWidth: 560 }}>{sub}</p></div>
+      {action}
+    </div>
+  );
+}
+function AddBtn({ onClick, label }) { return <button onClick={onClick} className="flex items-center gap-1.5" style={pillDark}><Plus size={14} />{label}</button>; }
+function Label({ text }) { return <div style={{ fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: MUT, marginBottom: 5 }}>{text}</div>; }
+function Empty({ text }) { return <div className="rounded-2xl p-8 text-center mt-2" style={{ border: `1px dashed ${LINE}`, color: MUT, fontSize: 13, borderRadius: 16 }}><Sparkles size={16} style={{ display: "inline", marginBottom: 6, color: FAINT }} /><br />{text}</div>; }
+function InlineEdit({ value, onChange, placeholder, strong, dim }) {
+  return <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder || ""} className="w-full" style={{ background: "transparent", border: "1px solid transparent", borderRadius: 6, padding: "2px 4px", margin: "-2px -4px", color: dim ? MUT : C.ink, fontSize: strong ? 15 : 13, fontWeight: strong ? 600 : 400, fontFamily: "'Outfit', sans-serif" }} onFocus={(e) => (e.target.style.border = `1px solid ${C.lilac}`)} onBlur={(e) => (e.target.style.border = "1px solid transparent")} />;
+}
+function AutoTextarea({ value, onChange, placeholder }) { return <textarea value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} rows={2} className="w-full rounded-lg px-3 py-2 resize-none" style={{ ...inputStyle, lineHeight: 1.45 }} />; }
