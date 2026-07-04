@@ -48,9 +48,9 @@ const C = {
   canvas: "#0B0B0D", frame: "#0B0B0D", card: "#131316", soft: "#0E0E11", dark: "#F2F2F4",
   ink: "#F2F2F4", ink2: "rgba(242,242,244,0.72)",
   /* accents */
-  mint: "#2FA37C", pink: "#E0688F", yellow: "#D69A00", lilac: "#7B67E0", sky: "#3E8FD6", peach: "#E07B3E", rose: "#E5484D",
+  mint: "#2FA37C", pink: "#E0688F", yellow: "#D69A00", lilac: "#7B67E0", sky: "#3E8FD6", peach: "#E07B3E", rose: "#E5484D", cyan: "#22B8CF",
   /* soft tiles (translucent tints on dark) */
-  mintBg: "rgba(47,163,124,0.16)", pinkBg: "rgba(224,104,143,0.16)", yellowBg: "rgba(214,154,0,0.16)", lilacBg: "rgba(123,103,224,0.16)", skyBg: "rgba(62,143,214,0.16)", peachBg: "rgba(224,123,62,0.16)",
+  mintBg: "rgba(47,163,124,0.16)", pinkBg: "rgba(224,104,143,0.16)", yellowBg: "rgba(214,154,0,0.16)", lilacBg: "rgba(123,103,224,0.16)", skyBg: "rgba(62,143,214,0.16)", peachBg: "rgba(224,123,62,0.16)", cyanBg: "rgba(34,184,207,0.16)",
   /* aliases used across modules */
   violet: "#7B67E0", teal: "#2FA37C", coral: "#E07B3E", amber: "#D69A00",
 };
@@ -70,7 +70,7 @@ const MODULES = {
   unlocks:   { emoji: "🔓", label: "Unlocks",   accent: C.yellow, bg: C.yellowBg },
   apartment: { emoji: "🛋️", label: "Apartment", accent: C.peach, bg: C.peachBg },
   deals:     { emoji: "🤝", label: "Deals",     accent: C.pink,  bg: C.pinkBg },
-  mama:      { emoji: "💼", label: "Mama",      accent: C.sky,   bg: C.skyBg },
+  mama:      { emoji: "💼", label: "Mama",      accent: C.cyan,  bg: C.cyanBg },
 };
 const TAB_ORDER = ["overview", "content", "song", "unlocks", "apartment", "deals", "mama"];
 
@@ -150,15 +150,33 @@ function computeUrgency(item) {
   return { score: Math.round(score * 10) / 10, bucket, daysUntilDue: dUntil, daysSinceProgress: dSince };
 }
 
+/* content doesn't get per-item due dates/priority — the whole pillar's urgency is one master
+   signal: how many days overdue you are on your own posting cadence. Every day past the cadence
+   window adds 25%, capping out (Urgent) by 4 days overdue. Every open content piece inherits this
+   same score/bucket, so individual ideas never compete with each other on "urgency". */
+function computeContentUrgency(content) {
+  const since = daysSince(content.lastPosted);
+  if (since === null) return { score: 2.5, bucket: "Medium", daysUntilDue: null, pctOverdue: 0 };
+  const overdueDays = Math.max(0, since - content.cadence);
+  const pctOverdue = Math.min(100, overdueDays * 25);
+  const score = Math.round((1 + (pctOverdue / 100) * 5) * 10) / 10;
+  const bucket = score >= 4.2 ? "Urgent" : score >= 2.2 ? "Medium" : "Low";
+  const daysUntilDue = content.cadence - since; // negative once overdue, matches the "Xd / overdue" display used elsewhere
+  return { score, bucket, daysUntilDue, pctOverdue };
+}
+
 /* pulls every outstanding item from all 5 pillars into one flat, scored list.
    unlocks pulls from two sources: Discovery ecosystem benefits currently "in progress",
    and the linear chain steps (apartment / car ownership) currently "active". */
 function collectPriorityTasks(ally, mama) {
   const out = [];
-  ally.content.items.filter((i) => i.status !== "Posted").forEach((i) => out.push({
-    id: i.id, pillar: "content", title: i.title, due: i.due || null,
-    priority: i.priority || "Medium", lastProgress: i.lastProgress || null, created: i.created || null,
-  }));
+  {
+    const cu = computeContentUrgency(ally.content);
+    ally.content.items.forEach((i) => out.push({
+      id: i.id, pillar: "content", title: i.title, due: null, lastProgress: null, created: i.created || null,
+      score: cu.score, bucket: cu.bucket, daysUntilDue: cu.daysUntilDue, daysSinceProgress: null, _preScored: true,
+    }));
+  }
   {
     const songCurrentIdx = ally.song.stages.findIndex((s) => s.status !== "done");
     if (songCurrentIdx !== -1) {
@@ -205,14 +223,18 @@ function collectPriorityTasks(ally, mama) {
     id: t.id, pillar: "mama", title: `${t.title} (${rp.name || rp.title})`, due: t.due || null,
     priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
   })));
-  return out.map((t) => ({ ...t, ...computeUrgency(t) }));
+  return out.map((t) => (t._preScored ? t : { ...t, ...computeUrgency(t) }));
 }
 
 /* proposes each pillar's share of today's priority, steep on purpose so the busiest/most urgent pillar dominates.
-   Always sums to exactly 100 so the pie is always fully filled, even with zero tasks anywhere. */
+   Always sums to exactly 100 so the pie is always fully filled, even with zero tasks anywhere.
+   Content is special-cased: its urgency is one master signal (days overdue on posting cadence), not
+   per-item, so its pillar weight must not inflate just because more ideas are sitting in the pipeline. */
 function computePillarAllocation(byPillar) {
-  const weight = (list) => list.reduce((s, t) => s + Math.pow(2, t.score), 0);
-  const raw = PRIORITY_PILLARS.map((k) => ({ pillar: k, w: weight(byPillar[k]) }));
+  const weight = (list, pillar) => (pillar === "content" && list.length > 0
+    ? Math.pow(2, list[0].score)
+    : list.reduce((s, t) => s + Math.pow(2, t.score), 0));
+  const raw = PRIORITY_PILLARS.map((k) => ({ pillar: k, w: weight(byPillar[k], k) }));
   const totalW = raw.reduce((s, e) => s + e.w, 0);
   const rankOf = Object.fromEntries([...raw].sort((a, b) => b.w - a.w).map((e, i) => [e.pillar, i + 1]));
   const entries = totalW > 0
@@ -688,7 +710,7 @@ function ContentModule({ data, setData, q }) {
   const openIfNot = (id) => setOpenDesc((o) => (o[id] ? o : { ...o, [id]: true }));
   const patch = (p) => setData((d) => ({ ...d, content: { ...d.content, ...p } }));
   const ql = (q || "").toLowerCase();
-  const add = () => { const t = title.trim(); if (!t) return; patch({ items: [{ id: uid(), title: t, desc: "", status: "Idea", postedDate: null, due: null, priority: "Medium", lastProgress: null, created: todayISO() }, ...content.items] }); setTitle(""); };
+  const add = () => { const t = title.trim(); if (!t) return; patch({ items: [{ id: uid(), title: t, desc: "", status: "Idea", created: todayISO() }, ...content.items] }); setTitle(""); };
   const move = (id, dir) => setData((d) => {
     const items = d.content.items.map((i) => { if (i.id !== id) return i; const next = CONTENT_COLS[Math.min(Math.max(CONTENT_COLS.indexOf(i.status) + dir, 0), CONTENT_COLS.length - 1)]; return { ...i, status: next }; });
     return { ...d, content: { ...d.content, items } };
@@ -699,6 +721,8 @@ function ContentModule({ data, setData, q }) {
   const clearPosted = () => patch({ items: content.items.filter((i) => i.status !== "Posted") });
   const donutSegs = ["Idea", "Scripted", "Filmed", "Edited"].map((s) => ({ value: h.counts[s], color: CONTENT_TINT[s], label: s })).filter((s) => s.value > 0);
   const donutTotal = donutSegs.reduce((s, x) => s + x.value, 0);
+  const cu = computeContentUrgency(content);
+  const cuTint = cu.bucket === "Urgent" ? C.rose : cu.bucket === "Medium" ? C.amber : MUT;
 
   return (
     <section>
@@ -714,6 +738,10 @@ function ContentModule({ data, setData, q }) {
             <input type="date" value={content.lastPosted || ""} onChange={(e) => patch({ lastPosted: e.target.value || null })} className="rounded-md" style={{ ...darkInput, fontSize: 12, padding: "4px 7px" }} />
             every
             <input type="number" min="1" max="14" value={content.cadence} onChange={(e) => patch({ cadence: Math.min(14, Math.max(1, Number(e.target.value) || 1)) })} className="rounded-md" style={{ ...darkInput, width: 42, fontSize: 12, padding: "4px 7px" }} />d
+          </div>
+          <div className="mt-2 flex items-center gap-1.5" style={{ fontSize: 11.5, color: MUT }}>
+            <span className="rounded-full px-2 py-0.5" style={{ background: `${cuTint}22`, border: `1px solid ${cuTint}55`, color: cuTint, fontWeight: 700, fontSize: 10.5 }}>{cu.bucket}</span>
+            pipeline urgency, +25% per day overdue on your posting cadence — every open idea shares this score, no individual deadlines needed
           </div>
         </div>
         {donutTotal > 0 && (
@@ -748,7 +776,6 @@ function ContentModule({ data, setData, q }) {
                   <div key={i.id} className="rounded-lg" style={{ background: "rgba(255,255,255,0.035)", border: `1px solid ${LINE}`, borderLeft: `2px solid ${CONTENT_TINT[col]}`, borderRadius: 10, padding: "11px 13px" }}>
                     <InlineEdit value={i.title} onChange={(v) => updateItem(i.id, { title: v })} strong />
                     <ScriptBox value={i.desc || ""} open={!!openDesc[i.id]} onFocus={() => openIfNot(i.id)} onChange={(v) => updateItem(i.id, { desc: v })} onToggle={() => toggleDesc(i.id)} />
-                    <PriorityControls item={i} onChange={(p) => updateItem(i.id, p)} />
                     <div className="flex items-center gap-1 mt-1.5"><span className="ml-auto flex gap-1">
                       {col !== "Idea" && <button onClick={() => move(i.id, -1)} style={{ ...iconBtn, padding: 2 }} aria-label="Back">←</button>}
                       {col === "Edited"
