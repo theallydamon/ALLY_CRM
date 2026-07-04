@@ -236,13 +236,33 @@ function urgencyTint(pct) {
   return C.sky;
 }
 
-/* non-content pillars: fill % = (count of Urgent items × 20%) + (Medium × 10%) + (Low × 5%).
-   Generous on purpose — each card now has a whole ring to itself. Uncapped, so a genuinely
-   overloaded pillar reads past 100% and flips into the critical/overflow state. */
+/* non-content pillars: each task contributes its own fill % — whichever is bigger of two signals:
+   (a) its priority label alone (High 20% / Medium 10% / Low 5%, the ambient weight when there's no
+   hard date to hook onto), or (b) how close its due date actually is, which dominates once a
+   deadline is real. A deadline is pass/fail, not a vibe: due tomorrow means today AND tomorrow are
+   both "must work on this", so it reads as a serious 50%, not a chill 20%. Due today means it has to
+   be the day's focus — 100%, a full ring on its own. Miss it and it's now genuinely overdue — the
+   "LATE zone" — which reads as worse than "due today", pushing straight past 100% into the
+   critical/overflow state. Contributions sum across every open task, uncapped, so a pillar that's
+   actually overloaded (several close deadlines at once) reads well past 100% rather than getting
+   capped and looking falsely under control. */
+const PRIORITY_BASE_PCT = { Low: 5, Medium: 10, High: 20 };
+function taskFillPercent(t) {
+  const base = PRIORITY_BASE_PCT[t.priority] || PRIORITY_BASE_PCT.Medium;
+  const d = t.daysUntilDue;
+  let dueTerm = 0;
+  if (d !== null && d !== undefined) {
+    if (d < 0) dueTerm = 100 + (-d) * 25; // overdue: LATE zone, escalates further every extra day
+    else if (d === 0) dueTerm = 100;      // due today: needs to be the day's whole focus
+    else if (d === 1) dueTerm = 50;       // due tomorrow: genuinely urgent, not "chilled"
+    else if (d <= 3) dueTerm = 30;
+    else if (d <= 7) dueTerm = 15;
+    else dueTerm = 5;
+  }
+  return Math.max(base, dueTerm);
+}
 function computePillarFillPercent(tasks) {
-  const counts = { Urgent: 0, Medium: 0, Low: 0 };
-  tasks.forEach((t) => { counts[t.bucket] = (counts[t.bucket] || 0) + 1; });
-  return counts.Urgent * 20 + counts.Medium * 10 + counts.Low * 5;
+  return tasks.reduce((s, t) => s + taskFillPercent(t), 0);
 }
 
 /* ================= CHARTS ================= */
@@ -1484,7 +1504,7 @@ function Tasks({ data, setData }) {
               <div className="flex flex-col gap-2">
                 {items.map((t) => { const tint = SOURCE_TINT[t.source] || C.lilac; const cr = t.creatorId ? creatorById[t.creatorId] : null; return (
                   <div key={t.id} className="rounded-xl p-3" style={{ ...card, borderRadius: 12, borderLeft: `2px solid ${tint}` }}>
-                    <div style={{ fontSize: 13.5, lineHeight: 1.4, textDecoration: col === "Done" ? "line-through" : "none", opacity: col === "Done" ? 0.55 : 1 }}>{t.title}</div>
+                    <div style={{ fontSize: 13.5, textDecoration: col === "Done" ? "line-through" : "none", opacity: col === "Done" ? 0.55 : 1 }}><InlineEdit value={t.title} onChange={(v) => update(t.id, { title: v })} /></div>
                     <div className="flex items-center gap-2 mt-2 flex-wrap" style={{ fontSize: 11, color: MUT }}><span style={{ color: tint }}>{t.source}</span>{cr && <span>· {cr.name}</span>}{t.link && <a href={t.link.startsWith("http") ? t.link : `https://${t.link}`} target="_blank" rel="noreferrer" style={{ color: C.sky }}><ExternalLink size={11} /></a>}<span className="ml-auto flex gap-1">{col !== "To do" && <button onClick={() => back(t.id)} style={iconBtn} aria-label="Back">←</button>}{col !== "Done" && <button onClick={() => advance(t.id)} style={{ ...iconBtn, color: C.mint }} aria-label="Forward">→</button>}<button onClick={() => remove(t.id)} style={iconBtn} aria-label="Delete"><X size={12} /></button></span></div>
                     {col !== "Done" && <PriorityControls item={t} onChange={(p) => update(t.id, p)} />}
                   </div>
@@ -1576,8 +1596,35 @@ function SectionHead({ title, sub, action }) {
 function AddBtn({ onClick, label }) { return <button onClick={onClick} className="flex items-center gap-1.5" style={pillDark}><Plus size={14} />{label}</button>; }
 function Label({ text }) { return <div style={{ fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: MUT, marginBottom: 5 }}>{text}</div>; }
 function Empty({ text }) { return <div className="rounded-2xl p-8 text-center mt-2" style={{ border: `1px dashed ${LINE}`, color: MUT, fontSize: 13, borderRadius: 16 }}><Sparkles size={16} style={{ display: "inline", marginBottom: 6, color: FAINT }} /><br />{text}</div>; }
+/* every title/field across every pillar goes through this one component, so this is the single
+   place that defines how editing works everywhere: double-click (or double-tap) the text to open
+   it up, edit, then Enter/click away to save — Escape reverts. Sits as plain text the rest of the
+   time so a stray single click/tap (e.g. on a card that also navigates elsewhere) doesn't
+   accidentally start an edit. */
 function InlineEdit({ value, onChange, placeholder, strong, dim }) {
-  return <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder || ""} className="w-full" style={{ background: "transparent", border: "1px solid transparent", borderRadius: 6, padding: "2px 4px", margin: "-2px -4px", color: dim ? MUT : C.ink, fontSize: strong ? 15 : 13, fontWeight: strong ? 600 : 400, fontFamily: "'Outfit', sans-serif" }} onFocus={(e) => (e.target.style.border = `1px solid ${C.lilac}`)} onBlur={(e) => (e.target.style.border = "1px solid transparent")} />;
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value || "");
+  const ref = useRef(null);
+  useEffect(() => { if (!editing) setDraft(value || ""); }, [value, editing]);
+  useEffect(() => { if (editing && ref.current) { ref.current.focus(); ref.current.select(); } }, [editing]);
+  const commit = () => { setEditing(false); if (draft !== (value || "")) onChange(draft); };
+  const cancel = () => { setDraft(value || ""); setEditing(false); };
+  const sharedFont = { color: dim ? MUT : C.ink, fontSize: strong ? 15 : 13, fontWeight: strong ? 600 : 400, fontFamily: "'Outfit', sans-serif" };
+  if (editing) {
+    return (
+      <input ref={ref} value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={commit}
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); commit(); } else if (e.key === "Escape") { e.preventDefault(); cancel(); } }}
+        placeholder={placeholder || ""} className="w-full"
+        style={{ ...sharedFont, background: "transparent", border: `1px solid ${C.lilac}`, borderRadius: 6, padding: "2px 4px", margin: "-2px -4px" }} />
+    );
+  }
+  return (
+    <div onDoubleClick={(e) => { e.stopPropagation(); setEditing(true); }} title="Double-click to edit" className="w-full"
+      style={{ ...sharedFont, color: value ? sharedFont.color : FAINT, border: "1px solid transparent", borderRadius: 6, padding: "2px 4px", margin: "-2px -4px", cursor: "text", minHeight: "1.3em", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+      {value || placeholder || ""}
+    </div>
+  );
 }
 function AutoTextarea({ value, onChange, placeholder }) { return <textarea value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} rows={2} className="w-full rounded-lg px-3 py-2 resize-none" style={{ ...inputStyle, lineHeight: 1.45 }} />; }
 
