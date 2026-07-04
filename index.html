@@ -758,12 +758,18 @@ function DueChip({ due, inline }) {
   return <span style={{ fontSize: 10.5, color: tint, background: `${tint}1a`, border: `1px solid ${tint}44`, borderRadius: 99, padding: "2px 8px", flexShrink: 0 }}>{text}</span>;
 }
 
-/* shared control row: due date + priority (Low/Med/High) + log progress + live urgency readout.
-   Used on every item across the 5 pillars so the Priorities dashboard can score them all the same way. */
+/* shared control row: due date + priority (Low/Med/High) + log progress + due-date readout.
+   Used on every item across the 5 pillars so the Priorities dashboard can score them all the same way.
+   If closeness to the deadline (or long silence) pushes the computed urgency into "Urgent" territory,
+   the stored priority auto-escalates to High so the H button itself carries that signal — no separate
+   "Urgent" badge duplicating what the priority buttons already show. */
 function PriorityControls({ item, onChange, hideDue }) {
   const u = computeUrgency(item);
-  const bucketTint = u.bucket === "Urgent" ? C.rose : u.bucket === "Medium" ? C.amber : MUT;
   const pr = item.priority || "Medium";
+  useEffect(() => {
+    if (u.bucket === "Urgent" && pr !== "High") onChange({ priority: "High" });
+  }, [u.bucket, pr]);
+  const dueTint = u.daysUntilDue === null ? MUT : u.daysUntilDue < 0 ? C.rose : u.daysUntilDue <= 2 ? C.amber : MUT;
   return (
     <div className="flex items-center gap-1.5 flex-wrap mt-1.5" style={{ fontSize: 11 }}>
       {!hideDue && (
@@ -781,9 +787,11 @@ function PriorityControls({ item, onChange, hideDue }) {
       <button onClick={() => onChange({ lastProgress: todayISO() })} className="flex items-center gap-1 rounded-full px-2 py-0.5"
         style={{ fontSize: 10, cursor: "pointer", fontFamily: "inherit", background: FILL, border: `1px solid ${LINE}`, color: MUT }}
         title="Log progress today"><Zap size={10} /> progress</button>
-      <span style={{ marginLeft: "auto", color: bucketTint, fontWeight: 600, whiteSpace: "nowrap" }}>
-        {u.bucket}{u.daysUntilDue !== null ? ` · ${u.daysUntilDue < 0 ? `${-u.daysUntilDue}d overdue` : u.daysUntilDue === 0 ? "today" : `${u.daysUntilDue}d`}` : ""}
-      </span>
+      {u.daysUntilDue !== null && (
+        <span style={{ marginLeft: "auto", color: dueTint, fontWeight: 600, whiteSpace: "nowrap" }}>
+          {u.daysUntilDue < 0 ? `${-u.daysUntilDue}d overdue` : u.daysUntilDue === 0 ? "today" : `${u.daysUntilDue}d`}
+        </span>
+      )}
     </div>
   );
 }
