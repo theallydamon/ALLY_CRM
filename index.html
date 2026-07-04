@@ -15,6 +15,9 @@
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
 <script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
 <script src="https://cdn.tailwindcss.com"></script>
+<script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore-compat.js"></script>
 <style> html,body,#root{height:100%;margin:0;background:#0B0B0D;} </style>
 </head>
 <body>
@@ -51,6 +54,7 @@ const ArrowUpRight = Ico(<><path d="M7 7h10v10"/><path d="M7 17 17 7"/></>);
 const Zap = Ico(<path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/>);
 const Download = Ico(<><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></>);
 const Upload = Ico(<><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></>);
+const CloudIcon = Ico(<path d="M17.5 19H9a7 7 0 1 1 6.71-9h.79a4.5 4.5 0 1 1 0 9Z"/>);
 
 /* ---------- palette (dark, compact) ---------- */
 const C = {
@@ -98,6 +102,28 @@ const store = {
     try { localStorage.setItem(k, v); } catch (e) {}
   },
 };
+
+/* ---------- Firebase: optional cloud sync (Google Sign-In + Firestore).
+   Loaded via <script> tags in <head> as the "compat" SDK, which attaches a global `firebase`
+   object — no bundler/import needed, fits this buildless single-file app. If the SDK fails to
+   load (offline, ad-blocker, etc.) fbAuth/fbDb stay null and the app runs exactly as before,
+   local-storage only. Cloud sync is purely additive, never a requirement to use the app. ---------- */
+const firebaseConfig = {
+  apiKey: "AIzaSyBkjEWhqucPPFVCi5cnx_15LccgbI4B-pQ",
+  authDomain: "ally-crm-cbdd1.firebaseapp.com",
+  projectId: "ally-crm-cbdd1",
+  storageBucket: "ally-crm-cbdd1.firebasestorage.app",
+  messagingSenderId: "139362174943",
+  appId: "1:139362174943:web:ea4df75838f6dfcf80a66a",
+};
+let fbAuth = null, fbDb = null;
+try {
+  if (typeof window !== "undefined" && window.firebase) {
+    window.firebase.initializeApp(firebaseConfig);
+    fbAuth = window.firebase.auth();
+    fbDb = window.firebase.firestore();
+  }
+} catch (e) { /* no cloud sync this session — local storage still works fully */ }
 
 /* ---------- helpers ---------- */
 const uid = () => Math.random().toString(36).slice(2, 9);
@@ -446,6 +472,7 @@ function AllyCRM() {
   const [saveState, setSaveState] = useState("idle");
   const loaded = useRef(false);
   const timers = useRef({});
+  const [localLoaded, setLocalLoaded] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -457,9 +484,71 @@ function AllyCRM() {
       if (!a.unlocks.ecosystem) a.unlocks.ecosystem = ALLY_SEED.unlocks.ecosystem;
       if (!a.unlocks.chains) a.unlocks.chains = ALLY_SEED.unlocks.chains;
       m = { ...m, creators: (m.creators || []).map((c) => c.goals ? c : { ...c, goals: c.goal ? [{ id: uid(), text: c.goal }] : [] }) };
-      setAlly(a); setMama(m); loaded.current = true;
+      setAlly(a); setMama(m); loaded.current = true; setLocalLoaded(true);
     })();
   }, []);
+
+  /* ---------- cloud sync: Google Sign-In + Firestore (purely additive on top of localStorage) ---------- */
+  const [user, setUser] = useState(null);
+  const [cloudState, setCloudState] = useState("offline"); // offline | loading | saving | synced | error
+  const cloudLoadedFor = useRef(null); // uid we've already reconciled with Firestore
+  const allyRef = useRef(ally); allyRef.current = ally;
+  const mamaRef = useRef(mama); mamaRef.current = mama;
+  const cloudTimer = useRef(null);
+
+  useEffect(() => {
+    if (!fbAuth) return;
+    const unsub = fbAuth.onAuthStateChanged((u) => setUser(u));
+    return unsub;
+  }, []);
+
+  const signInGoogle = async () => {
+    if (!fbAuth) return;
+    try { await fbAuth.signInWithPopup(new window.firebase.auth.GoogleAuthProvider()); }
+    catch (e) { /* popup closed/blocked — nothing to surface, user can just try again */ }
+  };
+  const signOutGoogle = async () => {
+    if (!fbAuth) return;
+    try { await fbAuth.signOut(); } catch (e) {}
+    cloudLoadedFor.current = null; setCloudState("offline"); setUser(null);
+  };
+
+  /* one-time reconcile the moment we know who's signed in AND local data has finished loading:
+     if Firestore already has a saved doc for this uid, that becomes the live state (so a second
+     device picks up everything); otherwise this device's current data becomes the seed. */
+  useEffect(() => {
+    if (!fbDb || !user || !localLoaded) return;
+    if (cloudLoadedFor.current === user.uid) return;
+    cloudLoadedFor.current = user.uid;
+    (async () => {
+      setCloudState("loading");
+      try {
+        const docRef = fbDb.collection("users").doc(user.uid);
+        const snap = await docRef.get();
+        const remote = snap.exists ? snap.data() : null;
+        if (remote && remote.ally && remote.mama) {
+          setAlly(remote.ally); setMama(remote.mama);
+        } else {
+          await docRef.set({ ally: allyRef.current, mama: mamaRef.current, updatedAt: Date.now() });
+        }
+        setCloudState("synced");
+      } catch (e) { setCloudState("error"); }
+    })();
+  }, [user, localLoaded]);
+
+  /* ongoing sync: same debounce shape as the localStorage save below, just a bit longer since
+     it's a network write, and only once the initial reconcile above has actually happened. */
+  useEffect(() => {
+    if (!fbDb || !user || cloudLoadedFor.current !== user.uid) return;
+    setCloudState("saving"); clearTimeout(cloudTimer.current);
+    cloudTimer.current = setTimeout(async () => {
+      try {
+        await fbDb.collection("users").doc(user.uid).set({ ally, mama, updatedAt: Date.now() });
+        setCloudState("synced");
+      } catch (e) { setCloudState("error"); }
+    }, 600);
+    return () => clearTimeout(cloudTimer.current);
+  }, [ally, mama, user]);
 
   const useSave = (key, data) => {
     useEffect(() => {
@@ -617,6 +706,23 @@ function AllyCRM() {
             <div style={{ fontSize: 10.5, color: saveState === "error" ? C.rose : FAINT, minWidth: 42, textAlign: "right" }}>
               {saveState === "saving" ? "saving…" : saveState === "saved" ? "saved ✓" : saveState === "error" ? "retry" : ""}
             </div>
+            {fbAuth && (
+              <div className="flex items-center gap-1.5">
+                {!user ? (
+                  <button onClick={signInGoogle} className="flex items-center gap-1" style={{ ...iconBtn, fontSize: 11, padding: "5px 8px", border: `1px solid ${LINE}`, borderRadius: 8 }} title="Sign in with Google to sync this data across your devices">
+                    <CloudIcon size={12} /> Sign in
+                  </button>
+                ) : (
+                  <div className="flex items-center gap-1.5" title={`Signed in as ${user.email}`}>
+                    {user.photoURL ? <img src={user.photoURL} alt="" style={{ width: 20, height: 20, borderRadius: 99 }} /> : <CloudIcon size={12} color={MUT} />}
+                    <span style={{ fontSize: 10.5, color: cloudState === "error" ? C.rose : MUT, whiteSpace: "nowrap" }}>
+                      {cloudState === "saving" ? "syncing…" : cloudState === "synced" ? "synced ✓" : cloudState === "loading" ? "loading…" : cloudState === "error" ? "sync error" : ""}
+                    </span>
+                    <button onClick={signOutGoogle} style={{ ...iconBtn, fontSize: 11, padding: "5px 8px", border: `1px solid ${LINE}`, borderRadius: 8 }}>Sign out</button>
+                  </div>
+                )}
+              </div>
+            )}
             <div className="flex items-center gap-1.5" title="Data only lives in this browser's storage — use these to move it to another browser or Safari's Add to Dock app, or just to keep a backup">
               {importMsg && <span style={{ fontSize: 10.5, color: importMsg === "Imported ✓" ? C.mint : C.rose, whiteSpace: "nowrap" }}>{importMsg}</span>}
               <button onClick={exportData} className="flex items-center gap-1" style={{ ...iconBtn, fontSize: 11, padding: "5px 8px", border: `1px solid ${LINE}`, borderRadius: 8 }} aria-label="Export data">
