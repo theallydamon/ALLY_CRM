@@ -117,16 +117,23 @@ const PRIORITY_LEVELS = ["Low", "Medium", "High"];
 const PRIORITY_WEIGHT = { Low: 1, Medium: 2, High: 3 };
 const PRIORITY_TINT = { Low: C.sky, Medium: C.amber, High: C.rose };
 
-/* how hard the calendar alone pushes urgency up, independent of the priority you set */
-function dueUrgency(daysUntilDue) {
-  if (daysUntilDue === null) return 0;
-  if (daysUntilDue < 0) return 3;
-  if (daysUntilDue === 0) return 2.6;
-  if (daysUntilDue <= 2) return 2.2;
-  if (daysUntilDue <= 4) return 1.5;
-  if (daysUntilDue <= 7) return 0.8;
-  if (daysUntilDue <= 14) return 0.3;
-  return 0;
+/* single source of truth for "how urgent is this due date" — one set of day bands, reused
+   everywhere so the Urgent/Medium/Low bucket, the auto-escalation to High priority, and the
+   dashboard ring's fill weight can never disagree with each other:
+     - due today or overdue   -> guarantees Urgent (the ring separately treats overdue as an even
+       worse "LATE/critical" state, but there's no bucket above Urgent for the discrete columns)
+     - due in 1-2 days        -> guarantees Urgent, regardless of what priority label is set
+     - due in 3-5 days        -> guarantees at least Medium, regardless of priority
+     - due in 6+ days (or no due date at all) -> the calendar stops forcing anything; priority
+       and stalled-progress alone decide the bucket, same as always
+   The due-date signal DOMINATES rather than stacking with priority (max, not addition) — a
+   deadline is pass/fail, so priority can only push urgency up from there, never override a close
+   deadline down. */
+function dueBandScore(daysUntilDue) {
+  if (daysUntilDue === null || daysUntilDue === undefined) return 0;
+  if (daysUntilDue <= 2) return 4.2; // today, overdue, or due within 1-2 days
+  if (daysUntilDue <= 5) return 2.2; // due in 3-5 days
+  return 0; // 6+ days out: no calendar override, priority/stall decide
 }
 
 /* how hard silence pushes urgency up: no logged progress, scaled to how much runway is left */
@@ -145,7 +152,7 @@ function computeUrgency(item) {
   const dUntil = item.due ? daysUntil(item.due) : null;
   const touch = item.lastProgress || item.created || null;
   const dSince = touch ? daysSince(touch) : null;
-  const score = base + dueUrgency(dUntil) + stallUrgency(dSince, dUntil);
+  const score = Math.max(base, dueBandScore(dUntil)) + stallUrgency(dSince, dUntil);
   const bucket = score >= 4.2 ? "Urgent" : score >= 2.2 ? "Medium" : "Low";
   return { score: Math.round(score * 10) / 10, bucket, daysUntilDue: dUntil, daysSinceProgress: dSince };
 }
@@ -239,13 +246,13 @@ function urgencyTint(pct) {
 /* non-content pillars: each task contributes its own fill % — whichever is bigger of two signals:
    (a) its priority label alone (High 20% / Medium 10% / Low 5%, the ambient weight when there's no
    hard date to hook onto), or (b) how close its due date actually is, which dominates once a
-   deadline is real. A deadline is pass/fail, not a vibe: due tomorrow means today AND tomorrow are
-   both "must work on this", so it reads as a serious 50%, not a chill 20%. Due today means it has to
-   be the day's focus — 100%, a full ring on its own. Miss it and it's now genuinely overdue — the
-   "LATE zone" — which reads as worse than "due today", pushing straight past 100% into the
-   critical/overflow state. Contributions sum across every open task, uncapped, so a pillar that's
-   actually overloaded (several close deadlines at once) reads well past 100% rather than getting
-   capped and looking falsely under control. */
+   deadline is real. Same day bands as the Urgent/Medium/Low bucket used everywhere else (dueBandScore
+   above), so the two systems always agree: due today or overdue is the critical "LATE zone" (100%+,
+   climbing the longer it's late), due in 1-2 days is the Urgent band (50%), due in 3-5 days is the
+   Medium band (25%), and 6+ days out the calendar stops forcing anything — same as computeUrgency,
+   priority alone decides from there. Contributions sum across every open task, uncapped, so a pillar
+   that's actually overloaded (several close deadlines at once) reads well past 100% rather than
+   getting capped and looking falsely under control. */
 const PRIORITY_BASE_PCT = { Low: 5, Medium: 10, High: 20 };
 function taskFillPercent(t) {
   const base = PRIORITY_BASE_PCT[t.priority] || PRIORITY_BASE_PCT.Medium;
@@ -254,10 +261,9 @@ function taskFillPercent(t) {
   if (d !== null && d !== undefined) {
     if (d < 0) dueTerm = 100 + (-d) * 25; // overdue: LATE zone, escalates further every extra day
     else if (d === 0) dueTerm = 100;      // due today: needs to be the day's whole focus
-    else if (d === 1) dueTerm = 50;       // due tomorrow: genuinely urgent, not "chilled"
-    else if (d <= 3) dueTerm = 30;
-    else if (d <= 7) dueTerm = 15;
-    else dueTerm = 5;
+    else if (d <= 2) dueTerm = 50;        // due in 1-2 days: Urgent band
+    else if (d <= 5) dueTerm = 25;        // due in 3-5 days: Medium band
+    else dueTerm = 0;                     // due 6+ days out: no override, priority alone decides
   }
   return Math.max(base, dueTerm);
 }
