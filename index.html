@@ -41,6 +41,7 @@ const Sparkles = Ico(<path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5
 const Search = Ico(<><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></>);
 const Lock = Ico(<><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></>);
 const ArrowUpRight = Ico(<><path d="M7 7h10v10"/><path d="M7 17 17 7"/></>);
+const Zap = Ico(<path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/>);
 
 /* ---------- palette (dark, compact) ---------- */
 const C = {
@@ -63,7 +64,7 @@ const cardSoft = { background: C.soft, border: `1px solid ${LINE}` };
 
 /* module identity: emoji + accent + tile bg */
 const MODULES = {
-  overview:  { emoji: "🏠", label: "Overview",  accent: C.mint,  bg: C.mintBg },
+  overview:  { emoji: "🎯", label: "Priorities",  accent: C.mint,  bg: C.mintBg },
   content:   { emoji: "🎬", label: "Content",   accent: C.sky,   bg: C.skyBg },
   song:      { emoji: "🎵", label: "Song",      accent: C.lilac, bg: C.lilacBg },
   unlocks:   { emoji: "🔓", label: "Unlocks",   accent: C.yellow, bg: C.yellowBg },
@@ -109,6 +110,95 @@ const SOURCES = ["Discord", "Basecamp", "Email", "Sheets", "Meeting", "Self"];
 const SOURCE_TINT = { Discord: C.lilac, Basecamp: C.amber, Email: C.sky, Sheets: C.mint, Meeting: C.pink, Self: MUT };
 const TASK_COLS = ["To do", "Doing", "Done"];
 const TOOL_STAGES = ["Idea", "Building", "Shipped"];
+const PRIORITY_PILLARS = ["mama", "song", "content", "deals", "unlocks"];
+
+/* ---------- priority engine: shared urgency scoring across all 5 pillars ---------- */
+const PRIORITY_LEVELS = ["Low", "Medium", "High"];
+const PRIORITY_WEIGHT = { Low: 1, Medium: 2, High: 3 };
+const PRIORITY_TINT = { Low: MUT, Medium: C.amber, High: C.rose };
+
+/* how hard the calendar alone pushes urgency up, independent of the priority you set */
+function dueUrgency(daysUntilDue) {
+  if (daysUntilDue === null) return 0;
+  if (daysUntilDue < 0) return 3;
+  if (daysUntilDue === 0) return 2.6;
+  if (daysUntilDue <= 2) return 2.2;
+  if (daysUntilDue <= 4) return 1.5;
+  if (daysUntilDue <= 7) return 0.8;
+  if (daysUntilDue <= 14) return 0.3;
+  return 0;
+}
+
+/* how hard silence pushes urgency up: no logged progress, scaled to how much runway is left */
+function stallUrgency(daysSinceProgress, daysUntilDue) {
+  if (daysSinceProgress === null) return 0;
+  const runway = daysUntilDue === null ? 14 : Math.max(daysUntilDue + daysSinceProgress, 1);
+  const ratio = daysSinceProgress / runway;
+  if (ratio >= 0.66) return 1.2;
+  if (ratio >= 0.4) return 0.6;
+  return 0;
+}
+
+/* score + bucket for one item shaped like { due, priority, lastProgress, created } */
+function computeUrgency(item) {
+  const base = PRIORITY_WEIGHT[item.priority] || PRIORITY_WEIGHT.Medium;
+  const dUntil = item.due ? daysUntil(item.due) : null;
+  const touch = item.lastProgress || item.created || null;
+  const dSince = touch ? daysSince(touch) : null;
+  const score = base + dueUrgency(dUntil) + stallUrgency(dSince, dUntil);
+  const bucket = score >= 4.2 ? "Urgent" : score >= 2.2 ? "Medium" : "Low";
+  return { score: Math.round(score * 10) / 10, bucket, daysUntilDue: dUntil, daysSinceProgress: dSince };
+}
+
+/* pulls every outstanding item from all 5 pillars into one flat, scored list.
+   unlocks pulls from two sources: Discovery ecosystem benefits currently "in progress",
+   and the linear chain steps (apartment / car ownership) currently "active". */
+function collectPriorityTasks(ally, mama) {
+  const out = [];
+  ally.content.items.filter((i) => i.status !== "Posted").forEach((i) => out.push({
+    id: i.id, pillar: "content", title: i.title, due: i.due || null,
+    priority: i.priority || "Medium", lastProgress: i.lastProgress || null, created: i.created || null,
+  }));
+  ally.song.stages.filter((s) => s.status !== "done").forEach((s) => out.push({
+    id: s.id, pillar: "song", title: s.name, due: s.due || null,
+    priority: s.priority || "Medium", lastProgress: s.lastProgress || null, created: s.created || null,
+  }));
+  ((ally.unlocks.ecosystem && ally.unlocks.ecosystem.pillars) || []).flatMap((p) => p.benefits).filter((b) => b.state === "progress").forEach((b) => out.push({
+    id: b.id, pillar: "unlocks", title: b.label, due: b.due || null,
+    priority: b.priority || "Medium", lastProgress: b.lastProgress || null, created: b.created || null,
+  }));
+  (ally.unlocks.chains || []).forEach((ch) => ch.nodes.filter((n) => n.status === "active").forEach((n) => out.push({
+    id: n.id, pillar: "unlocks", title: n.label, due: n.due || null,
+    priority: n.priority || "Medium", lastProgress: n.lastProgress || null, created: n.created || null,
+  })));
+  ally.deals.deals.filter((d) => d.stage !== "Posted").forEach((d) => out.push({
+    id: d.id, pillar: "deals", title: d.brand, due: d.due || null,
+    priority: d.priority || "Medium", lastProgress: d.lastProgress || null, created: d.created || null,
+  }));
+  mama.tasks.filter((t) => t.status !== "Done").forEach((t) => out.push({
+    id: t.id, pillar: "mama", title: t.title, due: t.due || null,
+    priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
+  }));
+  return out.map((t) => ({ ...t, ...computeUrgency(t) }));
+}
+
+/* proposes a % of today's energy per top-ranked item, steep on purpose so #1 dominates */
+function computeAllocation(ranked) {
+  const top = ranked.slice(0, 6);
+  const rest = ranked.slice(6);
+  const weight = (t) => Math.pow(2, t.score);
+  const entries = top.map((t) => ({ title: t.title, pillar: t.pillar, w: weight(t) }));
+  const restW = rest.reduce((s, t) => s + weight(t), 0);
+  if (restW > 0) entries.push({ title: "Everything else", pillar: null, w: restW });
+  const totalW = entries.reduce((s, e) => s + e.w, 0) || 1;
+  let assigned = 0;
+  return entries.map((e, i) => {
+    let pct = Math.round((e.w / totalW) * 100);
+    if (i === entries.length - 1) pct = Math.max(0, 100 - assigned);
+    assigned += pct;
+    return { ...e, pct, color: e.pillar ? MODULES[e.pillar].accent : "rgba(255,255,255,0.14)" };
+  });
+}
 
 /* ================= CHARTS ================= */
 function Ring({ pct, tint, size = 66, thick = 8, label, sub }) {
@@ -225,26 +315,26 @@ const ALLY_SEED = {
     ecosystem: {
       keystoneNote: "The Discovery Bank credit card is the keystone. It lifts HealthyFood to 50%, adds the 20% fuel Miles layer, and deepens the Vitality rewards loop. Each pillar feeds Vitality status; status feeds cashback rates; engagement feeds status. It is a loop, not a ladder.",
       pillars: [
-        { id: uid(), name: "Vitality", emoji: "\u2b50", accent: C.yellow, role: "The engine. Status drives every cashback rate below. You engage, status rises, rates rise.", benefits: [
+        { id: uid(), name: "Vitality", emoji: "⭐", accent: C.yellow, role: "The engine. Status drives every cashback rate below. You engage, status rises, rates rise.", benefits: [
           { id: uid(), label: "Vitality assessments", state: "live", note: "Done. Age assessment complete." },
           { id: uid(), label: "Activity rewards", state: "live", note: "Walking, running, gym. Feeds status.", amp: [] },
           { id: uid(), label: "Healthy sleep rewards", state: "live", note: "Tracked, feeds points.", amp: [] },
           { id: uid(), label: "Vitality status tier", state: "progress", note: "Higher tier = higher cashback % across food and fuel." },
         ] },
-        { id: uid(), name: "Bank", emoji: "\ud83d\udcb3", accent: C.lilac, role: "The keystone pillar. The credit card multiplies several branches at once.", benefits: [
+        { id: uid(), name: "Bank", emoji: "💳", accent: C.lilac, role: "The keystone pillar. The credit card multiplies several branches at once.", benefits: [
           { id: uid(), label: "Credit card", state: "progress", keystone: true, note: "Resubmit statements + letter. If declined, wait a month, reapply with payslip 3, get approved." },
           { id: uid(), label: "Discovery Miles on fuel (20%)", state: "locked", note: "Needs the card. Paid at bp with the Discovery card.", ampFrom: "Credit card" },
           { id: uid(), label: "Credit score building", state: "progress", note: "Card approval + on-time use builds the score." },
         ] },
-        { id: uid(), name: "Health", emoji: "\ud83e\ude7a", accent: C.mint, role: "The pillar hosting food cashback, the Personal Health Fund, and preventative care. Most benefits already accrue as a dependant.", benefits: [
+        { id: uid(), name: "Health", emoji: "🩺", accent: C.mint, role: "The pillar hosting food cashback, the Personal Health Fund, and preventative care. Most benefits already accrue as a dependant.", benefits: [
           { id: uid(), label: "HealthyFood 25%", state: "live", note: "Live. Woolies 25%.", },
-          { id: uid(), label: "Checkers as primary partner", state: "progress", note: "Mom to switch primary (main-member only). Checkers 10% \u2192 25%." },
+          { id: uid(), label: "Checkers as primary partner", state: "progress", note: "Mom to switch primary (main-member only). Checkers 10% → 25%." },
           { id: uid(), label: "HealthyFood 50% boost", state: "locked", note: "Card lifts the rate from 25% to 50%.", ampFrom: "Credit card" },
           { id: uid(), label: "Personal Health Fund", state: "live", note: "Accrues via completed health actions." },
           { id: uid(), label: "Preventative care (HIV, screenings)", state: "live", note: "Covered. Available as dependant too." },
           { id: uid(), label: "Own plan: Active Smart", state: "parked", note: "R1,350/mo. Control, not benefit access. Parked." },
         ] },
-        { id: uid(), name: "Insure", emoji: "\ud83d\ude97", accent: C.sky, role: "The pillar for fuel cashback and the car. Gated on moving the Corsa to Discovery Insure, which is passive for now.", benefits: [
+        { id: uid(), name: "Insure", emoji: "🚗", accent: C.sky, role: "The pillar for fuel cashback and the car. Gated on moving the Corsa to Discovery Insure, which is passive for now.", benefits: [
           { id: uid(), label: "Move Corsa to Discovery Insure", state: "parked", note: "Passive. Premium likely rises on a solo policy. Awaiting quote + Jacqui's premium." },
           { id: uid(), label: "Fuel cashback (base)", state: "locked", note: "Up to R1,500/mo at bp/Shell. Needs the Insure switch.", ampFrom: "Move Corsa to Discovery Insure" },
           { id: uid(), label: "Fuel Miles layer (20%)", state: "locked", note: "Stacks on base. Needs both the switch and the card.", ampFrom: "Credit card" },
@@ -424,7 +514,7 @@ function AllyCRM() {
 
           {/* scroll area */}
           <div className="scroll" style={{ flex: 1, overflowY: "auto", padding: "18px 20px" }}>
-            {tab === "overview" && <Overview ally={ally} mama={mama} go={go} aptUnlocked={aptUnlocked} />}
+            {tab === "overview" && <PriorityDashboard ally={ally} mama={mama} go={go} />}
             {tab === "content" && <ContentModule data={ally} setData={setAlly} q={q} />}
             {tab === "song" && <SongModule data={ally} setData={setAlly} />}
             {tab === "unlocks" && <UnlocksModule data={ally} setData={setAlly} />}
@@ -451,176 +541,85 @@ function contentHealth(content) {
   return { since, counts, ready, tint, msg };
 }
 
-/* ================= OVERVIEW ================= */
-function Overview({ ally, mama, go, aptUnlocked }) {
-  const h = contentHealth(ally.content);
-  const stages = ally.song.stages;
-  const songDone = stages.filter((s) => s.status === "done").length;
-  const songPct = songDone / stages.length;
-  const allNodes = ally.unlocks.chains.flatMap((c) => c.nodes);
-  const ecoBenefits = (ally.unlocks.ecosystem?.pillars || []).flatMap((p) => p.benefits);
-  const ecoLive = ecoBenefits.filter((b) => b.state === "live").length;
-  const chainDone = allNodes.filter((n) => n.status === "done").length;
-  const unlockDenom = ecoBenefits.length + allNodes.length;
-  const unlockPct = unlockDenom ? (ecoLive + chainDone) / unlockDenom : 0;
+/* ================= PRIORITY DASHBOARD ================= */
+function PriorityDashboard({ ally, mama, go }) {
+  const tasks = collectPriorityTasks(ally, mama);
+  const ranked = [...tasks].sort((a, b) => b.score - a.score);
+  const byPillar = Object.fromEntries(PRIORITY_PILLARS.map((k) => [k, tasks.filter((t) => t.pillar === k)]));
+  const alloc = computeAllocation(ranked);
+
+  /* calendar marks, kept from the old overview: deal due dates + monthly report due dates */
   const active = ally.deals.deals.filter((d) => d.stage !== "Posted");
-  const items = ally.apartment.items;
-  const budgetTotal = items.reduce((s, i) => s + (Number(i.budget) || 0), 0);
-  const spent = items.filter((i) => i.status === "Bought").reduce((s, i) => s + (Number(i.paid) || 0), 0);
-
-  const tiles = [
-    { key: "content", emoji: "🎬", label: "Content", value: h.counts.Idea + h.counts.Scripted + h.counts.Filmed + h.counts.Edited, bg: C.skyBg, accent: C.sky, ring: Math.min(1, (h.since || 0) / ally.content.cadence), sub: "content pieces" },
-    { key: "song", emoji: "🎵", label: "Song", value: `${Math.round(songPct * 100)}%`, bg: C.lilacBg, accent: C.lilac, ring: songPct, sub: "to release" },
-    { key: "unlocks", emoji: "🔓", label: "Unlocks", value: `${Math.round(unlockPct * 100)}%`, bg: C.yellowBg, accent: C.yellow, ring: unlockPct, sub: "life admin" },
-    { key: "deals", emoji: "🤝", label: "Deals", value: active.length, bg: C.pinkBg, accent: C.pink, ring: active.length ? 0.6 : 0, sub: "active now" },
-  ];
-
-  /* content donut */
-  const donutSegs = ["Idea", "Scripted", "Filmed", "Edited"].map((s) => ({ value: h.counts[s], color: CONTENT_TINT[s], label: s })).filter((s) => s.value > 0);
-  const donutTotal = donutSegs.reduce((s, x) => s + x.value, 0);
-
-  /* budget bars by status */
-  const byStatus = ["To source", "Watching", "Bought"].map((st, i) => ({ label: st, value: items.filter((x) => x.status === st).length, color: [C.peach, C.sky, C.mint][i] }));
-
-  /* song stage mix */
-  const SONG_TINT = { todo: FAINT, active: C.amber, done: C.mint }, SONG_LABEL = { todo: "To do", active: "Active", done: "Done" };
-  const songBars = ["todo", "active", "done"].map((st) => ({ label: SONG_LABEL[st], value: stages.filter((s) => s.status === st).length, color: SONG_TINT[st] }));
-
-  /* unlock mix: ecosystem states + chain node states, mapped to a shared 3-bucket view */
-  const lockedCount = ecoBenefits.filter((b) => b.state === "locked" || b.state === "parked").length + allNodes.filter((n) => n.status === "locked").length;
-  const activeCount = ecoBenefits.filter((b) => b.state === "progress").length + allNodes.filter((n) => n.status === "active").length;
-  const doneCount = ecoLive + chainDone;
-  const unlockBars = [
-    { label: "Locked", value: lockedCount, color: FAINT },
-    { label: "Active", value: activeCount, color: C.yellow },
-    { label: "Live", value: doneCount, color: C.mint },
-  ];
-
-  /* deal stage mix */
-  const dealBars = DEAL_STAGES.slice(0, 6).map((s, i) => ({ label: s.split(" ")[0], value: ally.deals.deals.filter((d) => d.stage === s).length, color: AURAS[i % AURAS.length] }));
-
-  /* mama task mix */
-  const MAMA_TINT = { "To do": FAINT, Doing: C.amber, Done: C.mint };
-  const mamaBars = TASK_COLS.map((s) => ({ label: s, value: mama.tasks.filter((t) => t.status === s).length, color: MAMA_TINT[s] }));
-
-  /* calendar marks + schedule */
   const marks = {};
   active.forEach((d) => { if (d.due) marks[d.due] = C.pink; });
+  ranked.forEach((t) => { if (t.due && t.bucket === "Urgent") marks[t.due] = marks[t.due] || C.rose; });
   const mk = monthKey();
   const now = new Date();
-  mama.reports.forEach((r) => { if (!r.done.includes(mk)) { const iso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(Math.min(r.dueDay, 28)).padStart(2, "0")}`; marks[iso] = C.amber; } });
-
-  const schedule = [];
-  active.filter((d) => d.due).sort((a, b) => a.due.localeCompare(b.due)).slice(0, 3).forEach((d) => schedule.push({ emoji: "🤝", title: d.brand, sub: d.deliverable || d.stage, due: d.due, tint: C.pink }));
-  mama.reports.filter((r) => !r.done.includes(mk)).forEach((r) => schedule.push({ emoji: "📊", title: r.name, sub: `due day ${r.dueDay}`, tint: C.amber }));
-  const activeBenefit = ecoBenefits.find((b) => b.state === "progress");
-  const activeUnlock = allNodes.find((n) => n.status === "active");
-  if (activeBenefit) schedule.push({ emoji: "🔓", title: activeBenefit.label, sub: activeBenefit.note || "in progress", tint: C.yellow });
-  else if (activeUnlock) schedule.push({ emoji: "🔓", title: activeUnlock.label, sub: activeUnlock.sub || "in progress", tint: C.yellow });
+  mama.reports.forEach((r) => { if (!r.done.includes(mk)) { const iso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(Math.min(r.dueDay, 28)).padStart(2, "0")}`; marks[iso] = marks[iso] || C.amber; } });
 
   return (
     <section>
       <div style={{ marginBottom: 20 }}>
-        <h1 style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: "clamp(24px,4vw,32px)", margin: 0, letterSpacing: "-0.02em" }}>Welcome back 👋</h1>
-        <p style={{ fontSize: 13.5, color: MUT, margin: "4px 0 0" }}>Every pipeline in one place. Tap a tile to dive in.</p>
+        <h1 style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: "clamp(24px,4vw,32px)", margin: 0, letterSpacing: "-0.02em" }}>Priorities right now 🎯</h1>
+        <p style={{ fontSize: 13.5, color: MUT, margin: "4px 0 0" }}>{ranked.length} open item{ranked.length === 1 ? "" : "s"} across all 5 pillars, ranked by volume and urgency. Recalculates every time you open this.</p>
       </div>
 
-      {/* stat tiles */}
-      <div className="grid gap-3 mb-5" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
-        {tiles.map((t) => (
-          <button key={t.key} onClick={() => go(t.key)} className="text-left" style={{ background: t.bg, border: "none", borderRadius: 20, padding: 16, cursor: "pointer", fontFamily: "inherit", position: "relative", overflow: "hidden" }}>
-            <div className="flex items-center justify-between mb-2">
-              <span style={{ fontSize: 22 }}>{t.emoji}</span>
-              <span style={{ width: 30, height: 30, borderRadius: 99, background: "rgba(255,255,255,0.7)", display: "flex", alignItems: "center", justifyContent: "center" }}><ArrowUpRight size={15} color={C.ink} /></span>
-            </div>
-            <div style={{ fontSize: 12.5, color: C.ink2, fontWeight: 500 }}>{t.label}</div>
-            <div className="flex items-end justify-between">
-              <div>
-                <div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontSize: 30, fontWeight: 700, lineHeight: 1.1 }}>{t.value}</div>
-                <div style={{ fontSize: 10.5, color: MUT }}>{t.sub}</div>
-              </div>
-              <Ring pct={t.ring} tint={t.accent} size={46} thick={6} />
-            </div>
-          </button>
-        ))}
-      </div>
-
-      {/* charts + calendar */}
-      <div className="grid gap-4" style={{ gridTemplateColumns: "1.3fr 1fr", alignItems: "start" }}>
-        <div className="flex flex-col gap-4" style={{ minWidth: 0 }}>
-          {/* one visual card per section */}
-          <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px,1fr))" }}>
-            <SectionVisualCard go={go} k="content" title="Content pipeline 🎬"
-              caption={<><span style={{ color: h.tint }}>{h.since === null ? "—" : `${h.since}d`}</span> since post · {h.msg.split(".")[0]}</>}>
-              {donutTotal > 0 ? (
-                <div className="flex items-center gap-3">
-                  <Donut segments={donutSegs} size={100} thick={14} centerTop={donutTotal} centerSub="in flight" />
-                  <div className="flex flex-col gap-1.5">
-                    {donutSegs.map((s) => (
-                      <div key={s.label} className="flex items-center gap-2" style={{ fontSize: 11.5 }}>
-                        <span style={{ width: 8, height: 8, borderRadius: 3, background: s.color }} />{s.label} <b style={{ marginLeft: "auto" }}>{s.value}</b>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : <div style={{ fontSize: 12.5, color: FAINT, padding: "18px 0", textAlign: "center" }}>Nothing in the pipeline yet.</div>}
-            </SectionVisualCard>
-
-            <SectionVisualCard go={go} k="song" title="Song 🎵"
-              caption={(stages.find((s) => s.status === "active") || stages.find((s) => s.status !== "done") || {}).name || "Released 🎉"}>
-              <Bars data={songBars} height={100} />
-            </SectionVisualCard>
-
-            <SectionVisualCard go={go} k="unlocks" title="Discovery ecosystem 🔓"
-              caption={`${doneCount}/${unlockDenom} benefits live`}>
-              <Bars data={unlockBars} height={100} />
-            </SectionVisualCard>
-
-            <SectionVisualCard go={go} k="apartment" title="Furnishing 🛋️" locked={!aptUnlocked}
-              caption={aptUnlocked ? `${fmtR(spent)} spent / ${fmtR(budgetTotal)} plan` : "🔒 opens at move-in"}>
-              <Bars data={byStatus} height={100} />
-            </SectionVisualCard>
-
-            <SectionVisualCard go={go} k="deals" title="Brand deals 🤝"
-              caption={`${active.length} active now`}>
-              {ally.deals.deals.length > 0
-                ? <Bars data={dealBars} height={100} />
-                : <div style={{ fontSize: 12.5, color: FAINT, padding: "18px 0", textAlign: "center" }}>No deals in the pipeline yet.</div>}
-            </SectionVisualCard>
-
-            <SectionVisualCard go={go} k="mama" title="Mama · Work HQ 💼"
-              caption={`${mama.tasks.filter((t) => t.status !== "Done").length} open tasks`}>
-              {mama.tasks.length > 0
-                ? <Bars data={mamaBars} height={100} />
-                : <div style={{ fontSize: 12.5, color: FAINT, padding: "18px 0", textAlign: "center" }}>No tasks captured yet.</div>}
-            </SectionVisualCard>
-          </div>
+      <div className="grid gap-4" style={{ gridTemplateColumns: "1.5fr 1fr", alignItems: "start" }}>
+        {/* left: one card per pillar, columns by urgency */}
+        <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(270px, 1fr))" }}>
+          {PRIORITY_PILLARS.map((k) => <PriorityPillarCard key={k} pillarKey={k} tasks={byPillar[k]} go={go} />)}
         </div>
 
-        {/* right: calendar + schedule */}
+        {/* right: ranked order, energy allocation, calendar */}
         <div className="flex flex-col gap-4" style={{ minWidth: 0 }}>
+          <div className="rounded-2xl p-4" style={{ ...card, borderRadius: 18 }}>
+            <div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 600, fontSize: 15, marginBottom: 2 }}>Do this first ⬆️</div>
+            <div style={{ fontSize: 11.5, color: MUT, marginBottom: 10 }}>Ordered by total outstanding volume + urgency, not just the nearest date.</div>
+            <div className="flex flex-col gap-2">
+              {ranked.slice(0, 8).map((t, i) => {
+                const mod = MODULES[t.pillar];
+                const tint = t.bucket === "Urgent" ? C.rose : t.bucket === "Medium" ? C.amber : MUT;
+                return (
+                  <button key={t.id} onClick={() => go(t.pillar)} className="flex items-center gap-2 rounded-xl px-2.5 py-2 text-left" style={{ background: C.soft, border: `1px solid ${LINE}`, borderLeft: `3px solid ${tint}`, cursor: "pointer", fontFamily: "inherit", color: "inherit", width: "100%" }}>
+                    <span style={{ width: 20, height: 20, borderRadius: 7, background: C.card, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10.5, fontWeight: 700, color: MUT, flexShrink: 0 }}>{i + 1}</span>
+                    <span style={{ fontSize: 13 }}>{mod.emoji}</span>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ fontSize: 12.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.title}</div>
+                      <div style={{ fontSize: 10, color: MUT }}>{mod.label}</div>
+                    </div>
+                    {t.due && <DueChip due={t.due} />}
+                  </button>
+                );
+              })}
+              {ranked.length === 0 && <div style={{ fontSize: 12.5, color: FAINT, textAlign: "center", padding: "10px 0" }}>Nothing open. Clear runway.</div>}
+            </div>
+          </div>
+
+          {ranked.length > 0 && (
+            <div className="rounded-2xl p-4" style={{ ...card, borderRadius: 18 }}>
+              <div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 600, fontSize: 15, marginBottom: 10 }}>Where today's energy should go 🔋</div>
+              <div className="flex items-center gap-3">
+                <Donut segments={alloc.map((s) => ({ value: s.pct, color: s.color }))} size={110} thick={16} centerTop={`${alloc[0] ? alloc[0].pct : 0}%`} centerSub="top item" />
+                <div className="flex flex-col gap-1.5" style={{ minWidth: 0, flex: 1 }}>
+                  {alloc.map((s, i) => (
+                    <div key={i} className="flex items-center gap-2" style={{ fontSize: 11 }}>
+                      <span style={{ width: 8, height: 8, borderRadius: 3, background: s.color, flexShrink: 0 }} />
+                      <span style={{ flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.title}</span>
+                      <b style={{ marginLeft: "auto" }}>{s.pct}%</b>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="rounded-2xl p-4" style={{ ...card, borderRadius: 18 }}>
             <div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 600, fontSize: 15, marginBottom: 10 }}>📅 {monthName()} {new Date().getFullYear()}</div>
             <MiniCalendar marks={marks} />
-            <div className="flex gap-3 mt-3" style={{ fontSize: 10.5, color: MUT }}>
+            <div className="flex gap-3 mt-3 flex-wrap" style={{ fontSize: 10.5, color: MUT }}>
+              <span className="flex items-center gap-1"><span style={{ width: 7, height: 7, borderRadius: 99, background: C.rose }} /> urgent</span>
               <span className="flex items-center gap-1"><span style={{ width: 7, height: 7, borderRadius: 99, background: C.pink }} /> deal due</span>
               <span className="flex items-center gap-1"><span style={{ width: 7, height: 7, borderRadius: 99, background: C.amber }} /> report due</span>
-            </div>
-          </div>
-          <div className="rounded-2xl p-4" style={{ ...card, borderRadius: 18 }}>
-            <div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 600, fontSize: 15, marginBottom: 10 }}>⏭️ Coming up</div>
-            <div className="flex flex-col gap-2">
-              {schedule.length === 0 && <div style={{ fontSize: 12.5, color: FAINT }}>Nothing scheduled. Clear runway.</div>}
-              {schedule.slice(0, 5).map((s, i) => (
-                <div key={i} className="flex items-center gap-3 rounded-xl px-3 py-2" style={{ background: C.soft }}>
-                  <span style={{ width: 32, height: 32, borderRadius: 10, background: C.card, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, flexShrink: 0 }}>{s.emoji}</span>
-                  <div style={{ minWidth: 0, flex: 1 }}>
-                    <div style={{ fontSize: 13, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.title}</div>
-                    <div style={{ fontSize: 11, color: MUT, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.sub}</div>
-                  </div>
-                  {s.due && <DueChip due={s.due} />}
-                </div>
-              ))}
             </div>
           </div>
         </div>
@@ -629,17 +628,41 @@ function Overview({ ally, mama, go, aptUnlocked }) {
   );
 }
 
-function SectionVisualCard({ go, k, title, caption, locked, children }) {
-  const tint = MODULES[k].accent;
+const PRIORITY_COL_TINT = { Urgent: C.rose, Medium: C.amber, Low: MUT };
+
+function PriorityPillarCard({ pillarKey, tasks, go }) {
+  const mod = MODULES[pillarKey];
+  const cols = ["Urgent", "Medium", "Low"];
   return (
-    <button onClick={() => go(k)} className="text-left rounded-2xl p-4" style={{ ...card, borderRadius: 18, borderLeft: `3px solid ${tint}`, cursor: "pointer", fontFamily: "inherit", color: "inherit", width: "100%" }}>
-      <div className="flex items-center justify-between" style={{ marginBottom: 8 }}>
-        <span style={{ fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase", color: MUT }}>{title}</span>
-        {locked ? <span style={{ fontSize: 10 }}>🔒</span> : <ArrowUpRight size={14} color={FAINT} />}
+    <div className="rounded-2xl p-4" style={{ ...card, borderRadius: 18, borderLeft: `3px solid ${mod.accent}` }}>
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2 min-w-0">
+          <span style={{ width: 28, height: 28, borderRadius: 9, background: mod.bg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, flexShrink: 0 }}>{mod.emoji}</span>
+          <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 600, fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{mod.label}</span>
+          <span style={{ fontSize: 11, color: MUT, flexShrink: 0 }}>{tasks.length} open</span>
+        </div>
+        <button onClick={() => go(pillarKey)} style={iconBtn} aria-label={`Open ${mod.label}`}><ArrowUpRight size={15} /></button>
       </div>
-      {children}
-      <div style={{ fontSize: 11, color: MUT, marginTop: 8, textAlign: "center" }}>{caption}</div>
-    </button>
+      <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+        {cols.map((col) => {
+          const items = tasks.filter((t) => t.bucket === col).sort((a, b) => b.score - a.score);
+          return (
+            <div key={col} style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 9.5, letterSpacing: "0.05em", textTransform: "uppercase", color: PRIORITY_COL_TINT[col], fontWeight: 700, marginBottom: 5 }}>{col} <span style={{ color: MUT, fontWeight: 400 }}>{items.length}</span></div>
+              <div className="flex flex-col gap-1.5">
+                {items.slice(0, 4).map((t) => (
+                  <div key={t.id} className="rounded-lg px-2 py-1.5" style={{ background: C.soft, border: `1px solid ${LINE}`, borderLeft: `2px solid ${PRIORITY_COL_TINT[col]}` }}>
+                    <div style={{ fontSize: 11, lineHeight: 1.3 }}>{t.title}</div>
+                    {t.daysUntilDue !== null && <div style={{ fontSize: 9.5, color: PRIORITY_COL_TINT[col], marginTop: 1 }}>{t.daysUntilDue < 0 ? `${-t.daysUntilDue}d overdue` : t.daysUntilDue === 0 ? "due today" : `due in ${t.daysUntilDue}d`}</div>}
+                  </div>
+                ))}
+                {items.length === 0 && <div style={{ fontSize: 10.5, color: FAINT, padding: "6px 0" }}>—</div>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -652,6 +675,36 @@ function DueChip({ due, inline }) {
   return <span style={{ fontSize: 10.5, color: tint, background: `${tint}1a`, border: `1px solid ${tint}44`, borderRadius: 99, padding: "2px 8px", flexShrink: 0 }}>{text}</span>;
 }
 
+/* shared control row: due date + priority (Low/Med/High) + log progress + live urgency readout.
+   Used on every item across the 5 pillars so the Priorities dashboard can score them all the same way. */
+function PriorityControls({ item, onChange, hideDue }) {
+  const u = computeUrgency(item);
+  const bucketTint = u.bucket === "Urgent" ? C.rose : u.bucket === "Medium" ? C.amber : MUT;
+  const pr = item.priority || "Medium";
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap mt-1.5" style={{ fontSize: 11 }}>
+      {!hideDue && (
+        <input type="date" value={item.due || ""} onChange={(e) => onChange({ due: e.target.value || null })}
+          className="rounded-md" style={{ ...darkInput, fontSize: 10.5, padding: "3px 5px" }} aria-label="Due date" />
+      )}
+      <div className="flex gap-1">
+        {PRIORITY_LEVELS.map((p) => (
+          <button key={p} onClick={() => onChange({ priority: p })} className="rounded-full px-2 py-0.5"
+            style={{ fontSize: 10, cursor: "pointer", fontFamily: "inherit",
+              background: pr === p ? `${PRIORITY_TINT[p]}22` : FILL, border: `1px solid ${pr === p ? PRIORITY_TINT[p] : LINE}`,
+              color: pr === p ? PRIORITY_TINT[p] : MUT }}>{p[0]}</button>
+        ))}
+      </div>
+      <button onClick={() => onChange({ lastProgress: todayISO() })} className="flex items-center gap-1 rounded-full px-2 py-0.5"
+        style={{ fontSize: 10, cursor: "pointer", fontFamily: "inherit", background: FILL, border: `1px solid ${LINE}`, color: MUT }}
+        title="Log progress today"><Zap size={10} /> progress</button>
+      <span style={{ marginLeft: "auto", color: bucketTint, fontWeight: 600, whiteSpace: "nowrap" }}>
+        {u.bucket}{u.daysUntilDue !== null ? ` · ${u.daysUntilDue < 0 ? `${-u.daysUntilDue}d overdue` : u.daysUntilDue === 0 ? "today" : `${u.daysUntilDue}d`}` : ""}
+      </span>
+    </div>
+  );
+}
+
 /* ================= CONTENT ================= */
 function ContentModule({ data, setData, q }) {
   const content = data.content;
@@ -659,7 +712,7 @@ function ContentModule({ data, setData, q }) {
   const [title, setTitle] = useState("");
   const patch = (p) => setData((d) => ({ ...d, content: { ...d.content, ...p } }));
   const ql = (q || "").toLowerCase();
-  const add = () => { const t = title.trim(); if (!t) return; patch({ items: [{ id: uid(), title: t, status: "Idea", postedDate: null }, ...content.items] }); setTitle(""); };
+  const add = () => { const t = title.trim(); if (!t) return; patch({ items: [{ id: uid(), title: t, status: "Idea", postedDate: null, due: null, priority: "Medium", lastProgress: null, created: todayISO() }, ...content.items] }); setTitle(""); };
   const move = (id, dir) => setData((d) => {
     const items = d.content.items.map((i) => { if (i.id !== id) return i; const next = CONTENT_COLS[Math.min(Math.max(CONTENT_COLS.indexOf(i.status) + dir, 0), CONTENT_COLS.length - 1)]; return { ...i, status: next, postedDate: next === "Posted" ? todayISO() : i.postedDate }; });
     const moved = items.find((i) => i.id === id); const lastPosted = moved && moved.status === "Posted" ? todayISO() : d.content.lastPosted;
@@ -720,6 +773,7 @@ function ContentModule({ data, setData, q }) {
                   <div key={i.id} className="rounded-lg" style={{ background: "rgba(255,255,255,0.035)", border: `1px solid ${LINE}`, borderLeft: `2px solid ${CONTENT_TINT[col]}`, borderRadius: 8, padding: "7px 9px", opacity: col === "Posted" ? 0.55 : 1 }}>
                     <InlineEdit value={i.title} onChange={(v) => updateItem(i.id, { title: v })} />
                     {col === "Posted" && i.postedDate && <div style={{ fontSize: 10, color: FAINT, marginTop: 2 }}>posted {i.postedDate}</div>}
+                    {col !== "Posted" && <PriorityControls item={i} onChange={(p) => updateItem(i.id, p)} />}
                     <div className="flex items-center gap-1 mt-1"><span className="ml-auto flex gap-1">
                       {col !== "Idea" && <button onClick={() => move(i.id, -1)} style={{ ...iconBtn, padding: 2 }} aria-label="Back">←</button>}
                       {col !== "Posted" && <button onClick={() => move(i.id, 1)} style={{ ...iconBtn, padding: 2, color: C.mint }} aria-label="Forward">→</button>}
@@ -812,6 +866,7 @@ function SongModule({ data, setData }) {
                 ))}</div>
               )}
               <InlineEdit value={s.note} onChange={(v) => updateStage(s.id, { note: v })} placeholder="Notes…" dim />
+              {s.status !== "done" && <PriorityControls item={s} onChange={(p) => updateStage(s.id, p)} />}
             </div>
           </div>
         ))}
@@ -833,7 +888,7 @@ function UnlocksModule({ data, setData }) {
   const eco = data.unlocks.ecosystem || { pillars: [], keystoneNote: "" };
 
   const patchBenefit = (pid, bid, p) => setData((d) => ({ ...d, unlocks: { ...d.unlocks, ecosystem: { ...d.unlocks.ecosystem, pillars: d.unlocks.ecosystem.pillars.map((pl) => pl.id === pid ? { ...pl, benefits: pl.benefits.map((b) => b.id === bid ? { ...b, ...p } : b) } : pl) } } }));
-  const addBenefit = (pid) => setData((d) => ({ ...d, unlocks: { ...d.unlocks, ecosystem: { ...d.unlocks.ecosystem, pillars: d.unlocks.ecosystem.pillars.map((pl) => pl.id === pid ? { ...pl, benefits: [...pl.benefits, { id: uid(), label: "New benefit", state: "locked", note: "" }] } : pl) } } }));
+  const addBenefit = (pid) => setData((d) => ({ ...d, unlocks: { ...d.unlocks, ecosystem: { ...d.unlocks.ecosystem, pillars: d.unlocks.ecosystem.pillars.map((pl) => pl.id === pid ? { ...pl, benefits: [...pl.benefits, { id: uid(), label: "New benefit", state: "locked", note: "", due: null, priority: "Medium", lastProgress: null, created: todayISO() }] } : pl) } } }));
   const removeBenefit = (pid, bid) => setData((d) => ({ ...d, unlocks: { ...d.unlocks, ecosystem: { ...d.unlocks.ecosystem, pillars: d.unlocks.ecosystem.pillars.map((pl) => pl.id === pid ? { ...pl, benefits: pl.benefits.filter((b) => b.id !== bid) } : pl) } } }));
 
   /* chains (apartment gating + car ownership) */
@@ -883,6 +938,7 @@ function UnlocksModule({ data, setData }) {
                             {b.ampFrom && <span className="rounded" style={{ fontSize: 10, color: C.lilac, background: "rgba(123,103,224,0.14)", padding: "1px 6px", borderRadius: 6 }}>↑ amplified by {b.ampFrom}</span>}
                           </div>
                           <InlineEdit value={b.note || ""} onChange={(v) => patchBenefit(pl.id, b.id, { note: v })} placeholder="Detail…" dim />
+                          {b.state === "progress" && <PriorityControls item={b} onChange={(p) => patchBenefit(pl.id, b.id, p)} />}
                         </div>
                       </div>
                     </div>
@@ -929,6 +985,7 @@ function UnlocksModule({ data, setData }) {
                     <div className="flex-1 pb-3" style={{ opacity: n.status === "locked" ? 0.6 : 1, minWidth: 0 }}>
                       <InlineEdit value={n.label} onChange={(v) => updateNode(ch.id, n.id, { label: v })} strong />
                       <InlineEdit value={n.sub} onChange={(v) => updateNode(ch.id, n.id, { sub: v })} placeholder="Detail…" dim />
+                      {n.status === "active" && <PriorityControls item={n} onChange={(p) => updateNode(ch.id, n.id, p)} />}
                     </div>
                   </div>
                 ))}
@@ -1028,7 +1085,7 @@ function DealsModule({ data, setData, q }) {
   const patch = (p) => setData((d) => ({ ...d, deals: { ...d.deals, ...p } }));
   const update = (id, p) => patch({ deals: deals.map((x) => (x.id === id ? { ...x, ...p } : x)) });
   const remove = (id) => patch({ deals: deals.filter((x) => x.id !== id) });
-  const add = () => { const x = { id: uid(), brand: "New brand", deliverable: "", stage: "Brief", due: "", rate: "", caption: "", instructions: "", notes: "", aura: Math.floor(Math.random() * AURAS.length) }; patch({ deals: [x, ...deals] }); setOpenId(x.id); };
+  const add = () => { const x = { id: uid(), brand: "New brand", deliverable: "", stage: "Brief", due: "", rate: "", caption: "", instructions: "", notes: "", aura: Math.floor(Math.random() * AURAS.length), priority: "Medium", lastProgress: null, created: todayISO() }; patch({ deals: [x, ...deals] }); setOpenId(x.id); };
   const updateClient = (id, p) => patch({ clients: clients.map((c) => (c.id === id ? { ...c, ...p } : c)) });
   const addClient = () => patch({ clients: [{ id: uid(), name: "New client", service: "", status: "Lead", notes: "" }, ...clients] });
   const removeClient = (id) => patch({ clients: clients.filter((c) => c.id !== id) });
@@ -1061,6 +1118,7 @@ function DealsModule({ data, setData, q }) {
               <div className="flex gap-1 mt-3 flex-wrap">{DEAL_STAGES.map((s, i) => (
                 <button key={s} onClick={() => update(x.id, { stage: s })} className="rounded-full px-2.5 py-1" style={{ fontSize: 10.5, cursor: "pointer", fontFamily: "inherit", background: i < idx ? `${tint}14` : x.stage === s ? `${tint}2b` : FILL, border: `1px solid ${x.stage === s ? tint : i < idx ? `${tint}55` : LINE}`, color: x.stage === s ? tint : i < idx ? tint : MUT }}>{i < idx ? "✓ " : ""}{s}</button>
               ))}</div>
+              {x.stage !== "Posted" && <PriorityControls item={x} onChange={(p) => update(x.id, p)} hideDue />}
               {open && (
                 <div className="mt-4 flex flex-col gap-3">
                   <div style={{ minWidth: 160 }}><Label text="Rate" /><InlineEdit value={x.rate} onChange={(v) => update(x.id, { rate: v })} placeholder="e.g. R6,000" /></div>
@@ -1186,9 +1244,10 @@ function CreatorCard({ c, open, onToggle, onUpdate, onRemove, openTaskCount }) {
 /* ---- tasks ---- */
 function Tasks({ data, setData }) {
   const [title, setTitle] = useState(""); const [source, setSource] = useState("Discord"); const [link, setLink] = useState(""); const [creatorId, setCreatorId] = useState("");
-  const add = () => { const t = title.trim(); if (!t) return; setData((d) => ({ ...d, tasks: [{ id: uid(), title: t, source, link: link.trim(), creatorId: creatorId || null, status: "To do", created: new Date().toISOString().slice(0, 10) }, ...d.tasks] })); setTitle(""); setLink(""); };
+  const add = () => { const t = title.trim(); if (!t) return; setData((d) => ({ ...d, tasks: [{ id: uid(), title: t, source, link: link.trim(), creatorId: creatorId || null, status: "To do", created: new Date().toISOString().slice(0, 10), due: null, priority: "Medium", lastProgress: null }, ...d.tasks] })); setTitle(""); setLink(""); };
   const advance = (id) => setData((d) => ({ ...d, tasks: d.tasks.map((t) => t.id === id ? { ...t, status: TASK_COLS[Math.min(TASK_COLS.indexOf(t.status) + 1, 2)] } : t) }));
   const back = (id) => setData((d) => ({ ...d, tasks: d.tasks.map((t) => t.id === id ? { ...t, status: TASK_COLS[Math.max(TASK_COLS.indexOf(t.status) - 1, 0)] } : t) }));
+  const update = (id, p) => setData((d) => ({ ...d, tasks: d.tasks.map((t) => (t.id === id ? { ...t, ...p } : t)) }));
   const remove = (id) => setData((d) => ({ ...d, tasks: d.tasks.filter((t) => t.id !== id) }));
   const clearDone = () => setData((d) => ({ ...d, tasks: d.tasks.filter((t) => t.status !== "Done") }));
   const creatorById = Object.fromEntries(data.creators.map((c) => [c.id, c]));
@@ -1219,6 +1278,7 @@ function Tasks({ data, setData }) {
                   <div key={t.id} className="rounded-xl p-3" style={{ ...card, borderRadius: 12, borderLeft: `2px solid ${tint}` }}>
                     <div style={{ fontSize: 13.5, lineHeight: 1.4, textDecoration: col === "Done" ? "line-through" : "none", opacity: col === "Done" ? 0.55 : 1 }}>{t.title}</div>
                     <div className="flex items-center gap-2 mt-2 flex-wrap" style={{ fontSize: 11, color: MUT }}><span style={{ color: tint }}>{t.source}</span>{cr && <span>· {cr.name}</span>}{t.link && <a href={t.link.startsWith("http") ? t.link : `https://${t.link}`} target="_blank" rel="noreferrer" style={{ color: C.sky }}><ExternalLink size={11} /></a>}<span className="ml-auto flex gap-1">{col !== "To do" && <button onClick={() => back(t.id)} style={iconBtn} aria-label="Back">←</button>}{col !== "Done" && <button onClick={() => advance(t.id)} style={{ ...iconBtn, color: C.mint }} aria-label="Forward">→</button>}<button onClick={() => remove(t.id)} style={iconBtn} aria-label="Delete"><X size={12} /></button></span></div>
+                    {col !== "Done" && <PriorityControls item={t} onChange={(p) => update(t.id, p)} />}
                   </div>
                 ); })}
                 {items.length === 0 && <div className="rounded-xl p-3 text-center" style={{ border: `1px dashed ${LINE}`, fontSize: 12, color: FAINT, borderRadius: 12 }}>Empty</div>}
