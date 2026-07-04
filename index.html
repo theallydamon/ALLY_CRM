@@ -101,8 +101,8 @@ const monthName = () => new Date().toLocaleDateString("en-ZA", { month: "long" }
 const isApartmentUnlocked = (ally) => !!ally.apartment.unlockedOverride || ally.unlocks.chains.some((ch) => ch.nodes.some((n) => /move\s*in/i.test(n.label) && n.status === "done"));
 
 /* ---------- pipeline constants ---------- */
-const CONTENT_COLS = ["Idea", "Scripted", "Filmed", "Edited"];
-const CONTENT_TINT = { Idea: C.sky, Scripted: C.lilac, Filmed: C.amber, Edited: C.mint, Posted: FAINT };
+const CONTENT_COLS = ["Scripted", "Filmed", "Edited"];
+const CONTENT_TINT = { Scripted: C.lilac, Filmed: C.amber, Edited: C.mint, Posted: FAINT };
 const DEAL_STAGES = ["Brief", "Script", "Script approval", "Film", "Edit", "Final approval", "Posted"];
 const CLIENT_STATUSES = ["Lead", "Active", "Paused"];
 const MIX_ROUTES = ["Fiverr", "Crighton", "Cassidy's boyfriend", "DIY"];
@@ -151,18 +151,17 @@ function computeUrgency(item) {
 }
 
 /* content doesn't get per-item due dates/priority — the whole pillar's urgency is one master
-   signal: how many days overdue you are on your own posting cadence. Every day past the cadence
-   window adds 25%, capping out (Urgent) by 4 days overdue. Every open content piece inherits this
-   same score/bucket, so individual ideas never compete with each other on "urgency". */
+   signal, and it's driven entirely by days since your last post, full stop. It does not care what's
+   sitting in the pipeline (Scripted/Filmed/Edited are for your own tracking only) and it does not
+   care about a posting-cadence target — 1 day since post = 20% full, 5 days = 100%, and it keeps
+   climbing past that into an overflow/critical state if you let it run. Every open content piece
+   inherits this same score/bucket, so individual ideas never compete with each other on "urgency". */
 function computeContentUrgency(content) {
   const since = daysSince(content.lastPosted);
-  if (since === null) return { score: 2.5, bucket: "Medium", daysUntilDue: null, pctOverdue: 0 };
-  const overdueDays = Math.max(0, since - content.cadence);
-  const pctOverdue = Math.min(100, overdueDays * 25);
-  const score = Math.round((1 + (pctOverdue / 100) * 5) * 10) / 10;
-  const bucket = score >= 4.2 ? "Urgent" : score >= 2.2 ? "Medium" : "Low";
-  const daysUntilDue = content.cadence - since; // negative once overdue, matches the "Xd / overdue" display used elsewhere
-  return { score, bucket, daysUntilDue, pctOverdue };
+  const pct = since === null ? 40 : since * 20;
+  const bucket = pct > 80 ? "Urgent" : pct >= 40 ? "Medium" : "Low";
+  const score = Math.round((1 + (Math.min(pct, 100) / 100) * 5) * 10) / 10;
+  return { score, bucket, pct, since };
 }
 
 /* pulls every outstanding item from all 5 pillars into one flat, scored list.
@@ -174,7 +173,7 @@ function collectPriorityTasks(ally, mama) {
     const cu = computeContentUrgency(ally.content);
     ally.content.items.forEach((i) => out.push({
       id: i.id, pillar: "content", title: i.title, due: null, lastProgress: null, created: i.created || null,
-      score: cu.score, bucket: cu.bucket, daysUntilDue: cu.daysUntilDue, daysSinceProgress: null, _preScored: true,
+      score: cu.score, bucket: cu.bucket, daysUntilDue: null, daysSinceProgress: null, _preScored: true,
     }));
   }
   {
@@ -226,26 +225,24 @@ function collectPriorityTasks(ally, mama) {
   return out.map((t) => (t._preScored ? t : { ...t, ...computeUrgency(t) }));
 }
 
-/* proposes each pillar's share of today's priority, steep on purpose so the busiest/most urgent pillar dominates.
-   Always sums to exactly 100 so the pie is always fully filled, even with zero tasks anywhere.
-   Content is special-cased: its urgency is one master signal (days overdue on posting cadence), not
-   per-item, so its pillar weight must not inflate just because more ideas are sitting in the pipeline. */
-function computePillarAllocation(byPillar) {
-  const weight = (list, pillar) => (pillar === "content" && list.length > 0
-    ? Math.pow(2, list[0].score)
-    : list.reduce((s, t) => s + Math.pow(2, t.score), 0));
-  const raw = PRIORITY_PILLARS.map((k) => ({ pillar: k, w: weight(byPillar[k], k) }));
-  const totalW = raw.reduce((s, e) => s + e.w, 0);
-  const rankOf = Object.fromEntries([...raw].sort((a, b) => b.w - a.w).map((e, i) => [e.pillar, i + 1]));
-  const entries = totalW > 0
-    ? raw.map((e) => ({ ...e, pct: Math.round((e.w / totalW) * 100) }))
-    : raw.map((e) => ({ ...e, pct: 20 }));
-  const drift = 100 - entries.reduce((s, e) => s + e.pct, 0);
-  if (drift !== 0) {
-    const biggestIdx = entries.reduce((bi, e, i, arr) => (e.w > arr[bi].w ? i : bi), 0);
-    entries[biggestIdx] = { ...entries[biggestIdx], pct: entries[biggestIdx].pct + drift };
-  }
-  return { entries, rankOf };
+/* every pillar gets its own independent fill ring now — no more competing for a shared 100%.
+   Same color banding everywhere so the colors mean the same thing on every card: 0-19% calm (blue),
+   20-40% fine (green), 41-80% building up (orange), 81-100%+ needs you today (red). Past 100% is a
+   critical/overflow state — the ring caps visually at a full loop but the number keeps climbing. */
+function urgencyTint(pct) {
+  if (pct >= 81) return C.rose;
+  if (pct >= 41) return C.amber;
+  if (pct >= 20) return C.mint;
+  return C.sky;
+}
+
+/* non-content pillars: fill % = (count of Urgent items × 20%) + (Medium × 10%) + (Low × 5%).
+   Generous on purpose — each card now has a whole ring to itself. Uncapped, so a genuinely
+   overloaded pillar reads past 100% and flips into the critical/overflow state. */
+function computePillarFillPercent(tasks) {
+  const counts = { Urgent: 0, Medium: 0, Low: 0 };
+  tasks.forEach((t) => { counts[t.bucket] = (counts[t.bucket] || 0) + 1; });
+  return counts.Urgent * 20 + counts.Medium * 10 + counts.Low * 5;
 }
 
 /* ================= CHARTS ================= */
@@ -625,40 +622,25 @@ function setPillarItemPriority(setAlly, setMama, pillar, id, priority) {
 function PriorityDashboard({ ally, mama, go, setAlly, setMama }) {
   const tasks = collectPriorityTasks(ally, mama);
   const byPillar = Object.fromEntries(PRIORITY_PILLARS.map((k) => [k, tasks.filter((t) => t.pillar === k)]));
-  const { entries, rankOf } = computePillarAllocation(byPillar);
-  const donutSegs = entries.map((e) => ({ value: e.pct, color: MODULES[e.pillar].accent }));
-  const topEntry = [...entries].sort((a, b) => b.pct - a.pct)[0];
-  const legend = [...entries].sort((a, b) => rankOf[a.pillar] - rankOf[b.pillar]);
+  const contentUrgency = computeContentUrgency(ally.content);
+  const fillPct = Object.fromEntries(PRIORITY_PILLARS.map((k) => [k, k === "content" ? contentUrgency.pct : computePillarFillPercent(byPillar[k])]));
+  const ranked = [...PRIORITY_PILLARS].sort((a, b) => fillPct[b] - fillPct[a]);
+  const rankOf = Object.fromEntries(ranked.map((k, i) => [k, i + 1]));
   const onDropPriority = (pillar, id, priority) => setPillarItemPriority(setAlly, setMama, pillar, id, priority);
 
   return (
     <section>
       <div style={{ marginBottom: 20 }}>
         <h1 style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: "clamp(28px,4.5vw,38px)", margin: 0, letterSpacing: "-0.02em" }}>Priorities right now 🎯</h1>
-        <p style={{ fontSize: 15, color: MUT, margin: "6px 0 0" }}>{tasks.length} open item{tasks.length === 1 ? "" : "s"} across all 5 pillars. The wedges are each pillar's share of priority right now, recalculated every time you open this.</p>
+        <p style={{ fontSize: 15, color: MUT, margin: "6px 0 0" }}>{tasks.length} open item{tasks.length === 1 ? "" : "s"} across all 5 pillars. Each card fills its own ring by how urgent that pillar is on its own — blue is calm, red means it needs you today, and a ring that overflows past 100% is in critical territory.</p>
       </div>
 
-      {/* hero: the pie is always 100% full, one wedge per pillar */}
-      <div className="flex items-center justify-center gap-12 flex-wrap" style={{ ...card, borderRadius: 24, padding: "32px 36px", marginBottom: 22 }}>
-        <Donut segments={donutSegs} size={230} thick={34} centerTop={`${MODULES[topEntry.pillar].emoji}`} centerSub={MODULES[topEntry.pillar].label} />
-        <div className="flex flex-col gap-2.5">
-          {legend.map((e) => (
-            <button key={e.pillar} onClick={() => go(e.pillar)} className="flex items-center gap-3 text-left" style={{ background: "transparent", border: "none", cursor: "pointer", fontFamily: "inherit", padding: "3px 0" }}>
-              <span style={{ width: 27, height: 27, borderRadius: 99, background: MODULES[e.pillar].accent, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13.5, fontWeight: 700, flexShrink: 0 }}>{rankOf[e.pillar]}</span>
-              <span style={{ fontSize: 17 }}>{MODULES[e.pillar].emoji}</span>
-              <span style={{ fontSize: 17, minWidth: 110 }}>{MODULES[e.pillar].label}</span>
-              <b style={{ fontSize: 18 }}>{e.pct}%</b>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* cards underneath the pie, ranked left to right */}
+      {/* every pillar gets its own independent ring, ranked left to right by how full it is */}
       <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))" }}>
-        {[...PRIORITY_PILLARS].sort((a, b) => rankOf[a] - rankOf[b]).map((k) => (
+        {ranked.map((k) => (
           k === "content"
-            ? <ContentPillarCard key={k} content={ally.content} go={go} rank={rankOf[k]} />
-            : <PriorityPillarCard key={k} pillarKey={k} tasks={byPillar[k]} go={go} rank={rankOf[k]} onDropPriority={onDropPriority} />
+            ? <ContentPillarCard key={k} content={ally.content} go={go} rank={rankOf[k]} pct={fillPct[k]} />
+            : <PriorityPillarCard key={k} pillarKey={k} tasks={byPillar[k]} go={go} rank={rankOf[k]} onDropPriority={onDropPriority} pct={fillPct[k]} />
         ))}
       </div>
     </section>
@@ -668,12 +650,13 @@ function PriorityDashboard({ ally, mama, go, setAlly, setMama }) {
 const PRIORITY_COL_TINT = { Urgent: C.rose, Medium: C.amber, Low: C.sky };
 
 /* Content's card doesn't show Urgent/Medium/Low task columns like the other pillars — content has no
-   individual priorities anymore, just one master signal (days since last post) plus a glance at where
-   ideas sit in the pipeline. */
-function ContentPillarCard({ content, go, rank }) {
+   individual priorities anymore, just one master signal (days since last post, entirely independent
+   of the pipeline) rendered as its own fill ring, plus a glance at where ideas sit in the pipeline. */
+function ContentPillarCard({ content, go, rank, pct }) {
   const mod = MODULES.content;
   const since = daysSince(content.lastPosted);
-  const tint = since === null ? FAINT : since <= 1 ? C.sky : since <= 3 ? C.amber : C.rose;
+  const tint = urgencyTint(pct);
+  const critical = pct > 100;
   const pipelineCols = ["Edited", "Filmed", "Scripted"];
   const counts = Object.fromEntries(pipelineCols.map((c) => [c, content.items.filter((i) => i.status === c).length]));
   return (
@@ -686,9 +669,12 @@ function ContentPillarCard({ content, go, rank }) {
         </div>
         <ArrowUpRight size={16} color={MUT} />
       </div>
-      <div className="flex items-baseline gap-2">
-        <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 36, color: tint, lineHeight: 1 }}>{since === null ? "—" : since}</span>
-        <span style={{ fontSize: 12.5, color: MUT }}>{since === null ? "no post logged yet" : since === 1 ? "day since last post" : "days since last post"}</span>
+      <div className="flex items-center gap-4">
+        <Ring pct={Math.min(1, pct / 100)} tint={tint} size={78} thick={9} label={`${Math.round(pct)}%`} />
+        <div className="min-w-0">
+          <div style={{ fontSize: 13.5, fontWeight: 600, color: tint }}>{since === null ? "no post logged yet" : since === 1 ? "1 day since last post" : `${since} days since last post`}</div>
+          {critical && <div style={{ fontSize: 10.5, fontWeight: 700, color: C.rose, marginTop: 3, letterSpacing: "0.03em" }}>⚠ CRITICAL — post overdue</div>}
+        </div>
       </div>
       <div className="grid gap-2 mt-4" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
         {pipelineCols.map((c) => (
@@ -708,10 +694,12 @@ function ContentPillarCard({ content, go, rank }) {
    dragging across cards (e.g. Deals into Mama) is a strict no-op by design. */
 const DROP_PRIORITY = { Urgent: "High", Medium: "Medium", Low: "Low" };
 
-function PriorityPillarCard({ pillarKey, tasks, go, rank, onDropPriority }) {
+function PriorityPillarCard({ pillarKey, tasks, go, rank, onDropPriority, pct }) {
   const mod = MODULES[pillarKey];
   const cols = ["Urgent", "Medium", "Low"];
   const [dragOverCol, setDragOverCol] = useState(null);
+  const tint = urgencyTint(pct);
+  const critical = pct > 100;
   const handleDrop = (e, col) => {
     e.preventDefault();
     setDragOverCol(null);
@@ -729,6 +717,10 @@ function PriorityPillarCard({ pillarKey, tasks, go, rank, onDropPriority }) {
           <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 16, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{mod.label}</span>
         </div>
         <ArrowUpRight size={16} color={MUT} />
+      </div>
+      <div className="flex items-center gap-3 mb-4">
+        <Ring pct={Math.min(1, pct / 100)} tint={tint} size={78} thick={9} label={`${Math.round(pct)}%`} />
+        {critical && <span style={{ fontSize: 10.5, fontWeight: 700, color: C.rose, letterSpacing: "0.03em" }}>⚠ CRITICAL — overloaded</span>}
       </div>
       <div className="grid gap-2.5" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
         {cols.map((col) => {
@@ -831,7 +823,7 @@ function ContentModule({ data, setData, q }) {
   const openIfNot = (id) => setOpenDesc((o) => (o[id] ? o : { ...o, [id]: true }));
   const patch = (p) => setData((d) => ({ ...d, content: { ...d.content, ...p } }));
   const ql = (q || "").toLowerCase();
-  const add = () => { const t = title.trim(); if (!t) return; patch({ items: [{ id: uid(), title: t, desc: "", status: "Idea", created: todayISO() }, ...content.items] }); setTitle(""); };
+  const add = () => { const t = title.trim(); if (!t) return; patch({ items: [{ id: uid(), title: t, desc: "", status: "Scripted", created: todayISO() }, ...content.items] }); setTitle(""); };
   const move = (id, dir) => setData((d) => {
     const items = d.content.items.map((i) => { if (i.id !== id) return i; const next = CONTENT_COLS[Math.min(Math.max(CONTENT_COLS.indexOf(i.status) + dir, 0), CONTENT_COLS.length - 1)]; return { ...i, status: next }; });
     return { ...d, content: { ...d.content, items } };
@@ -840,10 +832,8 @@ function ContentModule({ data, setData, q }) {
   const updateItem = (id, p) => patch({ items: content.items.map((i) => (i.id === id ? { ...i, ...p } : i)) });
   const markPosted = (id) => patch({ items: content.items.filter((i) => i.id !== id), lastPosted: todayISO() });
   const clearPosted = () => patch({ items: content.items.filter((i) => i.status !== "Posted") });
-  const donutSegs = ["Idea", "Scripted", "Filmed", "Edited"].map((s) => ({ value: h.counts[s], color: CONTENT_TINT[s], label: s })).filter((s) => s.value > 0);
+  const donutSegs = CONTENT_COLS.map((s) => ({ value: h.counts[s], color: CONTENT_TINT[s], label: s })).filter((s) => s.value > 0);
   const donutTotal = donutSegs.reduce((s, x) => s + x.value, 0);
-  const cu = computeContentUrgency(content);
-  const cuTint = cu.bucket === "Urgent" ? C.rose : cu.bucket === "Medium" ? C.amber : MUT;
 
   return (
     <section>
@@ -857,12 +847,6 @@ function ContentModule({ data, setData, q }) {
           <div className="flex items-center gap-2 mt-2 flex-wrap" style={{ fontSize: 12, color: MUT }}>
             last posted
             <input type="date" value={content.lastPosted || ""} onChange={(e) => patch({ lastPosted: e.target.value || null })} className="rounded-md" style={{ ...darkInput, fontSize: 12, padding: "4px 7px" }} />
-            every
-            <input type="number" min="1" max="14" value={content.cadence} onChange={(e) => patch({ cadence: Math.min(14, Math.max(1, Number(e.target.value) || 1)) })} className="rounded-md" style={{ ...darkInput, width: 42, fontSize: 12, padding: "4px 7px" }} />d
-          </div>
-          <div className="mt-2 flex items-center gap-1.5" style={{ fontSize: 11.5, color: MUT }}>
-            <span className="rounded-full px-2 py-0.5" style={{ background: `${cuTint}22`, border: `1px solid ${cuTint}55`, color: cuTint, fontWeight: 700, fontSize: 10.5 }}>{cu.bucket}</span>
-            pipeline urgency, +25% per day overdue on your posting cadence — every open idea shares this score, no individual deadlines needed
           </div>
         </div>
         {donutTotal > 0 && (
