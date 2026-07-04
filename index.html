@@ -318,6 +318,9 @@ function AllyCRM() {
       const ra = await store.get(ALLY_KEY); if (ra) { try { a = JSON.parse(ra); } catch (e) {} }
       const rm = await store.get(MAMA_KEY); if (rm) { try { m = JSON.parse(rm); } catch (e) {} }
       if (!a.apartment) a.apartment = ALLY_SEED.apartment;
+      if (!a.unlocks) a.unlocks = ALLY_SEED.unlocks;
+      if (!a.unlocks.ecosystem) a.unlocks.ecosystem = ALLY_SEED.unlocks.ecosystem;
+      if (!a.unlocks.chains) a.unlocks.chains = ALLY_SEED.unlocks.chains;
       m = { ...m, creators: (m.creators || []).map((c) => c.goals ? c : { ...c, goals: c.goal ? [{ id: uid(), text: c.goal }] : [] }) };
       setAlly(a); setMama(m); loaded.current = true;
     })();
@@ -827,7 +830,7 @@ const ECO_STATE = {
 const ECO_CYCLE = { locked: "progress", progress: "live", live: "parked", parked: "locked" };
 
 function UnlocksModule({ data, setData }) {
-  const eco = data.unlocks.ecosystem;
+  const eco = data.unlocks.ecosystem || { pillars: [], keystoneNote: "" };
 
   const patchBenefit = (pid, bid, p) => setData((d) => ({ ...d, unlocks: { ...d.unlocks, ecosystem: { ...d.unlocks.ecosystem, pillars: d.unlocks.ecosystem.pillars.map((pl) => pl.id === pid ? { ...pl, benefits: pl.benefits.map((b) => b.id === bid ? { ...b, ...p } : b) } : pl) } } }));
   const addBenefit = (pid) => setData((d) => ({ ...d, unlocks: { ...d.unlocks, ecosystem: { ...d.unlocks.ecosystem, pillars: d.unlocks.ecosystem.pillars.map((pl) => pl.id === pid ? { ...pl, benefits: [...pl.benefits, { id: uid(), label: "New benefit", state: "locked", note: "" }] } : pl) } } }));
