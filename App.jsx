@@ -280,6 +280,7 @@ export default function AllyCRM() {
       const ra = await store.get(ALLY_KEY); if (ra) { try { a = JSON.parse(ra); } catch (e) {} }
       const rm = await store.get(MAMA_KEY); if (rm) { try { m = JSON.parse(rm); } catch (e) {} }
       if (!a.apartment) a.apartment = ALLY_SEED.apartment;
+      if (!a.unlocks || !a.unlocks.ecosystem) a.unlocks = ALLY_SEED.unlocks;
       m = { ...m, creators: (m.creators || []).map((c) => c.goals ? c : { ...c, goals: c.goal ? [{ id: uid(), text: c.goal }] : [] }) };
       setAlly(a); setMama(m); loaded.current = true;
     })();
@@ -430,7 +431,7 @@ function Overview({ ally, mama, go, aptUnlocked }) {
   const tiles = [
     { key: "content", emoji: "🎬", label: "Content", value: h.counts.Idea + h.counts.Scripted + h.counts.Filmed + h.counts.Edited, bg: C.skyBg, accent: C.sky, ring: Math.min(1, (h.since || 0) / ally.content.cadence), sub: "content pieces" },
     { key: "song", emoji: "🎵", label: "Song", value: `${Math.round(songPct * 100)}%`, bg: C.lilacBg, accent: C.lilac, ring: songPct, sub: "to release" },
-    { key: "unlocks", emoji: "🔓", label: "Unlocks", value: `${Math.round(unlockPct * 100)}%`, bg: C.yellowBg, accent: C.yellow, ring: unlockPct, sub: "life admin" },
+    { key: "unlocks", emoji: "🔓", label: "Unlocks", value: `${Math.round(unlockPct * 100)}%`, bg: C.yellowBg, accent: C.yellow, ring: unlockPct, sub: "ecosystem" },
     { key: "deals", emoji: "🤝", label: "Deals", value: active.length, bg: C.pinkBg, accent: C.pink, ring: active.length ? 0.6 : 0, sub: "active now" },
   ];
 
