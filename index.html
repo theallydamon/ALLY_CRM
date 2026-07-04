@@ -492,7 +492,13 @@ function AllyCRM() {
   const [user, setUser] = useState(null);
   const [authReady, setAuthReady] = useState(false); // becomes true once we've heard back from Firebase at least once
   const [cloudState, setCloudState] = useState("offline"); // offline | loading | saving | synced | error
-  const cloudLoadedFor = useRef(null); // uid we've already reconciled with Firestore
+  const cloudLoadedFor = useRef(null); // uid a reconcile is/was in flight for
+  const reconcileDone = useRef(false); // true only once that reconcile has FULLY resolved (fixes a
+    // real race: signing in on a new device used to let the ongoing-save effect below fire in the
+    // same tick as the pull-or-seed effect, writing this device's stale local data to Firestore
+    // before the pull had a chance to land — a slow network made the stale write win, clobbering
+    // the good cloud copy. Gating on a ref that only flips true after the reconcile's try/finally
+    // fully completes closes that window.
   const allyRef = useRef(ally); allyRef.current = ally;
   const mamaRef = useRef(mama); mamaRef.current = mama;
   const cloudTimer = useRef(null);
@@ -511,7 +517,7 @@ function AllyCRM() {
   const signOutGoogle = async () => {
     if (!fbAuth) return;
     try { await fbAuth.signOut(); } catch (e) {}
-    cloudLoadedFor.current = null; setCloudState("offline"); setUser(null);
+    cloudLoadedFor.current = null; reconcileDone.current = false; setCloudState("offline"); setUser(null);
   };
 
   /* one-time cleanup helper: wipes this browser's local cache of ally/mama data. Only ever used
@@ -530,6 +536,7 @@ function AllyCRM() {
     if (!fbDb || !user || !localLoaded) return;
     if (cloudLoadedFor.current === user.uid) return;
     cloudLoadedFor.current = user.uid;
+    reconcileDone.current = false;
     (async () => {
       setCloudState("loading");
       try {
@@ -542,14 +549,18 @@ function AllyCRM() {
           await docRef.set({ ally: allyRef.current, mama: mamaRef.current, updatedAt: Date.now() });
         }
         setCloudState("synced");
-      } catch (e) { setCloudState("error"); }
+      } catch (e) {
+        setCloudState("error");
+      } finally {
+        reconcileDone.current = true;
+      }
     })();
   }, [user, localLoaded]);
 
   /* ongoing sync: same debounce shape as the localStorage save below, just a bit longer since
      it's a network write, and only once the initial reconcile above has actually happened. */
   useEffect(() => {
-    if (!fbDb || !user || cloudLoadedFor.current !== user.uid) return;
+    if (!fbDb || !user || !reconcileDone.current) return;
     setCloudState("saving"); clearTimeout(cloudTimer.current);
     cloudTimer.current = setTimeout(async () => {
       try {
