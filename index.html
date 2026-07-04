@@ -42,6 +42,8 @@ const Search = Ico(<><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></
 const Lock = Ico(<><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></>);
 const ArrowUpRight = Ico(<><path d="M7 7h10v10"/><path d="M7 17 17 7"/></>);
 const Zap = Ico(<path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/>);
+const Download = Ico(<><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></>);
+const Upload = Ico(<><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></>);
 
 /* ---------- palette (dark, compact) ---------- */
 const C = {
@@ -487,6 +489,39 @@ function AllyCRM() {
   const go = (next) => { if (next === tab) return; setHistory((h) => [...h, tab].slice(-20)); setTab(next); setQ(""); };
   const back = () => { setHistory((h) => { if (!h.length) return h; const prev = h[h.length - 1]; setTab(prev); setQ(""); return h.slice(0, -1); }); };
 
+  /* export/import: localStorage is per-browser (Chrome and Safari, or a Safari "Add to Dock" web
+     app, each keep their own completely separate copy) so this is how data actually moves between
+     them — download everything as one JSON file here, then use Import on the other browser/app. */
+  const [importMsg, setImportMsg] = useState("");
+  const importInputRef = useRef(null);
+  const exportData = () => {
+    const blob = new Blob([JSON.stringify({ ally, mama, exportedAt: todayISO() }, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `ally-crm-backup-${todayISO()}.json`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+  const triggerImport = () => importInputRef.current && importInputRef.current.click();
+  const handleImportFile = (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(reader.result);
+        if (!parsed || typeof parsed !== "object" || !parsed.ally || !parsed.mama) throw new Error("bad shape");
+        if (!window.confirm("This replaces everything currently in this browser with the imported backup. Continue?")) return;
+        setAlly(parsed.ally); setMama(parsed.mama);
+        setImportMsg("Imported ✓"); setTimeout(() => setImportMsg(""), 2500);
+      } catch (err) {
+        setImportMsg("Invalid file"); setTimeout(() => setImportMsg(""), 2500);
+      }
+    };
+    reader.readAsText(file);
+  };
+
   if (!ally || !mama) {
     return <div style={{ background: C.canvas, minHeight: "100vh" }} className="flex items-center justify-center"><div style={{ color: MUT, fontFamily: "Outfit, sans-serif" }}>Opening ALLY CRM…</div></div>;
   }
@@ -574,6 +609,16 @@ function AllyCRM() {
             </div>
             <div style={{ fontSize: 10.5, color: saveState === "error" ? C.rose : FAINT, minWidth: 42, textAlign: "right" }}>
               {saveState === "saving" ? "saving…" : saveState === "saved" ? "saved ✓" : saveState === "error" ? "retry" : ""}
+            </div>
+            <div className="flex items-center gap-1.5" title="Data only lives in this browser's storage — use these to move it to another browser or Safari's Add to Dock app, or just to keep a backup">
+              {importMsg && <span style={{ fontSize: 10.5, color: importMsg === "Imported ✓" ? C.mint : C.rose, whiteSpace: "nowrap" }}>{importMsg}</span>}
+              <button onClick={exportData} className="flex items-center gap-1" style={{ ...iconBtn, fontSize: 11, padding: "5px 8px", border: `1px solid ${LINE}`, borderRadius: 8 }} aria-label="Export data">
+                <Download size={12} /> Export
+              </button>
+              <button onClick={triggerImport} className="flex items-center gap-1" style={{ ...iconBtn, fontSize: 11, padding: "5px 8px", border: `1px solid ${LINE}`, borderRadius: 8 }} aria-label="Import data">
+                <Upload size={12} /> Import
+              </button>
+              <input ref={importInputRef} type="file" accept="application/json" onChange={handleImportFile} style={{ display: "none" }} />
             </div>
           </header>
 
@@ -794,12 +839,24 @@ function DueChip({ due, inline }) {
   return <span style={{ fontSize: 10.5, color: tint, background: `${tint}1a`, border: `1px solid ${tint}44`, borderRadius: 99, padding: "2px 8px", flexShrink: 0 }}>{text}</span>;
 }
 
+/* the same day bands as dueBandScore, but returning an actual priority label instead of a score —
+   this is what makes picking a date auto-select the priority. */
+function priorityFromDueDate(daysUntilDue) {
+  if (daysUntilDue === null || daysUntilDue === undefined) return null;
+  if (daysUntilDue <= 2) return "High";   // today, overdue, or due within 1-2 days
+  if (daysUntilDue <= 5) return "Medium"; // due in 3-5 days
+  return "Low";                            // due 6+ days out
+}
+
 /* shared control row: due date + priority (Low/Med/High) + log progress + due-date readout.
    Used on every item across the 5 pillars so the Priorities dashboard can score them all the same way.
-   If closeness to the deadline (or long silence) pushes the computed urgency into "Urgent" territory,
-   the stored priority auto-escalates to High so the H button itself carries that signal — no separate
-   "Urgent" badge duplicating what the priority buttons already show.
-   Clicking the already-selected priority button again PAUSES this item: it stops feeding the
+   Whenever a due date is set, the priority is auto-selected from it and kept in sync continuously as
+   the date gets closer (1-2 days out -> High, 3-5 days -> Medium, 6+ days -> Low) — same day bands as
+   the Urgent/Medium/Low bucket, so nothing here can disagree with the dashboard. A deadline is
+   pass/fail, so once a date is set it drives the priority; the two non-matching L/M/H buttons grey
+   out (they're not there to be manually overridden away from what the calendar says). Clear the due
+   date, or pause the item, to take manual control of priority again.
+   Clicking the already-selected priority button again PAUSES this item instead: it stops feeding the
    Priorities dashboard entirely (collectPriorityTasks skips anything with .paused), the due date
    clears and greys out, and none of L/M/H show as selected. It's for things you want to keep on the
    board but haven't decided are a live priority yet — existing, not urgent. Clicking any L/M/H
@@ -809,14 +866,17 @@ function PriorityControls({ item, onChange, hideDue }) {
   const u = computeUrgency(item);
   const pr = item.priority || "Medium";
   const paused = !!item.paused;
+  const dateTarget = paused ? null : priorityFromDueDate(u.daysUntilDue);
   useEffect(() => {
-    if (!paused && u.bucket === "Urgent" && pr !== "High") onChange({ priority: "High" });
-  }, [u.bucket, pr, paused]);
+    if (dateTarget && pr !== dateTarget) onChange({ priority: dateTarget });
+  }, [dateTarget, pr]);
   const dueTint = u.daysUntilDue === null ? MUT : u.daysUntilDue < 0 ? C.rose : u.daysUntilDue <= 2 ? C.amber : MUT;
   const setPriority = (p) => {
     if (paused) onChange({ priority: p, paused: false, due: null });
     else if (pr === p) onChange({ paused: true, due: null });
-    else onChange({ priority: p });
+    else if (!dateTarget) onChange({ priority: p }); // no date driving it -> free manual choice
+    // else: a due date is actively setting this item's priority; only the matching button (handled
+    // above via pr === p, which pauses) does anything — the other two are disabled below.
   };
   return (
     <div className="flex items-center gap-1.5 flex-wrap mt-1.5" style={{ fontSize: 11, opacity: paused ? 0.55 : 1 }}>
@@ -825,13 +885,19 @@ function PriorityControls({ item, onChange, hideDue }) {
           className="rounded-md" style={{ ...darkInput, fontSize: 10.5, padding: "3px 5px", cursor: paused ? "not-allowed" : "text" }} aria-label="Due date" />
       )}
       <div className="flex gap-1">
-        {PRIORITY_LEVELS.map((p) => (
-          <button key={p} onClick={() => setPriority(p)} className="rounded-full px-2 py-0.5"
-            title={!paused && pr === p ? "Click again to pause — stop tracking this as a priority" : paused ? "Paused — click a level to resume" : undefined}
-            style={{ fontSize: 10, cursor: "pointer", fontFamily: "inherit",
-              background: !paused && pr === p ? `${PRIORITY_TINT[p]}22` : FILL, border: `1px solid ${!paused && pr === p ? PRIORITY_TINT[p] : LINE}`,
-              color: !paused && pr === p ? PRIORITY_TINT[p] : MUT }}>{p[0]}</button>
-        ))}
+        {PRIORITY_LEVELS.map((p) => {
+          const locked = !!dateTarget && p !== dateTarget;
+          return (
+            <button key={p} onClick={() => setPriority(p)} disabled={locked} className="rounded-full px-2 py-0.5"
+              title={!paused && pr === p && !dateTarget ? "Click again to pause — stop tracking this as a priority"
+                : !paused && pr === p && dateTarget ? "Set by the due date. Click to pause, or clear/edit the date to change it."
+                : paused ? "Paused — click a level to resume"
+                : locked ? "Set by the due date — clear the date or pause to override manually" : undefined}
+              style={{ fontSize: 10, cursor: locked ? "not-allowed" : "pointer", fontFamily: "inherit",
+                background: !paused && pr === p ? `${PRIORITY_TINT[p]}22` : FILL, border: `1px solid ${!paused && pr === p ? PRIORITY_TINT[p] : LINE}`,
+                color: !paused && pr === p ? PRIORITY_TINT[p] : locked ? FAINT : MUT, opacity: locked ? 0.5 : 1 }}>{p[0]}</button>
+          );
+        })}
       </div>
       <button onClick={() => onChange({ lastProgress: todayISO() })} className="flex items-center gap-1 rounded-full px-2 py-0.5"
         style={{ fontSize: 10, cursor: "pointer", fontFamily: "inherit", background: FILL, border: `1px solid ${LINE}`, color: MUT }}
