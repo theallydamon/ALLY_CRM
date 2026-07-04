@@ -435,12 +435,31 @@ function AllyCRM() {
       setSaveState("saving"); clearTimeout(timers.current[key]);
       timers.current[key] = setTimeout(async () => {
         try { await store.set(key, JSON.stringify(data)); setSaveState("saved"); setTimeout(() => setSaveState("idle"), 1400); } catch (e) { setSaveState("error"); }
-      }, 600);
+      }, 250);
       return () => clearTimeout(timers.current[key]);
     }, [data]);
   };
   useSave(ALLY_KEY, ally);
   useSave(MAMA_KEY, mama);
+
+  /* safety net: any edit (priority, status, whatever) must survive a fast tab-switch or refresh,
+     so flush straight to localStorage the instant the tab is hidden/closed, bypassing the debounce. */
+  useEffect(() => {
+    const flush = () => {
+      if (!loaded.current) return;
+      try { if (ally) localStorage.setItem(ALLY_KEY, JSON.stringify(ally)); } catch (e) {}
+      try { if (mama) localStorage.setItem(MAMA_KEY, JSON.stringify(mama)); } catch (e) {}
+    };
+    const onVis = () => { if (document.visibilityState === "hidden") flush(); };
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("pagehide", flush);
+    window.addEventListener("beforeunload", flush);
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("pagehide", flush);
+      window.removeEventListener("beforeunload", flush);
+    };
+  }, [ally, mama]);
 
   const go = (next) => { if (next === tab) return; setHistory((h) => [...h, tab].slice(-20)); setTab(next); setQ(""); };
   const back = () => { setHistory((h) => { if (!h.length) return h; const prev = h[h.length - 1]; setTab(prev); setQ(""); return h.slice(0, -1); }); };
@@ -531,7 +550,7 @@ function AllyCRM() {
               since auto-margins collapse to 0 once content is taller than the viewport. */}
           <div className="scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "28px 36px", display: "flex", flexDirection: "column", alignItems: "center" }}>
             <div style={{ width: "100%", maxWidth: 1360, margin: "auto 0", paddingBottom: 44 }}>
-              {tab === "overview" && <PriorityDashboard ally={ally} mama={mama} go={go} />}
+              {tab === "overview" && <PriorityDashboard ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} />}
               {tab === "content" && <ContentModule data={ally} setData={setAlly} q={q} />}
               {tab === "song" && <SongModule data={ally} setData={setAlly} />}
               {tab === "unlocks" && <UnlocksModule data={ally} setData={setAlly} />}
@@ -559,14 +578,58 @@ function contentHealth(content) {
   return { since, counts, ready, tint, msg };
 }
 
+/* finds whichever underlying record a dashboard task-id belongs to (a deal, a client sub-task, a
+   mama creator's sub-task, a chain node, etc.) and patches its priority — this is what makes
+   dragging a chip between Urgent/Medium/Low columns on the dashboard itself actually work, and it's
+   the same setAlly/setMama the source tab reads from, so the tab reflects it immediately too. */
+function setPillarItemPriority(setAlly, setMama, pillar, id, priority) {
+  if (pillar === "song") {
+    setAlly((d) => ({ ...d, song: { ...d.song, stages: d.song.stages.map((s) => (s.id === id ? { ...s, priority } : s)) } }));
+    return;
+  }
+  if (pillar === "unlocks") {
+    setAlly((d) => {
+      const eco = d.unlocks.ecosystem;
+      const ecosystem = eco ? { ...eco, pillars: eco.pillars.map((pl) => ({ ...pl, benefits: pl.benefits.map((b) => (b.id === id ? { ...b, priority } : b)) })) } : eco;
+      const chains = d.unlocks.chains.map((ch) => ({ ...ch, nodes: ch.nodes.map((n) => (n.id === id ? { ...n, priority } : n)) }));
+      return { ...d, unlocks: { ...d.unlocks, ecosystem, chains } };
+    });
+    return;
+  }
+  if (pillar === "deals") {
+    setAlly((d) => {
+      const deals = d.deals.deals.map((deal) => {
+        if (deal.id === id) return { ...deal, priority };
+        if ((deal.tasks || []).some((t) => t.id === id)) return { ...deal, tasks: deal.tasks.map((t) => (t.id === id ? { ...t, priority } : t)) };
+        return deal;
+      });
+      const clients = d.deals.clients.map((c) => ((c.tasks || []).some((t) => t.id === id) ? { ...c, tasks: c.tasks.map((t) => (t.id === id ? { ...t, priority } : t)) } : c));
+      return { ...d, deals: { ...d.deals, deals, clients } };
+    });
+    return;
+  }
+  if (pillar === "mama") {
+    setMama((d) => ({
+      ...d,
+      tasks: d.tasks.map((t) => (t.id === id ? { ...t, priority } : t)),
+      creators: d.creators.map((cr) => ((cr.tasks || []).some((t) => t.id === id) ? { ...cr, tasks: cr.tasks.map((t) => (t.id === id ? { ...t, priority } : t)) } : cr)),
+      tools: d.tools.map((tl) => ((tl.tasks || []).some((t) => t.id === id) ? { ...tl, tasks: tl.tasks.map((t) => (t.id === id ? { ...t, priority } : t)) } : tl)),
+      reports: d.reports.map((rp) => ((rp.tasks || []).some((t) => t.id === id) ? { ...rp, tasks: rp.tasks.map((t) => (t.id === id ? { ...t, priority } : t)) } : rp)),
+    }));
+    return;
+  }
+  /* content has no draggable per-item priority — it's a single master signal, not handled here */
+}
+
 /* ================= PRIORITY DASHBOARD ================= */
-function PriorityDashboard({ ally, mama, go }) {
+function PriorityDashboard({ ally, mama, go, setAlly, setMama }) {
   const tasks = collectPriorityTasks(ally, mama);
   const byPillar = Object.fromEntries(PRIORITY_PILLARS.map((k) => [k, tasks.filter((t) => t.pillar === k)]));
   const { entries, rankOf } = computePillarAllocation(byPillar);
   const donutSegs = entries.map((e) => ({ value: e.pct, color: MODULES[e.pillar].accent }));
   const topEntry = [...entries].sort((a, b) => b.pct - a.pct)[0];
   const legend = [...entries].sort((a, b) => rankOf[a.pillar] - rankOf[b.pillar]);
+  const onDropPriority = (pillar, id, priority) => setPillarItemPriority(setAlly, setMama, pillar, id, priority);
 
   return (
     <section>
@@ -595,7 +658,7 @@ function PriorityDashboard({ ally, mama, go }) {
         {[...PRIORITY_PILLARS].sort((a, b) => rankOf[a] - rankOf[b]).map((k) => (
           k === "content"
             ? <ContentPillarCard key={k} content={ally.content} go={go} rank={rankOf[k]} />
-            : <PriorityPillarCard key={k} pillarKey={k} tasks={byPillar[k]} go={go} rank={rankOf[k]} />
+            : <PriorityPillarCard key={k} pillarKey={k} tasks={byPillar[k]} go={go} rank={rankOf[k]} onDropPriority={onDropPriority} />
         ))}
       </div>
     </section>
@@ -614,14 +677,14 @@ function ContentPillarCard({ content, go, rank }) {
   const pipelineCols = ["Edited", "Filmed", "Scripted"];
   const counts = Object.fromEntries(pipelineCols.map((c) => [c, content.items.filter((i) => i.status === c).length]));
   return (
-    <div className="rounded-2xl p-5" style={{ ...card, borderRadius: 18, borderLeft: `4px solid ${mod.accent}` }}>
+    <div onClick={() => go("content")} className="rounded-2xl p-5" style={{ ...card, borderRadius: 18, borderLeft: `4px solid ${mod.accent}`, cursor: "pointer" }}>
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2 min-w-0">
           <span style={{ width: 28, height: 28, borderRadius: 99, background: mod.accent, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 14, flexShrink: 0 }}>{rank}</span>
           <span style={{ fontSize: 17, flexShrink: 0 }}>{mod.emoji}</span>
           <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 16, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{mod.label}</span>
         </div>
-        <button onClick={() => go("content")} style={{ ...iconBtn, padding: 3 }} aria-label="Open Content"><ArrowUpRight size={16} /></button>
+        <ArrowUpRight size={16} color={MUT} />
       </div>
       <div className="flex items-baseline gap-2">
         <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 36, color: tint, lineHeight: 1 }}>{since === null ? "—" : since}</span>
@@ -639,28 +702,49 @@ function ContentPillarCard({ content, go, rank }) {
   );
 }
 
-function PriorityPillarCard({ pillarKey, tasks, go, rank }) {
+/* dragging a chip between Urgent/Medium/Low sets its underlying priority (High/Medium/Low) via
+   setPillarItemPriority, so it feeds straight back into the item's own tab. Drops carry their
+   source pillar in the payload, so a drop is ignored unless it lands on a column in its own card —
+   dragging across cards (e.g. Deals into Mama) is a strict no-op by design. */
+const DROP_PRIORITY = { Urgent: "High", Medium: "Medium", Low: "Low" };
+
+function PriorityPillarCard({ pillarKey, tasks, go, rank, onDropPriority }) {
   const mod = MODULES[pillarKey];
   const cols = ["Urgent", "Medium", "Low"];
+  const [dragOverCol, setDragOverCol] = useState(null);
+  const handleDrop = (e, col) => {
+    e.preventDefault();
+    setDragOverCol(null);
+    let payload;
+    try { payload = JSON.parse(e.dataTransfer.getData("application/json")); } catch (err) { return; }
+    if (!payload || payload.pillar !== pillarKey) return; // strictly within-card only
+    onDropPriority(pillarKey, payload.id, DROP_PRIORITY[col]);
+  };
   return (
-    <div className="rounded-2xl p-5" style={{ ...card, borderRadius: 18, borderLeft: `4px solid ${mod.accent}` }}>
+    <div onClick={() => go(pillarKey)} className="rounded-2xl p-5" style={{ ...card, borderRadius: 18, borderLeft: `4px solid ${mod.accent}`, cursor: "pointer" }}>
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2 min-w-0">
           <span style={{ width: 28, height: 28, borderRadius: 99, background: mod.accent, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 14, flexShrink: 0 }}>{rank}</span>
           <span style={{ fontSize: 17, flexShrink: 0 }}>{mod.emoji}</span>
           <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 16, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{mod.label}</span>
         </div>
-        <button onClick={() => go(pillarKey)} style={{ ...iconBtn, padding: 3 }} aria-label={`Open ${mod.label}`}><ArrowUpRight size={16} /></button>
+        <ArrowUpRight size={16} color={MUT} />
       </div>
       <div className="grid gap-2.5" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
         {cols.map((col) => {
           const items = tasks.filter((t) => t.bucket === col).sort((a, b) => b.score - a.score);
           return (
-            <div key={col} style={{ minWidth: 0 }}>
+            <div key={col}
+              onDragOver={(e) => { e.preventDefault(); if (dragOverCol !== col) setDragOverCol(col); }}
+              onDragLeave={() => setDragOverCol((c) => (c === col ? null : c))}
+              onDrop={(e) => handleDrop(e, col)}
+              style={{ minWidth: 0, borderRadius: 10, padding: 4, margin: -4, background: dragOverCol === col ? `${PRIORITY_COL_TINT[col]}14` : "transparent", outline: dragOverCol === col ? `1px dashed ${PRIORITY_COL_TINT[col]}` : "none", transition: "background 0.1s" }}>
               <div style={{ fontSize: 11, letterSpacing: "0.04em", textTransform: "uppercase", color: PRIORITY_COL_TINT[col], fontWeight: 700, marginBottom: 6 }}>{col} <span style={{ color: MUT, fontWeight: 400 }}>{items.length}</span></div>
               <div className="flex flex-col gap-1.5">
                 {items.slice(0, 3).map((t) => (
-                  <div key={t.id} className="rounded-lg px-2 py-1.5" style={{ background: C.soft, border: `1px solid ${LINE}`, borderLeft: `2px solid ${PRIORITY_COL_TINT[col]}` }}>
+                  <div key={t.id} draggable onDragStart={(e) => { e.dataTransfer.setData("application/json", JSON.stringify({ id: t.id, pillar: pillarKey })); e.dataTransfer.effectAllowed = "move"; }}
+                    onClick={(e) => e.stopPropagation()} className="rounded-lg px-2 py-1.5"
+                    style={{ background: C.soft, border: `1px solid ${LINE}`, borderLeft: `2px solid ${PRIORITY_COL_TINT[col]}`, cursor: "grab" }}>
                     <div style={{ fontSize: 12.5, lineHeight: 1.3 }}>{t.title}</div>
                     {t.daysUntilDue !== null && <div style={{ fontSize: 11, color: PRIORITY_COL_TINT[col], marginTop: 2 }}>{t.daysUntilDue < 0 ? `${-t.daysUntilDue}d overdue` : t.daysUntilDue === 0 ? "today" : `${t.daysUntilDue}d`}</div>}
                   </div>
@@ -1130,7 +1214,7 @@ function ApartmentModule({ data, setData, unlocked, go, q }) {
 
 /* ================= DEALS ================= */
 const CLIENT_TINT = { Lead: C.sky, Active: C.mint, Paused: MUT };
-const DEAL_TYPE_TINT = { Active: C.mint, Prospect: C.amber };
+const DEAL_TYPE_TINT = { Active: C.mint, Prospect: C.sky };
 
 /* shared mini task tracker: used under each brand deal and each client so granular
    action items ("reply to email", "send rate card"...) get their own due date + priority
@@ -1163,7 +1247,9 @@ function MiniTaskList({ tasks, onChange }) {
 }
 
 function DealCard({ x, open, onToggleOpen, update, remove, isProspect }) {
-  const tint = AURAS[(x.aura || 0) % AURAS.length];
+  /* card accent follows Active/Prospect status (green/blue), not a random decorative aura —
+     so at a glance every active deal is green and every prospect is blue, consistently. */
+  const tint = isProspect ? C.sky : C.mint;
   const idx = DEAL_STAGES.indexOf(x.stage);
   const typeTint = DEAL_TYPE_TINT[isProspect ? "Prospect" : "Active"];
   return (
