@@ -55,6 +55,7 @@ const Zap = Ico(<path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/>);
 const Download = Ico(<><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></>);
 const Upload = Ico(<><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></>);
 const CloudIcon = Ico(<path d="M17.5 19H9a7 7 0 1 1 6.71-9h.79a4.5 4.5 0 1 1 0 9Z"/>);
+const MenuIcon = Ico(<><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></>);
 
 /* ---------- palette (dark, compact) ---------- */
 const C = {
@@ -469,6 +470,7 @@ function AllyCRM() {
   const [tab, setTab] = useState("overview");
   const [history, setHistory] = useState([]);
   const [q, setQ] = useState("");
+  const [navOpen, setNavOpen] = useState(false);
   const [saveState, setSaveState] = useState("idle");
   const loaded = useRef(false);
   const timers = useRef({});
@@ -582,7 +584,7 @@ function AllyCRM() {
     };
   }, [ally, mama]);
 
-  const go = (next) => { if (next === tab) return; setHistory((h) => [...h, tab].slice(-20)); setTab(next); setQ(""); };
+  const go = (next) => { setNavOpen(false); if (next === tab) return; setHistory((h) => [...h, tab].slice(-20)); setTab(next); setQ(""); };
   const back = () => { setHistory((h) => { if (!h.length) return h; const prev = h[h.length - 1]; setTab(prev); setQ(""); return h.slice(0, -1); }); };
 
   /* export/import: localStorage is per-browser (Chrome and Safari, or a Safari "Add to Dock" web
@@ -660,13 +662,57 @@ function AllyCRM() {
         @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
         .pulse-dot { animation: pulse 2s ease-in-out infinite; }
         .railbtn:hover { background: ${FILL} !important; }
+
+        /* ---------- mobile layout: hamburger sidebar + header collapse ---------- */
+        .hamburger-btn { display: none; }
+        .rail-label { display: none; }
+        @media (max-width: 768px) {
+          .hamburger-btn { display: flex !important; }
+          .sidebar-rail {
+            position: fixed !important;
+            top: 0; left: 0;
+            height: 100dvh !important;
+            width: 250px !important;
+            z-index: 60;
+            transform: translateX(-100%);
+            transition: transform 0.22s ease;
+            box-shadow: 4px 0 30px rgba(0,0,0,0.55);
+            align-items: stretch !important;
+            padding: 18px 12px !important;
+          }
+          .sidebar-rail.nav-open { transform: translateX(0); }
+          .sidebar-rail .railbtn {
+            width: 100% !important;
+            height: auto !important;
+            flex-direction: row !important;
+            justify-content: flex-start !important;
+            gap: 14px;
+            padding: 11px 12px !important;
+            font-size: 24px !important;
+          }
+          .sidebar-rail .rail-label { display: inline-block; font-size: 14.5px; font-weight: 600; font-family: 'Outfit', sans-serif; }
+          .sidebar-rail .rail-logo, .sidebar-rail .rail-avatar { align-self: center; }
+          .app-header { padding: 10px 14px !important; flex-wrap: wrap; row-gap: 8px; }
+          .header-search { display: none !important; }
+          .header-savestate { display: none !important; }
+          .page-subtitle { display: none !important; }
+          .page-title { font-size: 17px !important; }
+          .btn-label { display: none; }
+          .scroll { padding: 16px 14px !important; }
+        }
       `}</style>
 
       <div className="flex" style={{ height: "100%", fontFamily: "'Outfit', sans-serif", color: C.ink }}>
 
-        {/* ===== sidebar rail (fixed, does not scroll with page content) ===== */}
-        <aside className="flex flex-col items-center" style={{ width: 104, flexShrink: 0, borderRight: `1px solid ${LINE}`, padding: "22px 0", gap: 8, background: "#0E0E11", height: "100%", overflowY: "auto" }}>
-          <div style={{ width: 48, height: 48, borderRadius: 13, background: "rgba(255,255,255,0.08)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 16, fontSize: 22, fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700 }}>🅰️</div>
+        {/* mobile-only backdrop behind the drawer; only ever mountable via the hamburger button,
+            which itself only renders (via CSS) below the 768px breakpoint */}
+        {navOpen && <div onClick={() => setNavOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 55 }} />}
+
+        {/* ===== sidebar rail (fixed, does not scroll with page content).
+            Desktop: static icon rail. Mobile (<=768px, see .sidebar-rail CSS): becomes a fixed,
+            off-canvas drawer that slides in from the left when navOpen, with icon+label rows. ===== */}
+        <aside className={`flex flex-col items-center sidebar-rail${navOpen ? " nav-open" : ""}`} style={{ width: 104, flexShrink: 0, borderRight: `1px solid ${LINE}`, padding: "22px 0", gap: 8, background: "#0E0E11", height: "100%", overflowY: "auto" }}>
+          <div className="rail-logo" style={{ width: 48, height: 48, borderRadius: 13, background: "rgba(255,255,255,0.08)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 16, fontSize: 22, fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700 }}>🅰️</div>
           {TAB_ORDER.map((t) => {
             const on = tab === t; const info = MODULES[t];
             const locked = t === "apartment" && !aptUnlocked;
@@ -675,61 +721,66 @@ function AllyCRM() {
                 style={{ width: 68, height: 68, borderRadius: 16, border: on ? `1px solid ${LINE}` : "1px solid transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", position: "relative",
                   background: on ? "rgba(255,255,255,0.1)" : "transparent", fontSize: 32, transition: "background 0.15s" }}>
                 <span style={{ filter: on ? "none" : "saturate(0.85)", opacity: locked ? 0.4 : on ? 1 : 0.7 }}>{info.emoji}</span>
+                <span className="rail-label">{info.label}</span>
                 {locked && <span style={{ position: "absolute", top: 6, right: 8, fontSize: 11 }}>🔒</span>}
                 {badges[t] ? <span style={{ position: "absolute", top: 5, right: 5, minWidth: 18, height: 18, borderRadius: 99, background: info.accent, color: "#fff", fontSize: 10.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 5px" }}>{badges[t]}</span> : null}
               </button>
             );
           })}
           <div style={{ flex: 1 }} />
-          <div style={{ width: 48, height: 48, borderRadius: 99, background: `linear-gradient(135deg, ${C.lilac}, ${C.pink})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }} title="Ally">🧑🏻</div>
+          <div className="rail-avatar" style={{ width: 48, height: 48, borderRadius: 99, background: `linear-gradient(135deg, ${C.lilac}, ${C.pink})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }} title="Ally">🧑🏻</div>
         </aside>
 
         {/* ===== main column ===== */}
         <div className="flex flex-col" style={{ flex: 1, minWidth: 0, height: "100%" }}>
           {/* top bar (persistent) */}
-          <header className="flex items-center gap-3" style={{ padding: "14px 24px", borderBottom: `1px solid ${LINE}`, flexShrink: 0 }}>
+          <header className="flex items-center gap-3 app-header" style={{ padding: "14px 24px", borderBottom: `1px solid ${LINE}`, flexShrink: 0 }}>
+            <button onClick={() => setNavOpen(true)} className="hamburger-btn" aria-label="Open menu"
+              style={{ width: 32, height: 32, borderRadius: 9, border: `1px solid ${LINE}`, background: C.card, cursor: "pointer", alignItems: "center", justifyContent: "center", color: C.ink, flexShrink: 0 }}>
+              <MenuIcon size={16} />
+            </button>
             <button onClick={back} disabled={!history.length} aria-label="Back"
               style={{ width: 32, height: 32, borderRadius: 9, border: `1px solid ${LINE}`, background: history.length ? C.card : "transparent", cursor: history.length ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", color: history.length ? C.ink : FAINT, flexShrink: 0 }}>
               <ChevronLeft size={16} />
             </button>
             <div style={{ width: 36, height: 36, borderRadius: 10, background: mod.bg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 17, flexShrink: 0 }}>{mod.emoji}</div>
             <div style={{ minWidth: 0 }}>
-              <div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 21, lineHeight: 1.1, letterSpacing: "-0.01em" }}>{mod.label}</div>
-              <div style={{ fontSize: 10.5, color: MUT }}>{new Date().toLocaleDateString("en-ZA", { weekday: "long", day: "numeric", month: "long" })}</div>
+              <div className="page-title" style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 21, lineHeight: 1.1, letterSpacing: "-0.01em" }}>{mod.label}</div>
+              <div className="page-subtitle" style={{ fontSize: 10.5, color: MUT }}>{new Date().toLocaleDateString("en-ZA", { weekday: "long", day: "numeric", month: "long" })}</div>
             </div>
             <div className="flex-1" />
-            <div className="flex items-center gap-2" style={{ background: "rgba(255,255,255,0.04)", border: `1px solid ${LINE}`, borderRadius: 9, padding: "6px 10px", maxWidth: 220, flex: "1 1 140px" }}>
+            <div className="flex items-center gap-2 header-search" style={{ background: "rgba(255,255,255,0.04)", border: `1px solid ${LINE}`, borderRadius: 9, padding: "6px 10px", maxWidth: 220, flex: "1 1 140px" }}>
               <Search size={13} color={MUT} />
               <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search this page…" style={{ background: "transparent", border: "none", fontSize: 12.5, color: C.ink, width: "100%", fontFamily: "inherit" }} />
               {q && <button onClick={() => setQ("")} style={{ ...iconBtn, padding: 0 }} aria-label="Clear"><X size={12} /></button>}
             </div>
-            <div style={{ fontSize: 10.5, color: saveState === "error" ? C.rose : FAINT, minWidth: 42, textAlign: "right" }}>
+            <div className="header-savestate" style={{ fontSize: 10.5, color: saveState === "error" ? C.rose : FAINT, minWidth: 42, textAlign: "right" }}>
               {saveState === "saving" ? "saving…" : saveState === "saved" ? "saved ✓" : saveState === "error" ? "retry" : ""}
             </div>
             {fbAuth && (
               <div className="flex items-center gap-1.5">
                 {!user ? (
                   <button onClick={signInGoogle} className="flex items-center gap-1" style={{ ...iconBtn, fontSize: 11, padding: "5px 8px", border: `1px solid ${LINE}`, borderRadius: 8 }} title="Sign in with Google to sync this data across your devices">
-                    <CloudIcon size={12} /> Sign in
+                    <CloudIcon size={12} /> <span className="btn-label">Sign in</span>
                   </button>
                 ) : (
                   <div className="flex items-center gap-1.5" title={`Signed in as ${user.email}`}>
                     {user.photoURL ? <img src={user.photoURL} alt="" style={{ width: 20, height: 20, borderRadius: 99 }} /> : <CloudIcon size={12} color={MUT} />}
-                    <span style={{ fontSize: 10.5, color: cloudState === "error" ? C.rose : MUT, whiteSpace: "nowrap" }}>
+                    <span className="btn-label" style={{ fontSize: 10.5, color: cloudState === "error" ? C.rose : MUT, whiteSpace: "nowrap" }}>
                       {cloudState === "saving" ? "syncing…" : cloudState === "synced" ? "synced ✓" : cloudState === "loading" ? "loading…" : cloudState === "error" ? "sync error" : ""}
                     </span>
-                    <button onClick={signOutGoogle} style={{ ...iconBtn, fontSize: 11, padding: "5px 8px", border: `1px solid ${LINE}`, borderRadius: 8 }}>Sign out</button>
+                    <button onClick={signOutGoogle} style={{ ...iconBtn, fontSize: 11, padding: "5px 8px", border: `1px solid ${LINE}`, borderRadius: 8 }}><span className="btn-label">Sign out</span></button>
                   </div>
                 )}
               </div>
             )}
             <div className="flex items-center gap-1.5" title="Data only lives in this browser's storage — use these to move it to another browser or Safari's Add to Dock app, or just to keep a backup">
-              {importMsg && <span style={{ fontSize: 10.5, color: importMsg === "Imported ✓" ? C.mint : C.rose, whiteSpace: "nowrap" }}>{importMsg}</span>}
+              {importMsg && <span className="btn-label" style={{ fontSize: 10.5, color: importMsg === "Imported ✓" ? C.mint : C.rose, whiteSpace: "nowrap" }}>{importMsg}</span>}
               <button onClick={exportData} className="flex items-center gap-1" style={{ ...iconBtn, fontSize: 11, padding: "5px 8px", border: `1px solid ${LINE}`, borderRadius: 8 }} aria-label="Export data">
-                <Download size={12} /> Export
+                <Download size={12} /> <span className="btn-label">Export</span>
               </button>
               <button onClick={triggerImport} className="flex items-center gap-1" style={{ ...iconBtn, fontSize: 11, padding: "5px 8px", border: `1px solid ${LINE}`, borderRadius: 8 }} aria-label="Import data">
-                <Upload size={12} /> Import
+                <Upload size={12} /> <span className="btn-label">Import</span>
               </button>
               <input ref={importInputRef} type="file" accept="application/json" onChange={handleImportFile} style={{ display: "none" }} />
             </div>
