@@ -187,45 +187,45 @@ function collectPriorityTasks(ally, mama) {
     const songCurrentIdx = ally.song.stages.findIndex((s) => s.status !== "done");
     if (songCurrentIdx !== -1) {
       const s = ally.song.stages[songCurrentIdx];
-      out.push({
+      if (!s.paused) out.push({
         id: s.id, pillar: "song", title: s.name, due: s.due || null,
         priority: s.priority || "Medium", lastProgress: s.lastProgress || null, created: s.created || null,
       });
     }
   }
-  ((ally.unlocks.ecosystem && ally.unlocks.ecosystem.pillars) || []).flatMap((p) => p.benefits).filter((b) => b.state === "progress").forEach((b) => out.push({
+  ((ally.unlocks.ecosystem && ally.unlocks.ecosystem.pillars) || []).flatMap((p) => p.benefits).filter((b) => b.state === "progress" && !b.paused).forEach((b) => out.push({
     id: b.id, pillar: "unlocks", title: b.label, due: b.due || null,
     priority: b.priority || "Medium", lastProgress: b.lastProgress || null, created: b.created || null,
   }));
-  (ally.unlocks.chains || []).forEach((ch) => ch.nodes.filter((n) => n.status === "active").forEach((n) => out.push({
+  (ally.unlocks.chains || []).forEach((ch) => ch.nodes.filter((n) => n.status === "active" && !n.paused).forEach((n) => out.push({
     id: n.id, pillar: "unlocks", title: n.label, due: n.due || null,
     priority: n.priority || "Medium", lastProgress: n.lastProgress || null, created: n.created || null,
   })));
-  ally.deals.deals.filter((d) => d.stage !== "Posted").forEach((d) => out.push({
+  ally.deals.deals.filter((d) => d.stage !== "Posted" && !d.paused).forEach((d) => out.push({
     id: d.id, pillar: "deals", title: d.brand, due: d.due || null,
     priority: d.priority || "Medium", lastProgress: d.lastProgress || null, created: d.created || null,
   }));
-  ally.deals.deals.forEach((d) => (d.tasks || []).filter((t) => !t.done).forEach((t) => out.push({
+  ally.deals.deals.forEach((d) => (d.tasks || []).filter((t) => !t.done && !t.paused).forEach((t) => out.push({
     id: t.id, pillar: "deals", title: `${t.title} (${d.brand})`, due: t.due || null,
     priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
   })));
-  ally.deals.clients.forEach((c) => (c.tasks || []).filter((t) => !t.done).forEach((t) => out.push({
+  ally.deals.clients.forEach((c) => (c.tasks || []).filter((t) => !t.done && !t.paused).forEach((t) => out.push({
     id: t.id, pillar: "deals", title: `${t.title} (${c.name})`, due: t.due || null,
     priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
   })));
-  mama.tasks.filter((t) => t.status !== "Done").forEach((t) => out.push({
+  mama.tasks.filter((t) => t.status !== "Done" && !t.paused).forEach((t) => out.push({
     id: t.id, pillar: "mama", title: t.title, due: t.due || null,
     priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
   }));
-  (mama.creators || []).forEach((cr) => (cr.tasks || []).filter((t) => !t.done).forEach((t) => out.push({
+  (mama.creators || []).forEach((cr) => (cr.tasks || []).filter((t) => !t.done && !t.paused).forEach((t) => out.push({
     id: t.id, pillar: "mama", title: `${t.title} (${cr.name})`, due: t.due || null,
     priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
   })));
-  (mama.tools || []).forEach((tl) => (tl.tasks || []).filter((t) => !t.done).forEach((t) => out.push({
+  (mama.tools || []).forEach((tl) => (tl.tasks || []).filter((t) => !t.done && !t.paused).forEach((t) => out.push({
     id: t.id, pillar: "mama", title: `${t.title} (${tl.name})`, due: t.due || null,
     priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
   })));
-  (mama.reports || []).forEach((rp) => (rp.tasks || []).filter((t) => !t.done).forEach((t) => out.push({
+  (mama.reports || []).forEach((rp) => (rp.tasks || []).filter((t) => !t.done && !t.paused).forEach((t) => out.push({
     id: t.id, pillar: "mama", title: `${t.title} (${rp.name || rp.title})`, due: t.due || null,
     priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
   })));
@@ -492,13 +492,23 @@ function AllyCRM() {
   }
 
   const aptUnlocked = isApartmentUnlocked(ally);
+  /* sidebar badge counts: for the 4 pillars that feed the Priorities dashboard (song, unlocks,
+     deals, mama), pull the count from the exact same collectPriorityTasks pool the dashboard uses —
+     that's every open task from every source for that pillar (e.g. Mama's badge used to only count
+     the top-level captured-tasks board and miss anything logged under Creators/AI Tools/Reports;
+     Deals only counted open deal records and missed deal/client sub-task checklists). Now every
+     tab's badge means the same thing: how much open, non-paused work is sitting in that pillar. */
+  const priorityTaskCounts = (() => {
+    const tasks = collectPriorityTasks(ally, mama);
+    return Object.fromEntries(PRIORITY_PILLARS.map((k) => [k, tasks.filter((t) => t.pillar === k).length]));
+  })();
   const badges = {
-    content: ally.content.items.filter((i) => i.status !== "Posted").length,
-    song: ally.song.stages.filter((s) => s.status === "done").length,
-    unlocks: (ally.unlocks.ecosystem?.pillars || []).flatMap((p) => p.benefits).filter((b) => b.state === "progress").length + ally.unlocks.chains.flatMap((c) => c.nodes).filter((n) => n.status === "active").length,
+    content: priorityTaskCounts.content,
+    song: ally.song.stages.filter((s) => s.status !== "done" && !s.paused).length,
+    unlocks: priorityTaskCounts.unlocks,
     apartment: aptUnlocked ? ally.apartment.items.filter((i) => i.status === "Bought").length : null,
-    deals: ally.deals.deals.filter((d) => d.stage !== "Posted").length,
-    mama: mama.tasks.filter((t) => t.status !== "Done").length,
+    deals: priorityTaskCounts.deals,
+    mama: priorityTaskCounts.mama,
   };
   const mod = MODULES[tab];
 
@@ -788,36 +798,51 @@ function DueChip({ due, inline }) {
    Used on every item across the 5 pillars so the Priorities dashboard can score them all the same way.
    If closeness to the deadline (or long silence) pushes the computed urgency into "Urgent" territory,
    the stored priority auto-escalates to High so the H button itself carries that signal — no separate
-   "Urgent" badge duplicating what the priority buttons already show. */
+   "Urgent" badge duplicating what the priority buttons already show.
+   Clicking the already-selected priority button again PAUSES this item: it stops feeding the
+   Priorities dashboard entirely (collectPriorityTasks skips anything with .paused), the due date
+   clears and greys out, and none of L/M/H show as selected. It's for things you want to keep on the
+   board but haven't decided are a live priority yet — existing, not urgent. Clicking any L/M/H
+   button again un-pauses it, picks that priority, and resets the due date back to blank so you set
+   a fresh one rather than reviving a stale old date. */
 function PriorityControls({ item, onChange, hideDue }) {
   const u = computeUrgency(item);
   const pr = item.priority || "Medium";
+  const paused = !!item.paused;
   useEffect(() => {
-    if (u.bucket === "Urgent" && pr !== "High") onChange({ priority: "High" });
-  }, [u.bucket, pr]);
+    if (!paused && u.bucket === "Urgent" && pr !== "High") onChange({ priority: "High" });
+  }, [u.bucket, pr, paused]);
   const dueTint = u.daysUntilDue === null ? MUT : u.daysUntilDue < 0 ? C.rose : u.daysUntilDue <= 2 ? C.amber : MUT;
+  const setPriority = (p) => {
+    if (paused) onChange({ priority: p, paused: false, due: null });
+    else if (pr === p) onChange({ paused: true, due: null });
+    else onChange({ priority: p });
+  };
   return (
-    <div className="flex items-center gap-1.5 flex-wrap mt-1.5" style={{ fontSize: 11 }}>
+    <div className="flex items-center gap-1.5 flex-wrap mt-1.5" style={{ fontSize: 11, opacity: paused ? 0.55 : 1 }}>
       {!hideDue && (
-        <input type="date" value={item.due || ""} onChange={(e) => onChange({ due: e.target.value || null })}
-          className="rounded-md" style={{ ...darkInput, fontSize: 10.5, padding: "3px 5px" }} aria-label="Due date" />
+        <input type="date" value={item.due || ""} disabled={paused} onChange={(e) => onChange({ due: e.target.value || null })}
+          className="rounded-md" style={{ ...darkInput, fontSize: 10.5, padding: "3px 5px", cursor: paused ? "not-allowed" : "text" }} aria-label="Due date" />
       )}
       <div className="flex gap-1">
         {PRIORITY_LEVELS.map((p) => (
-          <button key={p} onClick={() => onChange({ priority: p })} className="rounded-full px-2 py-0.5"
+          <button key={p} onClick={() => setPriority(p)} className="rounded-full px-2 py-0.5"
+            title={!paused && pr === p ? "Click again to pause — stop tracking this as a priority" : paused ? "Paused — click a level to resume" : undefined}
             style={{ fontSize: 10, cursor: "pointer", fontFamily: "inherit",
-              background: pr === p ? `${PRIORITY_TINT[p]}22` : FILL, border: `1px solid ${pr === p ? PRIORITY_TINT[p] : LINE}`,
-              color: pr === p ? PRIORITY_TINT[p] : MUT }}>{p[0]}</button>
+              background: !paused && pr === p ? `${PRIORITY_TINT[p]}22` : FILL, border: `1px solid ${!paused && pr === p ? PRIORITY_TINT[p] : LINE}`,
+              color: !paused && pr === p ? PRIORITY_TINT[p] : MUT }}>{p[0]}</button>
         ))}
       </div>
       <button onClick={() => onChange({ lastProgress: todayISO() })} className="flex items-center gap-1 rounded-full px-2 py-0.5"
         style={{ fontSize: 10, cursor: "pointer", fontFamily: "inherit", background: FILL, border: `1px solid ${LINE}`, color: MUT }}
         title="Log progress today"><Zap size={10} /> progress</button>
-      {u.daysUntilDue !== null && (
+      {paused ? (
+        <span style={{ marginLeft: "auto", color: FAINT, fontWeight: 600, whiteSpace: "nowrap" }}>paused</span>
+      ) : u.daysUntilDue !== null ? (
         <span style={{ marginLeft: "auto", color: dueTint, fontWeight: 600, whiteSpace: "nowrap" }}>
           {u.daysUntilDue < 0 ? `${-u.daysUntilDue}d overdue` : u.daysUntilDue === 0 ? "today" : `${u.daysUntilDue}d`}
         </span>
-      )}
+      ) : null}
     </div>
   );
 }
