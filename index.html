@@ -403,8 +403,19 @@ const monthName = () => new Date().toLocaleDateString("en-ZA", { month: "long" }
 const isApartmentUnlocked = (ally) => !!ally.apartment.unlockedOverride || ally.unlocks.chains.some((ch) => ch.nodes.some((n) => /move\s*in/i.test(n.label) && n.status === "done"));
 
 /* ---------- pipeline constants ---------- */
-const CONTENT_COLS = ["Scripted", "Filmed", "Edited"];
-const CONTENT_TINT = { Scripted: C.lilac, Filmed: C.amber, Edited: C.mint, Posted: FAINT };
+const CONTENT_COLS = ["Ideas", "To Film", "In Edit"];
+const CONTENT_TINT = { Ideas: C.lilac, "To Film": C.amber, "In Edit": C.mint, Posted: FAINT };
+
+/* one-time migration: content items saved under the old Scripted/Filmed/Edited status names get
+   remapped to the current Ideas/To Film/In Edit names, so the label shown on screen always matches
+   the value actually stored (a stale mismatch here caused a real crash before, see Unlocks). Applied
+   to both the localStorage load path and the Firestore reconcile path below, since either can hand
+   back older data. */
+const CONTENT_STATUS_MIGRATE = { Scripted: "Ideas", Filmed: "To Film", Edited: "In Edit" };
+function migrateAlly(a) {
+  if (!a || !a.content || !Array.isArray(a.content.items)) return a;
+  return { ...a, content: { ...a.content, items: a.content.items.map((i) => CONTENT_STATUS_MIGRATE[i.status] ? { ...i, status: CONTENT_STATUS_MIGRATE[i.status] } : i) } };
+}
 const DEAL_STAGES = ["Brief", "Script", "Script approval", "Film", "Edit", "Final approval", "Posted"];
 const CLIENT_STATUSES = ["Lead", "Active", "Paused"];
 const MIX_ROUTES = ["Fiverr", "Crighton", "Cassidy's boyfriend", "DIY"];
@@ -461,7 +472,7 @@ function computeUrgency(item) {
 
 /* content doesn't get per-item due dates/priority — the whole pillar's urgency is one master
    signal, and it's driven entirely by days since your last post, full stop. It does not care what's
-   sitting in the pipeline (Scripted/Filmed/Edited are for your own tracking only) and it does not
+   sitting in the pipeline (Ideas/To Film/In Edit are for your own tracking only) and it does not
    care about a posting-cadence target — 1 day since post = 20% full, 5 days = 100%, and it keeps
    climbing past that into an overflow/critical state if you let it run. Every open content piece
    inherits this same score/bucket, so individual ideas never compete with each other on "urgency". */
@@ -751,6 +762,7 @@ function AllyCRM() {
       if (!a.unlocks) a.unlocks = ALLY_SEED.unlocks;
       if (!a.unlocks.ecosystem) a.unlocks.ecosystem = ALLY_SEED.unlocks.ecosystem;
       if (!a.unlocks.chains) a.unlocks.chains = ALLY_SEED.unlocks.chains;
+      a = migrateAlly(a);
       m = { ...m, creators: (m.creators || []).map((c) => c.goals ? c : { ...c, goals: c.goal ? [{ id: uid(), text: c.goal }] : [] }) };
       setAlly(a); setMama(m); loaded.current = true; setLocalLoaded(true);
     })();
@@ -812,7 +824,7 @@ function AllyCRM() {
         const snap = await docRef.get();
         const remote = snap.exists ? snap.data() : null;
         if (remote && remote.ally && remote.mama) {
-          setAlly(remote.ally); setMama(remote.mama);
+          setAlly(migrateAlly(remote.ally)); setMama(remote.mama);
         } else {
           await docRef.set({ ally: allyRef.current, mama: mamaRef.current, updatedAt: Date.now() });
         }
@@ -1119,12 +1131,12 @@ function AllyCRM() {
 function contentHealth(content) {
   const since = daysSince(content.lastPosted);
   const counts = Object.fromEntries(CONTENT_COLS.map((c) => [c, content.items.filter((i) => i.status === c).length]));
-  const ready = counts.Edited;
+  const ready = counts["In Edit"];
   let tint = C.mint, msg = "On track. Keep the machine fed.";
   if (since === null) { tint = C.sky; msg = "Log when you last posted to start the runway clock."; }
   else if (since >= content.cadence && ready === 0) { tint = C.rose; msg = "Post overdue and nothing edited. Film or edit today."; }
   else if (since >= content.cadence) { tint = C.amber; msg = `Time to post. ${ready} edited and ready to go.`; }
-  else if (ready === 0 && counts.Filmed === 0) { tint = C.amber; msg = "Downstream pipeline is empty. Script and film next."; }
+  else if (ready === 0 && counts["To Film"] === 0) { tint = C.amber; msg = "Downstream pipeline is empty. Script and film next."; }
   return { since, counts, ready, tint, msg };
 }
 
@@ -1210,7 +1222,7 @@ function ContentPillarCard({ content, go, rank, pct }) {
   const since = daysSince(content.lastPosted);
   const tint = urgencyTint(pct);
   const critical = pct > 100;
-  const pipelineCols = ["Edited", "Filmed", "Scripted"];
+  const pipelineCols = ["In Edit", "To Film", "Ideas"];
   const counts = Object.fromEntries(pipelineCols.map((c) => [c, content.items.filter((i) => i.status === c).length]));
   return (
     <div onClick={() => go("content")} className="rounded-2xl p-5" style={{ ...card, borderRadius: 18, borderLeft: `4px solid ${mod.accent}`, cursor: "pointer" }}>
@@ -1418,7 +1430,7 @@ function ContentModule({ data, setData, q }) {
   const openIfNot = (id) => setOpenDesc((o) => (o[id] ? o : { ...o, [id]: true }));
   const patch = (p) => setData((d) => ({ ...d, content: { ...d.content, ...p } }));
   const ql = (q || "").toLowerCase();
-  const add = () => { const t = title.trim(); if (!t) return; patch({ items: [{ id: uid(), title: t, desc: "", status: "Scripted", created: todayISO() }, ...content.items] }); setTitle(""); };
+  const add = () => { const t = title.trim(); if (!t) return; patch({ items: [{ id: uid(), title: t, desc: "", status: "Ideas", created: todayISO() }, ...content.items] }); setTitle(""); };
   const move = (id, dir) => setData((d) => {
     const items = d.content.items.map((i) => { if (i.id !== id) return i; const next = CONTENT_COLS[Math.min(Math.max(CONTENT_COLS.indexOf(i.status) + dir, 0), CONTENT_COLS.length - 1)]; return { ...i, status: next }; });
     return { ...d, content: { ...d.content, items } };
@@ -1427,12 +1439,12 @@ function ContentModule({ data, setData, q }) {
   const updateItem = (id, p) => patch({ items: content.items.map((i) => (i.id === id ? { ...i, ...p } : i)) });
   const markPosted = (id) => patch({ items: content.items.filter((i) => i.id !== id), lastPosted: todayISO() });
   const clearPosted = () => patch({ items: content.items.filter((i) => i.status !== "Posted") });
-  const donutSegs = CONTENT_COLS.map((s) => ({ value: h.counts[s], color: CONTENT_TINT[s], label: s })).filter((s) => s.value > 0);
+  const donutSegs = CONTENT_COLS.map((s) => ({ value: h.counts[s], color: CONTENT_TINT[s], label: s }));
   const donutTotal = donutSegs.reduce((s, x) => s + x.value, 0);
 
   return (
     <section>
-      <SectionHead title="Content engine" sub="Comedy pipeline. The runway tells you when to think, film, edit, and post." />
+      <SectionHead title="Content engine" />
 
       {/* compact stat bar: since-post ring + message + inline legend, no separate donut card */}
       <div className="flex items-center gap-5 flex-wrap mb-4" style={{ ...card, borderRadius: 16, padding: "18px 22px" }}>
@@ -1478,7 +1490,7 @@ function ContentModule({ data, setData, q }) {
                     <ScriptBox value={i.desc || ""} open={!!openDesc[i.id]} onFocus={() => openIfNot(i.id)} onChange={(v) => updateItem(i.id, { desc: v })} onToggle={() => toggleDesc(i.id)} />
                     <div className="flex items-center gap-1 mt-1.5"><span className="ml-auto flex gap-1">
                       {col !== "Idea" && <button onClick={() => move(i.id, -1)} style={{ ...iconBtn, padding: 2 }} aria-label="Back">←</button>}
-                      {col === "Edited"
+                      {col === "In Edit"
                         ? <button onClick={() => markPosted(i.id)} className="rounded-full px-2.5 py-0.5" style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.03em", cursor: "pointer", fontFamily: "inherit", background: `${C.mint}22`, border: `1px solid ${C.mint}55`, color: C.mint }}>POSTED</button>
                         : <button onClick={() => move(i.id, 1)} style={{ ...iconBtn, padding: 2, color: C.mint }} aria-label="Forward">→</button>}
                       <button onClick={() => remove(i.id)} style={{ ...iconBtn, padding: 2 }} aria-label="Delete"><X size={11} /></button>
