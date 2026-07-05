@@ -55,8 +55,275 @@ const Zap = Ico(<path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/>);
 const Download = Ico(<><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></>);
 const Upload = Ico(<><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></>);
 const CloudIcon = Ico(<path d="M17.5 19H9a7 7 0 1 1 6.71-9h.79a4.5 4.5 0 1 1 0 9Z"/>);
+const MenuIcon = Ico(<><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></>);
 
 /* ---------- palette (dark, compact) ---------- */
+const AVATAR_IMG = "data:image/jpeg;base64," +
+  "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" +
+  "o0hqEn//2Q==";
 const C = {
   canvas: "#0B0B0D", frame: "#0B0B0D", card: "#131316", soft: "#0E0E11", dark: "#F2F2F4",
   ink: "#F2F2F4", ink2: "rgba(242,242,244,0.72)",
@@ -470,6 +737,7 @@ function AllyCRM() {
   const [history, setHistory] = useState([]);
   const [q, setQ] = useState("");
   const [saveState, setSaveState] = useState("idle");
+  const [navOpen, setNavOpen] = useState(false);
   const loaded = useRef(false);
   const timers = useRef({});
   const [localLoaded, setLocalLoaded] = useState(false);
@@ -603,7 +871,7 @@ function AllyCRM() {
     };
   }, [ally, mama]);
 
-  const go = (next) => { if (next === tab) return; setHistory((h) => [...h, tab].slice(-20)); setTab(next); setQ(""); };
+  const go = (next) => { setNavOpen(false); if (next === tab) return; setHistory((h) => [...h, tab].slice(-20)); setTab(next); setQ(""); };
   const back = () => { setHistory((h) => { if (!h.length) return h; const prev = h[h.length - 1]; setTab(prev); setQ(""); return h.slice(0, -1); }); };
 
   /* export/import: localStorage is per-browser (Chrome and Safari, or a Safari "Add to Dock" web
@@ -653,14 +921,11 @@ function AllyCRM() {
     return (
       <div style={{ background: C.canvas, minHeight: "100vh" }} className="flex items-center justify-center">
         <div className="flex flex-col items-center" style={{ ...card, borderRadius: 20, padding: "40px 36px", width: 340, textAlign: "center" }}>
-          <div style={{ width: 56, height: 56, borderRadius: 16, background: `linear-gradient(135deg, ${C.lilac}, ${C.pink})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 26, marginBottom: 16 }}>🧑🏻</div>
-          <div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 20, marginBottom: 6 }}>ALLY CRM</div>
+          <div style={{ width: 148, height: 148, borderRadius: 28, overflow: "hidden", marginBottom: 20 }}><img src={AVATAR_IMG} alt="Ally Damon" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} /></div>
+          <div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 800, fontStyle: "italic", fontSize: 26, letterSpacing: "0.04em", color: "#E6090F", textTransform: "uppercase", marginBottom: 6 }}>ALLY CRM</div>
           <div style={{ fontSize: 12.5, color: MUT, marginBottom: 24 }}>Sign in with Google to continue</div>
           <button onClick={signInGoogle} className="flex items-center justify-center gap-2 w-full" style={{ ...pillDark, padding: "11px 16px", fontSize: 14 }}>
             <CloudIcon size={15} /> Sign in with Google
-          </button>
-          <button onClick={clearLocalCache} style={{ ...iconBtn, fontSize: 10.5, marginTop: 18, color: FAINT }}>
-            Clear the old cached copy on this device
           </button>
         </div>
       </div>
@@ -705,13 +970,57 @@ function AllyCRM() {
         @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
         .pulse-dot { animation: pulse 2s ease-in-out infinite; }
         .railbtn:hover { background: ${FILL} !important; }
+
+        /* ---------- mobile layout: hamburger sidebar + header collapse ---------- */
+        .hamburger-btn { display: none; }
+        .rail-label { display: none; }
+        @media (max-width: 768px) {
+          .hamburger-btn { display: flex !important; }
+          .sidebar-rail {
+            position: fixed !important;
+            top: 0; left: 0;
+            height: 100dvh !important;
+            width: 250px !important;
+            z-index: 60;
+            transform: translateX(-100%);
+            transition: transform 0.22s ease;
+            box-shadow: 4px 0 30px rgba(0,0,0,0.55);
+            align-items: stretch !important;
+            padding: 18px 12px !important;
+          }
+          .sidebar-rail.nav-open { transform: translateX(0); }
+          .sidebar-rail .railbtn {
+            width: 100% !important;
+            height: auto !important;
+            flex-direction: row !important;
+            justify-content: flex-start !important;
+            gap: 14px;
+            padding: 11px 12px !important;
+            font-size: 24px !important;
+          }
+          .sidebar-rail .rail-label { display: inline-block; font-size: 14.5px; font-weight: 600; font-family: 'Outfit', sans-serif; }
+          .sidebar-rail .rail-logo, .sidebar-rail .rail-avatar { align-self: center; }
+          .app-header { padding: 10px 14px !important; flex-wrap: wrap; row-gap: 8px; }
+          .header-search { display: none !important; }
+          .header-savestate { display: none !important; }
+          .page-subtitle { display: none !important; }
+          .page-title { font-size: 17px !important; }
+          .btn-label { display: none; }
+          .scroll { padding: 16px 14px !important; }
+        }
       `}</style>
 
       <div className="flex" style={{ height: "100%", fontFamily: "'Outfit', sans-serif", color: C.ink }}>
 
-        {/* ===== sidebar rail (fixed, does not scroll with page content) ===== */}
-        <aside className="flex flex-col items-center" style={{ width: 104, flexShrink: 0, borderRight: `1px solid ${LINE}`, padding: "22px 0", gap: 8, background: "#0E0E11", height: "100%", overflowY: "auto" }}>
-          <div style={{ width: 48, height: 48, borderRadius: 13, background: "rgba(255,255,255,0.08)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 16, fontSize: 22, fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700 }}>🅰️</div>
+        {/* mobile-only backdrop behind the drawer; only ever mountable via the hamburger button,
+            which itself only renders (via CSS) below the 768px breakpoint */}
+        {navOpen && <div onClick={() => setNavOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 55 }} />}
+
+        {/* ===== sidebar rail (fixed, does not scroll with page content).
+            Desktop: static icon rail. Mobile (<=768px, see .sidebar-rail CSS): becomes a fixed,
+            off-canvas drawer that slides in from the left when navOpen, with icon+label rows. ===== */}
+        <aside className={`flex flex-col items-center sidebar-rail${navOpen ? " nav-open" : ""}`} style={{ width: 104, flexShrink: 0, borderRight: `1px solid ${LINE}`, padding: "22px 0", gap: 8, background: "#0E0E11", height: "100%", overflowY: "auto" }}>
+          <div className="rail-logo" style={{ width: 48, height: 48, borderRadius: 13, background: "rgba(255,255,255,0.08)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 16, fontSize: 22, fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700 }}>🅰️</div>
           {TAB_ORDER.map((t) => {
             const on = tab === t; const info = MODULES[t];
             const locked = t === "apartment" && !aptUnlocked;
@@ -720,61 +1029,66 @@ function AllyCRM() {
                 style={{ width: 68, height: 68, borderRadius: 16, border: on ? `1px solid ${LINE}` : "1px solid transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", position: "relative",
                   background: on ? "rgba(255,255,255,0.1)" : "transparent", fontSize: 32, transition: "background 0.15s" }}>
                 <span style={{ filter: on ? "none" : "saturate(0.85)", opacity: locked ? 0.4 : on ? 1 : 0.7 }}>{info.emoji}</span>
+                <span className="rail-label">{info.label}</span>
                 {locked && <span style={{ position: "absolute", top: 6, right: 8, fontSize: 11 }}>🔒</span>}
                 {badges[t] ? <span style={{ position: "absolute", top: 5, right: 5, minWidth: 18, height: 18, borderRadius: 99, background: info.accent, color: "#fff", fontSize: 10.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 5px" }}>{badges[t]}</span> : null}
               </button>
             );
           })}
           <div style={{ flex: 1 }} />
-          <div style={{ width: 48, height: 48, borderRadius: 99, background: `linear-gradient(135deg, ${C.lilac}, ${C.pink})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }} title="Ally">🧑🏻</div>
+          <div className="rail-avatar" style={{ width: 48, height: 48, borderRadius: 99, overflow: "hidden" }} title="Ally"><img src={AVATAR_IMG} alt="Ally" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} /></div>
         </aside>
 
         {/* ===== main column ===== */}
         <div className="flex flex-col" style={{ flex: 1, minWidth: 0, height: "100%" }}>
           {/* top bar (persistent) */}
-          <header className="flex items-center gap-3" style={{ padding: "14px 24px", borderBottom: `1px solid ${LINE}`, flexShrink: 0 }}>
+          <header className="flex items-center gap-3 app-header" style={{ padding: "14px 24px", borderBottom: `1px solid ${LINE}`, flexShrink: 0 }}>
+            <button onClick={() => setNavOpen(true)} className="hamburger-btn" aria-label="Open menu"
+              style={{ width: 32, height: 32, borderRadius: 9, border: `1px solid ${LINE}`, background: C.card, cursor: "pointer", alignItems: "center", justifyContent: "center", color: C.ink, flexShrink: 0 }}>
+              <MenuIcon size={16} />
+            </button>
             <button onClick={back} disabled={!history.length} aria-label="Back"
               style={{ width: 32, height: 32, borderRadius: 9, border: `1px solid ${LINE}`, background: history.length ? C.card : "transparent", cursor: history.length ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", color: history.length ? C.ink : FAINT, flexShrink: 0 }}>
               <ChevronLeft size={16} />
             </button>
             <div style={{ width: 36, height: 36, borderRadius: 10, background: mod.bg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 17, flexShrink: 0 }}>{mod.emoji}</div>
             <div style={{ minWidth: 0 }}>
-              <div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 21, lineHeight: 1.1, letterSpacing: "-0.01em" }}>{mod.label}</div>
-              <div style={{ fontSize: 10.5, color: MUT }}>{new Date().toLocaleDateString("en-ZA", { weekday: "long", day: "numeric", month: "long" })}</div>
+              <div className="page-title" style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 21, lineHeight: 1.1, letterSpacing: "-0.01em" }}>{mod.label}</div>
+              <div className="page-subtitle" style={{ fontSize: 10.5, color: MUT }}>{new Date().toLocaleDateString("en-ZA", { weekday: "long", day: "numeric", month: "long" })}</div>
             </div>
             <div className="flex-1" />
-            <div className="flex items-center gap-2" style={{ background: "rgba(255,255,255,0.04)", border: `1px solid ${LINE}`, borderRadius: 9, padding: "6px 10px", maxWidth: 220, flex: "1 1 140px" }}>
+            <div className="flex items-center gap-2 header-search" style={{ background: "rgba(255,255,255,0.04)", border: `1px solid ${LINE}`, borderRadius: 9, padding: "6px 10px", maxWidth: 220, flex: "1 1 140px" }}>
               <Search size={13} color={MUT} />
               <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search this page…" style={{ background: "transparent", border: "none", fontSize: 12.5, color: C.ink, width: "100%", fontFamily: "inherit" }} />
               {q && <button onClick={() => setQ("")} style={{ ...iconBtn, padding: 0 }} aria-label="Clear"><X size={12} /></button>}
             </div>
-            <div style={{ fontSize: 10.5, color: saveState === "error" ? C.rose : FAINT, minWidth: 42, textAlign: "right" }}>
+            <div className="header-savestate" style={{ fontSize: 10.5, color: saveState === "error" ? C.rose : FAINT, minWidth: 42, textAlign: "right" }}>
               {saveState === "saving" ? "saving…" : saveState === "saved" ? "saved ✓" : saveState === "error" ? "retry" : ""}
             </div>
             {fbAuth && (
               <div className="flex items-center gap-1.5">
                 {!user ? (
                   <button onClick={signInGoogle} className="flex items-center gap-1" style={{ ...iconBtn, fontSize: 11, padding: "5px 8px", border: `1px solid ${LINE}`, borderRadius: 8 }} title="Sign in with Google to sync this data across your devices">
-                    <CloudIcon size={12} /> Sign in
+                    <CloudIcon size={12} /> <span className="btn-label">Sign in</span>
                   </button>
                 ) : (
                   <div className="flex items-center gap-1.5" title={`Signed in as ${user.email}`}>
                     {user.photoURL ? <img src={user.photoURL} alt="" style={{ width: 20, height: 20, borderRadius: 99 }} /> : <CloudIcon size={12} color={MUT} />}
-                    <span style={{ fontSize: 10.5, color: cloudState === "error" ? C.rose : MUT, whiteSpace: "nowrap" }}>
+                    <span className="btn-label" style={{ fontSize: 10.5, color: cloudState === "error" ? C.rose : MUT, whiteSpace: "nowrap" }}>
                       {cloudState === "saving" ? "syncing…" : cloudState === "synced" ? "synced ✓" : cloudState === "loading" ? "loading…" : cloudState === "error" ? "sync error" : ""}
                     </span>
-                    <button onClick={signOutGoogle} style={{ ...iconBtn, fontSize: 11, padding: "5px 8px", border: `1px solid ${LINE}`, borderRadius: 8 }}>Sign out</button>
+                    <button onClick={signOutGoogle} style={{ ...iconBtn, fontSize: 11, padding: "5px 8px", border: `1px solid ${LINE}`, borderRadius: 8 }}><span className="btn-label">Sign out</span></button>
                   </div>
                 )}
               </div>
             )}
             <div className="flex items-center gap-1.5" title="Data only lives in this browser's storage — use these to move it to another browser or Safari's Add to Dock app, or just to keep a backup">
-              {importMsg && <span style={{ fontSize: 10.5, color: importMsg === "Imported ✓" ? C.mint : C.rose, whiteSpace: "nowrap" }}>{importMsg}</span>}
+              {importMsg && <span className="btn-label" style={{ fontSize: 10.5, color: importMsg === "Imported ✓" ? C.mint : C.rose, whiteSpace: "nowrap" }}>{importMsg}</span>}
               <button onClick={exportData} className="flex items-center gap-1" style={{ ...iconBtn, fontSize: 11, padding: "5px 8px", border: `1px solid ${LINE}`, borderRadius: 8 }} aria-label="Export data">
-                <Download size={12} /> Export
+                <Download size={12} /> <span className="btn-label">Export</span>
               </button>
               <button onClick={triggerImport} className="flex items-center gap-1" style={{ ...iconBtn, fontSize: 11, padding: "5px 8px", border: `1px solid ${LINE}`, borderRadius: 8 }} aria-label="Import data">
-                <Upload size={12} /> Import
+                <Upload size={12} /> <span className="btn-label">Import</span>
               </button>
               <input ref={importInputRef} type="file" accept="application/json" onChange={handleImportFile} style={{ display: "none" }} />
             </div>
