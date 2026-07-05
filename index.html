@@ -974,6 +974,10 @@ function AllyCRM() {
         ::placeholder { color: ${FAINT}; }
         input, textarea, select { outline: none; }
         input:focus, textarea:focus { border-color: ${C.lilac} !important; }
+        .script-editable { outline: none; }
+        .script-editable:focus { border-color: ${C.lilac} !important; }
+        .script-editable:empty:before { content: attr(data-placeholder); color: ${FAINT}; }
+        .script-editable * { background: transparent !important; color: inherit !important; }
         button:focus-visible { outline: 2px solid ${C.lilac}; outline-offset: 2px; }
         input[type="date"]::-webkit-calendar-picker-indicator { cursor: pointer; opacity: 0.5; filter: invert(1); }
         .scroll::-webkit-scrollbar { width: 9px; }
@@ -1398,25 +1402,176 @@ function PriorityControls({ item, onChange, hideDue }) {
 }
 
 /* ================= CONTENT ================= */
+/* ---- rich text paste sanitizer for the skit script box ----
+   goal: let bold / italic / font size survive a paste from Claude, Docs, Word, Notion etc,
+   without dragging in the source's colors or backgrounds, and without literal pasted sizes
+   blowing out this small card. every size found (explicit or implied by a heading tag) gets
+   rescaled onto a small fixed range relative to the box's own font size, so relative emphasis
+   (this was bigger than that) survives but nothing can overflow. */
+const SCRIPT_SIZE_MIN = 0.85, SCRIPT_SIZE_MAX = 1.7, SCRIPT_ASSUMED_SOURCE_BASE_PX = 16;
+const SCRIPT_HEADING_EM = { H1: 2, H2: 1.5, H3: 1.17, H4: 1, H5: 0.83, H6: 0.67 };
+const SCRIPT_ALLOWED_INLINE = { B: 1, STRONG: 1, I: 1, EM: 1, U: 1, BR: 1, P: 1, DIV: 1, SPAN: 1, UL: 1, OL: 1, LI: 1 };
+
+function scriptToPx(raw, parentPx) {
+  if (!raw) return null;
+  raw = raw.trim();
+  const m = raw.match(/^([\d.]+)\s*(px|pt|em|rem|%)$/i);
+  if (!m) return null;
+  const num = parseFloat(m[1]), unit = m[2].toLowerCase();
+  if (unit === "px") return num;
+  if (unit === "pt") return num * (96 / 72);
+  if (unit === "em") return num * (parentPx || SCRIPT_ASSUMED_SOURCE_BASE_PX);
+  if (unit === "rem") return num * SCRIPT_ASSUMED_SOURCE_BASE_PX;
+  if (unit === "%") return (num / 100) * (parentPx || SCRIPT_ASSUMED_SOURCE_BASE_PX);
+  return null;
+}
+function scriptNormalizeSize(px) {
+  const ratio = px / SCRIPT_ASSUMED_SOURCE_BASE_PX;
+  return Math.min(SCRIPT_SIZE_MAX, Math.max(SCRIPT_SIZE_MIN, ratio));
+}
+function scriptStyleFromDecl(styleAttr) {
+  const out = {};
+  if (!styleAttr) return out;
+  styleAttr.split(";").forEach((decl) => {
+    const parts = decl.split(":");
+    if (parts.length < 2) return;
+    const key = parts[0].trim().toLowerCase();
+    const val = parts.slice(1).join(":").trim();
+    if (key === "font-size") out.fontSize = val;
+    if (key === "font-weight") out.fontWeight = val;
+    if (key === "font-style") out.fontStyle = val;
+    if (key === "text-decoration") out.textDecoration = val;
+    /* color, background, background-color, font-family: intentionally dropped */
+  });
+  return out;
+}
+function scriptSanitizeNode(node, parentPx, out) {
+  if (node.nodeType === Node.TEXT_NODE) { out.appendChild(document.createTextNode(node.textContent)); return; }
+  if (node.nodeType !== Node.ELEMENT_NODE) return;
+  const tag = node.tagName;
+  const decl = scriptStyleFromDecl(node.getAttribute("style"));
+  const explicitPx = decl.fontSize ? scriptToPx(decl.fontSize, parentPx) : null;
+  const headingPx = SCRIPT_HEADING_EM[tag] ? SCRIPT_HEADING_EM[tag] * SCRIPT_ASSUMED_SOURCE_BASE_PX : null;
+  const sourcePx = explicitPx || headingPx || parentPx;
+  const isHeading = !!SCRIPT_HEADING_EM[tag];
+  let container;
+  if (isHeading || explicitPx) {
+    container = document.createElement("span");
+    const scale = scriptNormalizeSize(sourcePx);
+    let css = "font-size:" + scale.toFixed(2) + "em;";
+    if (isHeading) css += "font-weight:600;";
+    if (decl.fontWeight) css += "font-weight:" + decl.fontWeight + ";";
+    if (decl.fontStyle) css += "font-style:" + decl.fontStyle + ";";
+    if (decl.textDecoration) css += "text-decoration:" + decl.textDecoration + ";";
+    container.setAttribute("style", css);
+  } else if (SCRIPT_ALLOWED_INLINE[tag]) {
+    container = document.createElement(tag.toLowerCase());
+    if (decl.fontWeight) container.style.fontWeight = decl.fontWeight;
+    if (decl.fontStyle) container.style.fontStyle = decl.fontStyle;
+    if (decl.textDecoration) container.style.textDecoration = decl.textDecoration;
+  } else {
+    /* unknown/disallowed tag (a, img, table, font, o:p, etc): unwrap, keep text + children */
+    container = document.createDocumentFragment();
+  }
+  for (let i = 0; i < node.childNodes.length; i++) scriptSanitizeNode(node.childNodes[i], sourcePx, container);
+  if (isHeading) container.appendChild(document.createElement("br"));
+  out.appendChild(container);
+}
+function scriptSanitizeHtml(html) {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const out = document.createDocumentFragment();
+  for (let i = 0; i < doc.body.childNodes.length; i++) scriptSanitizeNode(doc.body.childNodes[i], SCRIPT_ASSUMED_SOURCE_BASE_PX, out);
+  const wrapper = document.createElement("div");
+  wrapper.appendChild(out);
+  return wrapper.innerHTML;
+}
+function scriptEscapeToHtml(text) {
+  const div = document.createElement("div");
+  div.textContent = text || "";
+  return div.innerHTML.replace(/\n/g, "<br>");
+}
+
 /* skit script box: collapsed to a single line by default (so the board stays compact),
    auto-grows to fit whatever's pasted in once focused, and can be manually collapsed
-   back down without losing the text underneath. */
-function ScriptBox({ value, open, onFocus, onChange, onToggle }) {
+   back down without losing the text underneath. rich text: bold/italic/size survive a paste,
+   color and background never do. `isHtml` distinguishes old plain-text scripts (saved before
+   this existed) from new ones, so nothing already saved gets misread as markup. */
+function ScriptBox({ value, isHtml, open, onFocus, onChange, onToggle }) {
   const ref = useRef(null);
+  const lastSeededRef = useRef(null);
+  const savedRangeRef = useRef(null);
+
+  useEffect(() => {
+    if (!ref.current) return;
+    const focused = document.activeElement === ref.current;
+    if (focused) return; /* never clobber the DOM mid-edit, that's what causes cursor jumps */
+    if (lastSeededRef.current === value) return;
+    ref.current.innerHTML = isHtml ? (value || "") : scriptEscapeToHtml(value);
+    lastSeededRef.current = value;
+  }, [value, isHtml]);
+
   useEffect(() => {
     if (!ref.current) return;
     if (open) { ref.current.style.height = "auto"; ref.current.style.height = ref.current.scrollHeight + "px"; }
     else { ref.current.style.height = "28px"; }
   }, [value, open]);
+
+  const commit = () => {
+    const html = ref.current.innerHTML;
+    lastSeededRef.current = html;
+    onChange(html);
+  };
+  const exec = (cmd) => { ref.current.focus(); document.execCommand(cmd); commit(); };
+  const applySize = (scale) => {
+    const sel = window.getSelection();
+    if (savedRangeRef.current) { sel.removeAllRanges(); sel.addRange(savedRangeRef.current); }
+    if (!sel.rangeCount || sel.isCollapsed) return;
+    const range = sel.getRangeAt(0);
+    const span = document.createElement("span");
+    span.style.fontSize = parseFloat(scale).toFixed(2) + "em";
+    try { range.surroundContents(span); } catch (e) { const frag = range.extractContents(); span.appendChild(frag); range.insertNode(span); }
+    commit();
+  };
+  const handlePaste = (e) => {
+    e.preventDefault();
+    const html = e.clipboardData.getData("text/html");
+    const text = e.clipboardData.getData("text/plain");
+    const insert = html ? scriptSanitizeHtml(html) : scriptEscapeToHtml(text);
+    document.execCommand("insertHTML", false, insert);
+    commit();
+  };
+  const miniBtn = { background: "rgba(255,255,255,0.06)", border: `1px solid ${LINE}`, color: C.ink, width: 22, height: 22, borderRadius: 6, cursor: "pointer", fontSize: 11, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Outfit', sans-serif" };
+  const miniSelect = { background: "rgba(255,255,255,0.06)", border: `1px solid ${LINE}`, color: C.ink, borderRadius: 6, fontSize: 10.5, fontFamily: "'Outfit', sans-serif", padding: "2px 4px" };
+
   return (
     <div className="mt-1.5">
       <button onClick={onToggle} className="flex items-center gap-1" style={{ ...iconBtn, padding: 0, fontSize: 10, color: FAINT }}>
         {open ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
         <span>{value ? "Script" : "Add script"}</span>
       </button>
-      <textarea ref={ref} value={value} onFocus={onFocus} onChange={(e) => onChange(e.target.value)}
-        placeholder="Paste the skit script here…" className="w-full rounded-lg px-2.5 py-1.5 mt-1"
-        style={{ ...inputStyle, fontSize: 12.5, lineHeight: 1.5, resize: "none", overflow: "hidden", transition: "height 0.15s ease" }} />
+      {open && (
+        <div className="flex items-center gap-1 mt-1">
+          <div onMouseDown={(e) => e.preventDefault()} className="flex items-center gap-1">
+            <button type="button" onClick={() => exec("bold")} style={miniBtn} aria-label="Bold"><b>B</b></button>
+            <button type="button" onClick={() => exec("italic")} style={miniBtn} aria-label="Italic"><i>i</i></button>
+          </div>
+          <select
+            onMouseDown={() => { const sel = window.getSelection(); savedRangeRef.current = sel.rangeCount ? sel.getRangeAt(0).cloneRange() : null; }}
+            onChange={(e) => { const v = e.target.value; if (v) applySize(v); e.target.value = ""; }}
+            defaultValue="" style={miniSelect} aria-label="Font size">
+            <option value="">Size</option>
+            <option value="0.85">Small</option>
+            <option value="1">Normal</option>
+            <option value="1.15">Medium</option>
+            <option value="1.35">Large</option>
+            <option value="1.6">Huge</option>
+          </select>
+        </div>
+      )}
+      <div ref={ref} contentEditable suppressContentEditableWarning
+        onFocus={onFocus} onInput={commit} onPaste={handlePaste}
+        data-placeholder="Paste the skit script here…" className="w-full rounded-lg px-2.5 py-1.5 mt-1 script-editable"
+        style={{ ...inputStyle, fontSize: 12.5, lineHeight: 1.5, overflow: "hidden", transition: "height 0.15s ease", minHeight: 28 }} />
     </div>
   );
 }
@@ -1487,7 +1642,7 @@ function ContentModule({ data, setData, q }) {
                 {cItems.map((i) => (
                   <div key={i.id} className="rounded-lg" style={{ background: "rgba(255,255,255,0.035)", border: `1px solid ${LINE}`, borderLeft: `2px solid ${CONTENT_TINT[col]}`, borderRadius: 10, padding: "11px 13px" }}>
                     <InlineEdit value={i.title} onChange={(v) => updateItem(i.id, { title: v })} strong />
-                    <ScriptBox value={i.desc || ""} open={!!openDesc[i.id]} onFocus={() => openIfNot(i.id)} onChange={(v) => updateItem(i.id, { desc: v })} onToggle={() => toggleDesc(i.id)} />
+                    <ScriptBox value={i.desc || ""} isHtml={!!i.descHtml} open={!!openDesc[i.id]} onFocus={() => openIfNot(i.id)} onChange={(v) => updateItem(i.id, { desc: v, descHtml: true })} onToggle={() => toggleDesc(i.id)} />
                     <div className="flex items-center gap-1 mt-1.5"><span className="ml-auto flex gap-1">
                       {col !== "Idea" && <button onClick={() => move(i.id, -1)} style={{ ...iconBtn, padding: 2 }} aria-label="Back">←</button>}
                       {col === "In Edit"
