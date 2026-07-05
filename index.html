@@ -1409,6 +1409,7 @@ function PriorityControls({ item, onChange, hideDue }) {
    rescaled onto a small fixed range relative to the box's own font size, so relative emphasis
    (this was bigger than that) survives but nothing can overflow. */
 const SCRIPT_SIZE_MIN = 0.85, SCRIPT_SIZE_MAX = 1.7, SCRIPT_ASSUMED_SOURCE_BASE_PX = 16;
+const SCRIPT_SIZE_STEPS = [0.85, 1, 1.15, 1.35, 1.6];
 const SCRIPT_HEADING_EM = { H1: 2, H2: 1.5, H3: 1.17, H4: 1, H5: 0.83, H6: 0.67 };
 const SCRIPT_ALLOWED_INLINE = { B: 1, STRONG: 1, I: 1, EM: 1, U: 1, BR: 1, P: 1, DIV: 1, SPAN: 1, UL: 1, OL: 1, LI: 1 };
 
@@ -1495,7 +1496,9 @@ function scriptEscapeToHtml(text) {
    auto-grows to fit whatever's pasted in once focused, and can be manually collapsed
    back down without losing the text underneath. rich text: bold/italic/size survive a paste,
    color and background never do. `isHtml` distinguishes old plain-text scripts (saved before
-   this existed) from new ones, so nothing already saved gets misread as markup. */
+   this existed) from new ones, so nothing already saved gets misread as markup.
+   shortcuts (act on a text selection only): Cmd/Ctrl+B bold, Cmd/Ctrl+I italic,
+   Cmd/Ctrl+Shift+. bump the selection up a size, Cmd/Ctrl+Shift+, bump it down. */
 function ScriptBox({ value, isHtml, open, onFocus, onChange, onToggle }) {
   const ref = useRef(null);
   const lastSeededRef = useRef(null);
@@ -1522,15 +1525,47 @@ function ScriptBox({ value, isHtml, open, onFocus, onChange, onToggle }) {
     onChange(html);
   };
   const exec = (cmd) => { ref.current.focus(); document.execCommand(cmd); commit(); };
-  const applySize = (scale) => {
+
+  /* resolve the target scale relative to the SELECTION'S CURRENT rendered size, not a naive
+     nested-em stack, so repeated resizing (or resizing text that's already inside a sized span)
+     lands on the intended absolute tier instead of compounding. */
+  const wrapRangeWithScale = (range, targetScale) => {
+    const boxBasePx = parseFloat(window.getComputedStyle(ref.current).fontSize) || 12.5;
+    const startEl = range.startContainer.nodeType === 1 ? range.startContainer : range.startContainer.parentElement;
+    const currentPx = parseFloat(window.getComputedStyle(startEl).fontSize) || boxBasePx;
+    const relativeEm = (boxBasePx * targetScale) / currentPx;
+    const span = document.createElement("span");
+    span.style.fontSize = relativeEm.toFixed(3) + "em";
+    try { range.surroundContents(span); } catch (e) { const frag = range.extractContents(); span.appendChild(frag); range.insertNode(span); }
+    commit();
+  };
+  const applySize = (targetScale) => {
     const sel = window.getSelection();
     if (savedRangeRef.current) { sel.removeAllRanges(); sel.addRange(savedRangeRef.current); }
     if (!sel.rangeCount || sel.isCollapsed) return;
+    wrapRangeWithScale(sel.getRangeAt(0), parseFloat(targetScale));
+  };
+  const stepSize = (dir) => {
+    const sel = window.getSelection();
+    if (!sel.rangeCount || sel.isCollapsed) return; /* text only: no-op without an actual selection */
     const range = sel.getRangeAt(0);
-    const span = document.createElement("span");
-    span.style.fontSize = parseFloat(scale).toFixed(2) + "em";
-    try { range.surroundContents(span); } catch (e) { const frag = range.extractContents(); span.appendChild(frag); range.insertNode(span); }
-    commit();
+    const boxBasePx = parseFloat(window.getComputedStyle(ref.current).fontSize) || 12.5;
+    const startEl = range.startContainer.nodeType === 1 ? range.startContainer : range.startContainer.parentElement;
+    const currentPx = parseFloat(window.getComputedStyle(startEl).fontSize) || boxBasePx;
+    const currentScale = currentPx / boxBasePx;
+    let idx = 0, bestDiff = Infinity;
+    SCRIPT_SIZE_STEPS.forEach((s, i) => { const d = Math.abs(s - currentScale); if (d < bestDiff) { bestDiff = d; idx = i; } });
+    const newIdx = Math.min(SCRIPT_SIZE_STEPS.length - 1, Math.max(0, idx + dir));
+    wrapRangeWithScale(range, SCRIPT_SIZE_STEPS[newIdx]);
+  };
+  const handleKeyDown = (e) => {
+    const mod = e.metaKey || e.ctrlKey;
+    if (!mod) return;
+    const k = e.key.toLowerCase();
+    if (k === "b") { e.preventDefault(); exec("bold"); return; }
+    if (k === "i") { e.preventDefault(); exec("italic"); return; }
+    if (e.key === ">" || (e.shiftKey && e.key === ".")) { e.preventDefault(); stepSize(1); return; }
+    if (e.key === "<" || (e.shiftKey && e.key === ",")) { e.preventDefault(); stepSize(-1); return; }
   };
   const handlePaste = (e) => {
     e.preventDefault();
@@ -1552,13 +1587,13 @@ function ScriptBox({ value, isHtml, open, onFocus, onChange, onToggle }) {
       {open && (
         <div className="flex items-center gap-1 mt-1">
           <div onMouseDown={(e) => e.preventDefault()} className="flex items-center gap-1">
-            <button type="button" onClick={() => exec("bold")} style={miniBtn} aria-label="Bold"><b>B</b></button>
-            <button type="button" onClick={() => exec("italic")} style={miniBtn} aria-label="Italic"><i>i</i></button>
+            <button type="button" onClick={() => exec("bold")} style={miniBtn} aria-label="Bold" title="Bold (Cmd+B)"><b>B</b></button>
+            <button type="button" onClick={() => exec("italic")} style={miniBtn} aria-label="Italic" title="Italic (Cmd+I)"><i>i</i></button>
           </div>
           <select
             onMouseDown={() => { const sel = window.getSelection(); savedRangeRef.current = sel.rangeCount ? sel.getRangeAt(0).cloneRange() : null; }}
             onChange={(e) => { const v = e.target.value; if (v) applySize(v); e.target.value = ""; }}
-            defaultValue="" style={miniSelect} aria-label="Font size">
+            defaultValue="" style={miniSelect} aria-label="Font size" title="Font size (Cmd+Shift+. / ,)">
             <option value="">Size</option>
             <option value="0.85">Small</option>
             <option value="1">Normal</option>
@@ -1569,7 +1604,7 @@ function ScriptBox({ value, isHtml, open, onFocus, onChange, onToggle }) {
         </div>
       )}
       <div ref={ref} contentEditable suppressContentEditableWarning
-        onFocus={onFocus} onInput={commit} onPaste={handlePaste}
+        onFocus={onFocus} onInput={commit} onPaste={handlePaste} onKeyDown={handleKeyDown}
         data-placeholder="Paste the skit script here…" className="w-full rounded-lg px-2.5 py-1.5 mt-1 script-editable"
         style={{ ...inputStyle, fontSize: 12.5, lineHeight: 1.5, overflow: "hidden", transition: "height 0.15s ease", minHeight: 28 }} />
     </div>
