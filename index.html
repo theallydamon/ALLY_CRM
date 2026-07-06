@@ -330,7 +330,7 @@ const C = {
   /* accents */
   mint: "#2FA37C", pink: "#E0688F", yellow: "#D69A00", lilac: "#7B67E0", sky: "#3E8FD6", peach: "#E07B3E", rose: "#E5484D", brown: "#9C6B3E",
   /* soft tiles (translucent tints on dark) */
-  mintBg: "rgba(47,163,124,0.16)", pinkBg: "rgba(224,104,143,0.16)", yellowBg: "rgba(214,154,0,0.16)", lilacBg: "rgba(123,103,224,0.16)", skyBg: "rgba(62,143,214,0.16)", peachBg: "rgba(224,123,62,0.16)", brownBg: "rgba(156,107,62,0.18)",
+  mintBg: "rgba(47,163,124,0.16)", pinkBg: "rgba(224,104,143,0.16)", yellowBg: "rgba(214,154,0,0.16)", lilacBg: "rgba(123,103,224,0.16)", skyBg: "rgba(62,143,214,0.16)", peachBg: "rgba(224,123,62,0.16)", brownBg: "rgba(156,107,62,0.18)", roseBg: "rgba(229,72,77,0.16)",
   /* aliases used across modules */
   violet: "#7B67E0", teal: "#2FA37C", coral: "#E07B3E", amber: "#D69A00",
 };
@@ -349,10 +349,11 @@ const MODULES = {
   song:      { emoji: "🎵", label: "Music Production", accent: C.lilac, bg: C.lilacBg },
   unlocks:   { emoji: "🔓", label: "Unlocks",   accent: C.yellow, bg: C.yellowBg },
   apartment: { emoji: "🛋️", label: "Apartment", accent: C.peach, bg: C.peachBg },
-  deals:     { emoji: "🤝", label: "Deals",     accent: C.pink,  bg: C.pinkBg },
+  lifeAdmin: { emoji: "📋", label: "Life Admin", accent: C.rose,  bg: C.roseBg },
   mama:      { emoji: "💼", label: "Mama",      accent: C.brown, bg: C.brownBg },
+  deals:     { emoji: "🤝", label: "Deals",     accent: C.pink,  bg: C.pinkBg },
 };
-const TAB_ORDER = ["overview", "content", "song", "unlocks", "apartment", "mama", "deals"];
+const TAB_ORDER = ["overview", "content", "song", "unlocks", "apartment", "lifeAdmin", "mama", "deals"];
 
 /* ---------- storage shim: window.storage in the app, localStorage in the repo ---------- */
 const store = {
@@ -431,6 +432,13 @@ function migrateAlly(a) {
       .map((p) => (PILLAR_RENAME[p.name] ? { ...p, name: PILLAR_RENAME[p.name] } : p));
     out = { ...out, unlocks: { ...out.unlocks, ecosystem: { ...out.unlocks.ecosystem, pillars } } };
   }
+  /* Life Admin is a brand-new pillar — back it in defensively on every load (local AND the
+     Firestore reconcile path, which skips the ALLY_SEED fallback checks in the mount effect
+     below) so an account that signed in before this pillar existed never crashes on a missing
+     .items array. */
+  if (!out.lifeAdmin || !Array.isArray(out.lifeAdmin.items)) {
+    out = { ...out, lifeAdmin: { items: (out.lifeAdmin && out.lifeAdmin.items) || [] } };
+  }
   return out;
 }
 const DEAL_STAGES = ["Brief", "Script", "Script approval", "Film", "Edit", "Final approval", "Posted"];
@@ -440,9 +448,9 @@ const SOURCES = ["Discord", "Basecamp", "Email", "Sheets", "Meeting", "Self"];
 const SOURCE_TINT = { Discord: C.lilac, Basecamp: C.amber, Email: C.sky, Sheets: C.mint, Meeting: C.pink, Self: MUT };
 const TASK_COLS = ["To do", "Doing", "Done"];
 const TOOL_STAGES = ["Idea", "Building", "Shipped"];
-const PRIORITY_PILLARS = ["mama", "song", "content", "deals", "unlocks"];
+const PRIORITY_PILLARS = ["mama", "song", "content", "deals", "unlocks", "lifeAdmin"];
 
-/* ---------- priority engine: shared urgency scoring across all 5 pillars ---------- */
+/* ---------- priority engine: shared urgency scoring across all 6 pillars ---------- */
 const PRIORITY_LEVELS = ["Low", "Medium", "High"];
 const PRIORITY_WEIGHT = { Low: 1, Medium: 2, High: 3 };
 const PRIORITY_TINT = { Low: C.sky, Medium: C.amber, High: C.rose };
@@ -490,18 +498,18 @@ function computeUrgency(item) {
 /* content doesn't get per-item due dates/priority — the whole pillar's urgency is one master
    signal, and it's driven entirely by days since your last post, full stop. It does not care what's
    sitting in the pipeline (Ideas/To Film/In Edit are for your own tracking only) and it does not
-   care about a posting-cadence target — 1 day since post = 20% full, 5 days = 100%, and it keeps
+   care about a posting-cadence target — 1 day since post = 33% full, 3 days = 100%, and it keeps
    climbing past that into an overflow/critical state if you let it run. Every open content piece
    inherits this same score/bucket, so individual ideas never compete with each other on "urgency". */
 function computeContentUrgency(content) {
   const since = daysSince(content.lastPosted);
-  const pct = since === null ? 40 : since * 20;
+  const pct = since === null ? 40 : since * 33;
   const bucket = pct > 80 ? "Urgent" : pct >= 40 ? "Medium" : "Low";
   const score = Math.round((1 + (Math.min(pct, 100) / 100) * 5) * 10) / 10;
   return { score, bucket, pct, since };
 }
 
-/* pulls every outstanding item from all 5 pillars into one flat, scored list.
+/* pulls every outstanding item from all 6 pillars into one flat, scored list.
    unlocks pulls from two sources: Discovery ecosystem benefits currently "in progress",
    and the linear chain steps (apartment / car ownership) currently "active". */
 function collectPriorityTasks(ally, mama) {
@@ -559,6 +567,10 @@ function collectPriorityTasks(ally, mama) {
     id: t.id, pillar: "mama", title: `${t.title} (${rp.name || rp.title})`, due: t.due || null,
     priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
   })));
+  (ally.lifeAdmin.items || []).filter((t) => t.status !== "Done" && !t.paused).forEach((t) => out.push({
+    id: t.id, pillar: "lifeAdmin", title: t.title, due: t.due || null,
+    priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
+  }));
   return out.map((t) => (t._preScored ? t : { ...t, ...computeUrgency(t) }));
 }
 
@@ -734,6 +746,7 @@ const ALLY_SEED = {
     ],
   },
   deals: { deals: [], clients: [] },
+  lifeAdmin: { items: [] },
 };
 const MAMA_SEED = {
   creators: [
@@ -773,6 +786,7 @@ function AllyCRM() {
       if (!a.unlocks) a.unlocks = ALLY_SEED.unlocks;
       if (!a.unlocks.ecosystem) a.unlocks.ecosystem = ALLY_SEED.unlocks.ecosystem;
       if (!a.unlocks.chains) a.unlocks.chains = ALLY_SEED.unlocks.chains;
+      if (!a.lifeAdmin) a.lifeAdmin = ALLY_SEED.lifeAdmin;
       a = migrateAlly(a);
       m = { ...m, creators: (m.creators || []).map((c) => c.goals ? c : { ...c, goals: c.goal ? [{ id: uid(), text: c.goal }] : [] }) };
       m = { ...m, tasks: (m.tasks || []).map((t) => t.description !== undefined ? t : { ...t, description: "" }) };
@@ -972,6 +986,7 @@ function AllyCRM() {
     song: ally.song.stages.filter((s) => s.status !== "done" && !s.paused).length,
     unlocks: priorityTaskCounts.unlocks,
     apartment: aptUnlocked ? ally.apartment.items.filter((i) => i.status === "Bought").length : null,
+    lifeAdmin: priorityTaskCounts.lifeAdmin,
     deals: priorityTaskCounts.deals,
     mama: priorityTaskCounts.mama,
   };
@@ -1135,6 +1150,7 @@ function AllyCRM() {
               {tab === "song" && <SongModule data={ally} setData={setAlly} />}
               {tab === "unlocks" && <UnlocksModule data={ally} setData={setAlly} />}
               {tab === "apartment" && <ApartmentModule data={ally} setData={setAlly} unlocked={aptUnlocked} go={go} q={q} />}
+              {tab === "lifeAdmin" && <LifeAdminModule data={ally} setData={setAlly} q={q} />}
               {tab === "deals" && <DealsModule data={ally} setData={setAlly} q={q} />}
               {tab === "mama" && <MamaModule data={mama} setData={setMama} q={q} />}
             </div>
@@ -1215,7 +1231,7 @@ function PriorityDashboard({ ally, mama, go, setAlly, setMama }) {
     <section>
       <div style={{ marginBottom: 20 }}>
         <h1 style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: "clamp(28px,4.5vw,38px)", margin: 0, letterSpacing: "-0.02em" }}>Priorities right now 🎯</h1>
-        <p style={{ fontSize: 15, color: MUT, margin: "6px 0 0" }}>{tasks.length} open item{tasks.length === 1 ? "" : "s"} across all 5 pillars. Each card fills its own ring by how urgent that pillar is on its own — blue is calm, red means it needs you today, and a ring that overflows past 100% is in critical territory.</p>
+        <p style={{ fontSize: 15, color: MUT, margin: "6px 0 0" }}>{tasks.length} open item{tasks.length === 1 ? "" : "s"} across all {PRIORITY_PILLARS.length} pillars. Each card fills its own ring by how urgent that pillar is on its own — blue is calm, red means it needs you today, and a ring that overflows past 100% is in critical territory.</p>
       </div>
 
       {/* every pillar gets its own independent ring, ranked left to right by how full it is */}
@@ -1351,7 +1367,7 @@ function priorityFromDueDate(daysUntilDue) {
 }
 
 /* shared control row: due date + priority (Low/Med/High) + log progress + due-date readout.
-   Used on every item across the 5 pillars so the Priorities dashboard can score them all the same way.
+   Used on every item across the 6 pillars so the Priorities dashboard can score them all the same way.
    Whenever a due date is set, the priority is auto-selected from it and kept in sync continuously as
    the date gets closer (1-2 days out -> High, 3-5 days -> Medium, 6+ days -> Low) — same day bands as
    the Urgent/Medium/Low bucket, so nothing here can disagree with the dashboard. A deadline is
@@ -2007,6 +2023,69 @@ function ApartmentModule({ data, setData, unlocked, go, q }) {
   );
 }
 
+/* ================= LIFE ADMIN ================= */
+/* Personal catch-all pillar: a flat kanban of your own life stuff (paperwork, errands, calls to
+   make), sharing the exact same due-date/priority engine as every other pillar (PriorityControls,
+   computeUrgency) so it feeds the main Priorities dashboard with zero special-casing. */
+function LifeAdminModule({ data, setData, q }) {
+  const [title, setTitle] = useState(""); const [description, setDescription] = useState("");
+  const items = data.lifeAdmin.items || [];
+  const ql = (q || "").toLowerCase();
+  const add = () => {
+    const t = title.trim(); if (!t) return;
+    setData((d) => ({ ...d, lifeAdmin: { ...d.lifeAdmin, items: [{ id: uid(), title: t, description: description.trim(), status: "To do", created: todayISO(), due: null, priority: "Medium", lastProgress: null }, ...(d.lifeAdmin.items || [])] } }));
+    setTitle(""); setDescription("");
+  };
+  const advance = (id) => setData((d) => ({ ...d, lifeAdmin: { ...d.lifeAdmin, items: d.lifeAdmin.items.map((t) => t.id === id ? { ...t, status: TASK_COLS[Math.min(TASK_COLS.indexOf(t.status) + 1, 2)] } : t) } }));
+  const back = (id) => setData((d) => ({ ...d, lifeAdmin: { ...d.lifeAdmin, items: d.lifeAdmin.items.map((t) => t.id === id ? { ...t, status: TASK_COLS[Math.max(TASK_COLS.indexOf(t.status) - 1, 0)] } : t) } }));
+  const update = (id, p) => setData((d) => ({ ...d, lifeAdmin: { ...d.lifeAdmin, items: d.lifeAdmin.items.map((t) => (t.id === id ? { ...t, ...p } : t)) } }));
+  const remove = (id) => setData((d) => ({ ...d, lifeAdmin: { ...d.lifeAdmin, items: d.lifeAdmin.items.filter((t) => t.id !== id) } }));
+  const clearDone = () => setData((d) => ({ ...d, lifeAdmin: { ...d.lifeAdmin, items: d.lifeAdmin.items.filter((t) => t.status !== "Done") } }));
+  const visible = ql ? items.filter((t) => t.title.toLowerCase().includes(ql) || (t.description || "").toLowerCase().includes(ql)) : items;
+  return (
+    <section>
+      <SectionHead title="Life admin" sub="Your own stuff: paperwork, errands, calls to make. Same due date and priority logic as everywhere else." />
+      <div className="rounded-2xl p-4 mb-6" style={{ ...card, borderRadius: 16 }}>
+        <div className="flex gap-2 flex-wrap mb-2">
+          <input value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} placeholder="What needs doing?" className="flex-1 rounded-lg px-3 py-2" style={{ ...inputStyle, minWidth: 200 }} />
+        </div>
+        <div className="flex gap-2 flex-wrap items-start">
+          <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Description (optional) — the actual detail. Keeps the title short." rows={2} className="flex-1 rounded-lg px-3 py-2 resize-none" style={{ ...inputStyle, minWidth: 200, lineHeight: 1.45 }} />
+          <button onClick={add} style={pillDark}><Plus size={14} style={{ display: "inline", marginRight: 4 }} />Add</button>
+        </div>
+      </div>
+      <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))" }}>
+        {TASK_COLS.map((col) => {
+          const colItems = visible.filter((t) => t.status === col);
+          return (
+            <div key={col} className="rounded-2xl p-3" style={{ ...cardSoft, borderRadius: 16 }}>
+              <div className="flex items-center justify-between mb-3 px-1"><span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 600, fontSize: 12, letterSpacing: "0.04em", textTransform: "uppercase" }}>{col}</span><span style={{ fontSize: 12, color: MUT }}>{colItems.length}</span></div>
+              <div className="flex flex-col gap-2">
+                {colItems.map((t) => (
+                  <div key={t.id} className="rounded-xl p-3" style={{ ...card, borderRadius: 12, borderLeft: `2px solid ${C.rose}` }}>
+                    <div style={{ fontSize: 13.5, textDecoration: col === "Done" ? "line-through" : "none", opacity: col === "Done" ? 0.55 : 1 }}><InlineEdit value={t.title} onChange={(v) => update(t.id, { title: v })} /></div>
+                    <div style={{ fontSize: 11.5, color: MUT, marginTop: 2 }}><InlineEdit value={t.description || ""} onChange={(v) => update(t.id, { description: v })} placeholder="Add a description…" /></div>
+                    <div className="flex items-center gap-2 mt-2 flex-wrap" style={{ fontSize: 11, color: MUT }}>
+                      <span className="ml-auto flex gap-1">
+                        {col !== "To do" && <button onClick={() => back(t.id)} style={iconBtn} aria-label="Back">←</button>}
+                        {col !== "Done" && <button onClick={() => advance(t.id)} style={{ ...iconBtn, color: C.mint }} aria-label="Forward">→</button>}
+                        <button onClick={() => remove(t.id)} style={iconBtn} aria-label="Delete"><X size={12} /></button>
+                      </span>
+                    </div>
+                    {col !== "Done" && <PriorityControls item={t} onChange={(p) => update(t.id, p)} />}
+                  </div>
+                ))}
+                {colItems.length === 0 && <div className="rounded-xl p-3 text-center" style={{ border: `1px dashed ${LINE}`, fontSize: 12, color: FAINT, borderRadius: 12 }}>Empty</div>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {items.some((t) => t.status === "Done") && <button onClick={clearDone} className="mt-4" style={{ ...iconBtn, fontSize: 12 }}>Clear done</button>}
+    </section>
+  );
+}
+
 /* ================= DEALS ================= */
 const CLIENT_TINT = { Lead: C.sky, Active: C.mint, Paused: MUT };
 const DEAL_TYPE_TINT = { Active: C.mint, Prospect: C.sky };
@@ -2162,15 +2241,13 @@ function DealsModule({ data, setData, q }) {
 
 /* ================= MAMA ================= */
 function MamaModule({ data, setData, q }) {
-  const [sub, setSub] = useState("creators");
-  const mk = monthKey();
-  const openTasks = data.tasks.filter((t) => t.status !== "Done").length;
-  const reportsDue = data.reports.filter((r) => !r.done.includes(mk)).length;
+  const [sub, setSub] = useState("dashboard");
+  const openAdminTasks = data.tasks.filter((t) => t.status !== "Done").length;
   const subs = [
+    { id: "dashboard", emoji: "🎯", label: "Task Dashboard" },
     { id: "creators", emoji: "🧑‍🎤", label: "Creators", count: data.creators.length },
-    { id: "tasks", emoji: "✅", label: "Tasks", count: openTasks },
     { id: "tools", emoji: "🛠️", label: "AI Tools", count: data.tools.filter((t) => t.status !== "Shipped").length },
-    { id: "reports", emoji: "📊", label: "Reports", count: reportsDue },
+    { id: "adminTasks", emoji: "✅", label: "Admin Tasks", count: openAdminTasks },
   ];
   return (
     <section>
@@ -2179,16 +2256,114 @@ function MamaModule({ data, setData, q }) {
           const on = sub === id;
           return (
             <button key={id} onClick={() => setSub(id)} className="flex items-center gap-2 rounded-full px-4 py-2" style={{ background: on ? C.dark : C.card, border: `1px solid ${on ? C.dark : LINE}`, color: on ? C.canvas : C.ink, cursor: "pointer", fontSize: 14, fontWeight: on ? 600 : 400, fontFamily: "inherit" }}>
-              <span>{emoji}</span><span>{label}</span><span style={{ fontSize: 11, background: on ? "rgba(11,11,13,0.15)" : FILL2, color: on ? C.canvas : MUT, borderRadius: 99, padding: "1px 7px" }}>{count}</span>
+              <span>{emoji}</span><span>{label}</span>{count !== undefined && <span style={{ fontSize: 11, background: on ? "rgba(11,11,13,0.15)" : FILL2, color: on ? C.canvas : MUT, borderRadius: 99, padding: "1px 7px" }}>{count}</span>}
             </button>
           );
         })}
       </nav>
+      {sub === "dashboard" && <MamaTaskDashboard data={data} setData={setData} setSub={setSub} />}
       {sub === "creators" && <Creators data={data} setData={setData} q={q} />}
-      {sub === "tasks" && <Tasks data={data} setData={setData} />}
       {sub === "tools" && <Tools data={data} setData={setData} />}
-      {sub === "reports" && <Reports data={data} setData={setData} />}
+      {sub === "adminTasks" && <AdminTasks data={data} setData={setData} />}
     </section>
+  );
+}
+
+/* Mama's own mini priority dashboard: same ring + Urgent/Medium/Low column pattern as the main
+   Hub (PriorityPillarCard), scoped to three buckets instead of the whole app. Creator Tasks pulls
+   from every creator's own MiniTaskList, AI Tools Tasks from every tool's, Admin Tasks from the
+   generic capture stream — all three already carry due/priority via the shared PriorityControls,
+   so computeUrgency + computePillarFillPercent score them exactly like every other pillar. */
+function MamaTaskDashboard({ data, setData, setSub }) {
+  const creatorTasks = data.creators.flatMap((cr) => (cr.tasks || []).filter((t) => !t.done && !t.paused).map((t) => ({ ...t, ...computeUrgency(t), title: `${t.title} (${cr.name})` })));
+  const toolTasks = data.tools.flatMap((tl) => (tl.tasks || []).filter((t) => !t.done && !t.paused).map((t) => ({ ...t, ...computeUrgency(t), title: `${t.title} (${tl.name})` })));
+  const adminTasksList = data.tasks.filter((t) => t.status !== "Done" && !t.paused).map((t) => ({ ...t, ...computeUrgency(t) }));
+
+  const BUCKETS = [
+    { key: "creatorTasks", label: "Creator Tasks", emoji: "🧑‍🎤", accent: C.pink, tasks: creatorTasks, sub: "creators" },
+    { key: "toolTasks", label: "AI Tools Tasks", emoji: "🛠️", accent: C.lilac, tasks: toolTasks, sub: "tools" },
+    { key: "adminTasksBucket", label: "Admin Tasks", emoji: "✅", accent: C.sky, tasks: adminTasksList, sub: "adminTasks" },
+  ];
+  const fillPct = Object.fromEntries(BUCKETS.map((b) => [b.key, computePillarFillPercent(b.tasks)]));
+  const ranked = [...BUCKETS].sort((a, b) => fillPct[b.key] - fillPct[a.key]);
+  const rankOf = Object.fromEntries(ranked.map((b, i) => [b.key, i + 1]));
+  const total = creatorTasks.length + toolTasks.length + adminTasksList.length;
+
+  const updateByBucket = {
+    creatorTasks: (id, patch) => setData((d) => ({ ...d, creators: d.creators.map((cr) => ({ ...cr, tasks: (cr.tasks || []).map((t) => (t.id === id ? { ...t, ...patch } : t)) })) })),
+    toolTasks: (id, patch) => setData((d) => ({ ...d, tools: d.tools.map((tl) => ({ ...tl, tasks: (tl.tasks || []).map((t) => (t.id === id ? { ...t, ...patch } : t)) })) })),
+    adminTasksBucket: (id, patch) => setData((d) => ({ ...d, tasks: d.tasks.map((t) => (t.id === id ? { ...t, ...patch } : t)) })),
+  };
+
+  return (
+    <section>
+      <div style={{ marginBottom: 20 }}>
+        <h1 style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: "clamp(24px,4vw,32px)", margin: 0, letterSpacing: "-0.02em" }}>Mama task dashboard 🎯</h1>
+        <p style={{ fontSize: 14, color: MUT, margin: "6px 0 0" }}>{total} open item{total === 1 ? "" : "s"} across Creator, AI Tools, and Admin work. Same ring logic as the main Priorities dashboard — tap a ring to open that list.</p>
+      </div>
+      <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))" }}>
+        {ranked.map((b) => (
+          <MamaTaskRing key={b.key} label={b.label} emoji={b.emoji} accent={b.accent} tasks={b.tasks} rank={rankOf[b.key]} pct={fillPct[b.key]}
+            onNavigate={() => setSub(b.sub)} onDropPriority={(id, priority) => updateByBucket[b.key](id, { priority })} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function MamaTaskRing({ label, emoji, accent, tasks, rank, pct, onNavigate, onDropPriority }) {
+  const cols = ["Urgent", "Medium", "Low"];
+  const [dragOverCol, setDragOverCol] = useState(null);
+  const tint = urgencyTint(pct);
+  const critical = pct > 100;
+  const handleDrop = (e, col) => {
+    e.preventDefault();
+    setDragOverCol(null);
+    let payload;
+    try { payload = JSON.parse(e.dataTransfer.getData("application/json")); } catch (err) { return; }
+    if (!payload || payload.scope !== label) return; // strictly within-card only, same rule as the main dashboard
+    onDropPriority(payload.id, DROP_PRIORITY[col]);
+  };
+  return (
+    <div onClick={onNavigate} className="rounded-2xl p-5" style={{ ...card, borderRadius: 18, borderLeft: `4px solid ${accent}`, cursor: "pointer" }}>
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2 min-w-0">
+          <span style={{ width: 28, height: 28, borderRadius: 99, background: accent, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 14, flexShrink: 0 }}>{rank}</span>
+          <span style={{ fontSize: 17, flexShrink: 0 }}>{emoji}</span>
+          <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 16, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</span>
+        </div>
+        <ArrowUpRight size={16} color={MUT} />
+      </div>
+      <div className="flex flex-col items-center text-center" style={{ padding: "6px 0 16px" }}>
+        <Ring pct={Math.min(1, pct / 100)} tint={tint} size={148} thick={16} label={`${Math.round(pct)}%`} />
+        {critical && <span style={{ fontSize: 10.5, fontWeight: 700, color: C.rose, letterSpacing: "0.03em", marginTop: 10 }}>⚠ CRITICAL — overloaded</span>}
+      </div>
+      <div className="grid gap-2.5" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+        {cols.map((col) => {
+          const items = tasks.filter((t) => t.bucket === col).sort((a, b) => b.score - a.score);
+          return (
+            <div key={col}
+              onDragOver={(e) => { e.preventDefault(); if (dragOverCol !== col) setDragOverCol(col); }}
+              onDragLeave={() => setDragOverCol((c) => (c === col ? null : c))}
+              onDrop={(e) => handleDrop(e, col)}
+              style={{ minWidth: 0, borderRadius: 10, padding: 4, margin: -4, background: dragOverCol === col ? `${PRIORITY_COL_TINT[col]}14` : "transparent", outline: dragOverCol === col ? `1px dashed ${PRIORITY_COL_TINT[col]}` : "none", transition: "background 0.1s" }}>
+              <div style={{ fontSize: 11, letterSpacing: "0.04em", textTransform: "uppercase", color: PRIORITY_COL_TINT[col], fontWeight: 700, marginBottom: 6 }}>{col} <span style={{ color: MUT, fontWeight: 400 }}>{items.length}</span></div>
+              <div className="flex flex-col gap-1.5">
+                {items.slice(0, 3).map((t) => (
+                  <div key={t.id} draggable onDragStart={(e) => { e.dataTransfer.setData("application/json", JSON.stringify({ id: t.id, scope: label })); e.dataTransfer.effectAllowed = "move"; }}
+                    onClick={(e) => e.stopPropagation()} className="rounded-lg px-2 py-1.5"
+                    style={{ background: C.soft, border: `1px solid ${LINE}`, borderLeft: `2px solid ${PRIORITY_COL_TINT[col]}`, cursor: "grab" }}>
+                    <div style={{ fontSize: 12.5, lineHeight: 1.3 }}>{t.title}</div>
+                    {t.daysUntilDue !== null && <div style={{ fontSize: 11, color: PRIORITY_COL_TINT[col], marginTop: 2 }}>{t.daysUntilDue < 0 ? `${-t.daysUntilDue}d overdue` : t.daysUntilDue === 0 ? "today" : `${t.daysUntilDue}d`}</div>}
+                  </div>
+                ))}
+                {items.length === 0 && <div style={{ fontSize: 12, color: FAINT, padding: "4px 0" }}>—</div>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -2204,7 +2379,7 @@ function Creators({ data, setData, q }) {
     <section>
       <SectionHead title="Creator roster" sub="Everything you know per creator: their goal, your research, the links that matter." action={<AddBtn onClick={add} label="Add creator" />} />
       <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))" }}>
-        {list.map((c) => <CreatorCard key={c.id} c={c} open={openId === c.id} onToggle={() => setOpenId(openId === c.id ? null : c.id)} onUpdate={(p) => update(c.id, p)} onRemove={() => remove(c.id)} openTaskCount={data.tasks.filter((t) => t.creatorId === c.id && t.status !== "Done").length} />)}
+        {list.map((c) => <CreatorCard key={c.id} c={c} open={openId === c.id} onToggle={() => setOpenId(openId === c.id ? null : c.id)} onUpdate={(p) => update(c.id, p)} onRemove={() => remove(c.id)} openTaskCount={(c.tasks || []).filter((t) => !t.done).length} />)}
       </div>
       {list.length === 0 && <Empty text={ql ? "No creator matches your search." : "No creators yet."} />}
     </section>
@@ -2255,19 +2430,18 @@ function CreatorCard({ c, open, onToggle, onUpdate, onRemove, openTaskCount }) {
 }
 
 /* ---- tasks ---- */
-function Tasks({ data, setData }) {
-  const [title, setTitle] = useState(""); const [description, setDescription] = useState(""); const [source, setSource] = useState("Discord"); const [link, setLink] = useState(""); const [creatorId, setCreatorId] = useState("");
-  const add = () => { const t = title.trim(); if (!t) return; setData((d) => ({ ...d, tasks: [{ id: uid(), title: t, description: description.trim(), source, link: link.trim(), creatorId: creatorId || null, status: "To do", created: new Date().toISOString().slice(0, 10), due: null, priority: "Medium", lastProgress: null }, ...d.tasks] })); setTitle(""); setDescription(""); setLink(""); };
+function AdminTasks({ data, setData }) {
+  const [title, setTitle] = useState(""); const [description, setDescription] = useState(""); const [source, setSource] = useState("Discord"); const [link, setLink] = useState("");
+  const add = () => { const t = title.trim(); if (!t) return; setData((d) => ({ ...d, tasks: [{ id: uid(), title: t, description: description.trim(), source, link: link.trim(), status: "To do", created: new Date().toISOString().slice(0, 10), due: null, priority: "Medium", lastProgress: null }, ...d.tasks] })); setTitle(""); setDescription(""); setLink(""); };
   const advance = (id) => setData((d) => ({ ...d, tasks: d.tasks.map((t) => t.id === id ? { ...t, status: TASK_COLS[Math.min(TASK_COLS.indexOf(t.status) + 1, 2)] } : t) }));
   const back = (id) => setData((d) => ({ ...d, tasks: d.tasks.map((t) => t.id === id ? { ...t, status: TASK_COLS[Math.max(TASK_COLS.indexOf(t.status) - 1, 0)] } : t) }));
   const update = (id, p) => setData((d) => ({ ...d, tasks: d.tasks.map((t) => (t.id === id ? { ...t, ...p } : t)) }));
   const remove = (id) => setData((d) => ({ ...d, tasks: d.tasks.filter((t) => t.id !== id) }));
   const clearDone = () => setData((d) => ({ ...d, tasks: d.tasks.filter((t) => t.status !== "Done") }));
-  const creatorById = Object.fromEntries(data.creators.map((c) => [c.id, c]));
   const bars = SOURCES.map((s) => ({ label: s.slice(0, 4), value: data.tasks.filter((t) => t.source === s && t.status !== "Done").length, color: SOURCE_TINT[s] }));
   return (
     <section>
-      <SectionHead title="Task capture" sub="One place for the strays: Discord pings, Basecamp tags, email asks. Tap a card to move it forward." />
+      <SectionHead title="Admin task capture" sub="One place for the strays: Discord pings, Basecamp tags, email asks. Tap a card to move it forward. Tasks tied to a specific creator or AI tool live on their own subtab instead." />
       {data.tasks.some((t) => t.status !== "Done") && (
         <div className="rounded-2xl p-4 mb-5" style={{ ...card, borderRadius: 18 }}><div style={{ fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase", color: MUT, marginBottom: 6 }}>Open tasks by source 📥</div><Bars data={bars} height={110} /></div>
       )}
@@ -2276,7 +2450,6 @@ function Tasks({ data, setData }) {
         <div className="flex gap-2 flex-wrap mb-2">
           <input value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} placeholder={`What came in via ${source}?`} className="flex-1 rounded-lg px-3 py-2" style={{ ...inputStyle, minWidth: 200 }} />
           <input value={link} onChange={(e) => setLink(e.target.value)} placeholder="Link (optional)" className="rounded-lg px-3 py-2" style={{ ...inputStyle, width: 160 }} />
-          <select value={creatorId} onChange={(e) => setCreatorId(e.target.value)} className="rounded-lg px-3 py-2" style={{ ...inputStyle, width: 150, color: creatorId ? C.ink : FAINT }}><option value="">No creator</option>{data.creators.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
         </div>
         <div className="flex gap-2 flex-wrap items-start">
           <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Description (optional) — what to actually do. Keeps the title short." rows={2} className="flex-1 rounded-lg px-3 py-2 resize-none" style={{ ...inputStyle, minWidth: 200, lineHeight: 1.45 }} />
@@ -2290,7 +2463,7 @@ function Tasks({ data, setData }) {
             <div key={col} className="rounded-2xl p-3" style={{ ...cardSoft, borderRadius: 16 }}>
               <div className="flex items-center justify-between mb-3 px-1"><span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 600, fontSize: 12, letterSpacing: "0.04em", textTransform: "uppercase" }}>{col}</span><span style={{ fontSize: 12, color: MUT }}>{items.length}</span></div>
               <div className="flex flex-col gap-2">
-                {items.map((t) => <TaskCard key={t.id} t={t} col={col} creatorById={creatorById} creators={data.creators} onUpdate={(p) => update(t.id, p)} onAdvance={() => advance(t.id)} onBack={() => back(t.id)} onRemove={() => remove(t.id)} />)}
+                {items.map((t) => <TaskCard key={t.id} t={t} col={col} onUpdate={(p) => update(t.id, p)} onAdvance={() => advance(t.id)} onBack={() => back(t.id)} onRemove={() => remove(t.id)} />)}
                 {items.length === 0 && <div className="rounded-xl p-3 text-center" style={{ border: `1px dashed ${LINE}`, fontSize: 12, color: FAINT, borderRadius: 12 }}>Empty</div>}
               </div>
             </div>
@@ -2302,22 +2475,22 @@ function Tasks({ data, setData }) {
   );
 }
 
-/* single task card: title + description are always visible (description never collapses), while
-   source / creator / link have a pencil-toggle edit mode so a mis-logged channel or wrong creator
-   can be corrected after the fact without retyping the whole card. */
-function TaskCard({ t, col, creatorById, creators, onUpdate, onAdvance, onBack, onRemove }) {
+/* single admin task card: title + description are always visible (description never collapses),
+   while source / link have a pencil-toggle edit mode so a mis-logged channel can be corrected
+   after the fact without retyping the whole card. No creator tagging here anymore — a task tied
+   to a specific creator or AI tool belongs on that creator's/tool's own card instead. */
+function TaskCard({ t, col, onUpdate, onAdvance, onBack, onRemove }) {
   const [editing, setEditing] = useState(false);
   const tint = SOURCE_TINT[t.source] || C.lilac;
-  const cr = t.creatorId ? creatorById[t.creatorId] : null;
   return (
     <div className="rounded-xl p-3" style={{ ...card, borderRadius: 12, borderLeft: `2px solid ${tint}` }}>
       <div style={{ fontSize: 13.5, textDecoration: col === "Done" ? "line-through" : "none", opacity: col === "Done" ? 0.55 : 1 }}><InlineEdit value={t.title} onChange={(v) => onUpdate({ title: v })} /></div>
       <div style={{ fontSize: 11.5, color: MUT, marginTop: 2 }}><InlineEdit value={t.description || ""} onChange={(v) => onUpdate({ description: v })} placeholder="Add a description…" /></div>
       {!editing ? (
         <div className="flex items-center gap-2 mt-2 flex-wrap" style={{ fontSize: 11, color: MUT }}>
-          <span style={{ color: tint }}>{t.source}</span>{cr && <span>· {cr.name}</span>}{t.link && <a href={t.link.startsWith("http") ? t.link : `https://${t.link}`} target="_blank" rel="noreferrer" style={{ color: C.sky }}><ExternalLink size={11} /></a>}
+          <span style={{ color: tint }}>{t.source}</span>{t.link && <a href={t.link.startsWith("http") ? t.link : `https://${t.link}`} target="_blank" rel="noreferrer" style={{ color: C.sky }}><ExternalLink size={11} /></a>}
           <span className="ml-auto flex gap-1">
-            <button onClick={() => setEditing(true)} style={iconBtn} aria-label="Edit source, creator, link" title="Edit source, creator, link">✎</button>
+            <button onClick={() => setEditing(true)} style={iconBtn} aria-label="Edit source, link" title="Edit source, link">✎</button>
             {col !== "To do" && <button onClick={onBack} style={iconBtn} aria-label="Back">←</button>}
             {col !== "Done" && <button onClick={onAdvance} style={{ ...iconBtn, color: C.mint }} aria-label="Forward">→</button>}
             <button onClick={onRemove} style={iconBtn} aria-label="Delete"><X size={12} /></button>
@@ -2326,10 +2499,7 @@ function TaskCard({ t, col, creatorById, creators, onUpdate, onAdvance, onBack, 
       ) : (
         <div className="mt-2 flex flex-col gap-2" style={{ fontSize: 11 }}>
           <div className="flex gap-1 flex-wrap">{SOURCES.map((s) => (<button key={s} onClick={() => onUpdate({ source: s })} className="rounded-full px-2.5 py-0.5" style={{ fontSize: 11, cursor: "pointer", fontFamily: "inherit", background: t.source === s ? `${SOURCE_TINT[s]}22` : FILL, border: `1px solid ${t.source === s ? SOURCE_TINT[s] : LINE}`, color: t.source === s ? SOURCE_TINT[s] : MUT }}>{s}</button>))}</div>
-          <div className="flex gap-2 flex-wrap">
-            <select value={t.creatorId || ""} onChange={(e) => onUpdate({ creatorId: e.target.value || null })} className="rounded-lg px-2 py-1" style={{ ...inputStyle, flex: 1, minWidth: 120, fontSize: 11.5, color: t.creatorId ? C.ink : FAINT }}><option value="">No creator</option>{creators.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
-            <input value={t.link || ""} onChange={(e) => onUpdate({ link: e.target.value })} placeholder="Link" className="rounded-lg px-2 py-1" style={{ ...inputStyle, flex: 1, minWidth: 120, fontSize: 11.5 }} />
-          </div>
+          <input value={t.link || ""} onChange={(e) => onUpdate({ link: e.target.value })} placeholder="Link" className="rounded-lg px-2 py-1" style={{ ...inputStyle, fontSize: 11.5 }} />
           <button onClick={() => setEditing(false)} className="self-end" style={{ ...iconBtn, fontSize: 11 }}>Done</button>
         </div>
       )}
@@ -2351,7 +2521,7 @@ function Tools({ data, setData }) {
           <div key={t.id} className="rounded-2xl p-4 flex flex-col gap-3" style={{ ...card, borderRadius: 16 }}>
             <div className="flex items-start justify-between gap-2"><InlineEdit value={t.name} onChange={(v) => update(t.id, { name: v })} strong /><button onClick={() => remove(t.id)} style={iconBtn} aria-label="Delete"><Trash2 size={13} /></button></div>
             <div className="flex gap-1">{TOOL_STAGES.map((s) => (<button key={s} onClick={() => update(t.id, { status: s })} className="rounded-full px-3 py-1 flex-1" style={{ fontSize: 11, cursor: "pointer", fontFamily: "inherit", background: t.status === s ? `${ST[s]}22` : FILL, border: `1px solid ${t.status === s ? ST[s] : LINE}`, color: t.status === s ? ST[s] : MUT }}>{s}</button>))}</div>
-            <div><Label text="Problem it solves" /><AutoTextarea value={t.problem} onChange={(v) => update(t.id, { problem: v })} placeholder="What small problem does this fix?" /></div>
+            <div><Label text="Description" /><AutoTextarea value={t.problem} onChange={(v) => update(t.id, { problem: v })} placeholder="What does this tool do?" /></div>
             <div><Label text="Next step" /><InlineEdit value={t.next} onChange={(v) => update(t.id, { next: v })} placeholder="The very next action" /></div>
             <div><Label text="Tasks" /><MiniTaskList tasks={t.tasks} onChange={(tasks) => update(t.id, { tasks })} /></div>
           </div>
