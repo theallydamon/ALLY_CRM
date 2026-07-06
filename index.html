@@ -352,7 +352,7 @@ const MODULES = {
   deals:     { emoji: "🤝", label: "Deals",     accent: C.pink,  bg: C.pinkBg },
   mama:      { emoji: "💼", label: "Mama",      accent: C.brown, bg: C.brownBg },
 };
-const TAB_ORDER = ["overview", "content", "song", "unlocks", "apartment", "deals", "mama"];
+const TAB_ORDER = ["overview", "content", "song", "unlocks", "apartment", "mama", "deals"];
 
 /* ---------- storage shim: window.storage in the app, localStorage in the repo ---------- */
 const store = {
@@ -413,8 +413,25 @@ const CONTENT_TINT = { Ideas: C.lilac, "To Film": C.amber, "In Edit": C.mint, Po
    back older data. */
 const CONTENT_STATUS_MIGRATE = { Scripted: "Ideas", Filmed: "To Film", Edited: "In Edit" };
 function migrateAlly(a) {
-  if (!a || !a.content || !Array.isArray(a.content.items)) return a;
-  return { ...a, content: { ...a.content, items: a.content.items.map((i) => CONTENT_STATUS_MIGRATE[i.status] ? { ...i, status: CONTENT_STATUS_MIGRATE[i.status] } : i) } };
+  if (!a) return a;
+  let out = a;
+  if (out.content && Array.isArray(out.content.items)) {
+    out = { ...out, content: { ...out.content, items: out.content.items.map((i) => CONTENT_STATUS_MIGRATE[i.status] ? { ...i, status: CONTENT_STATUS_MIGRATE[i.status] } : i) } };
+  }
+  /* Unlocks pillar cleanup: drop the standalone Vitality column (its 4 benefits go with it,
+     Vitality remains the background engine described in keystoneNote, just not its own card),
+     and rename the remaining three pillars to their full Discovery brand names so they read
+     unambiguously (Bank -> Discovery Bank, Health -> Discovery Health (Insurance), Insure ->
+     Discovery Insure). Runs on every load so older saved data (local or Firestore) converts
+     automatically, same pattern as the content status migration above. */
+  if (out.unlocks && out.unlocks.ecosystem && Array.isArray(out.unlocks.ecosystem.pillars)) {
+    const PILLAR_RENAME = { Bank: "Discovery Bank", Health: "Discovery Health (Insurance)", Insure: "Discovery Insure" };
+    const pillars = out.unlocks.ecosystem.pillars
+      .filter((p) => p.name !== "Vitality")
+      .map((p) => (PILLAR_RENAME[p.name] ? { ...p, name: PILLAR_RENAME[p.name] } : p));
+    out = { ...out, unlocks: { ...out.unlocks, ecosystem: { ...out.unlocks.ecosystem, pillars } } };
+  }
+  return out;
 }
 const DEAL_STAGES = ["Brief", "Script", "Script approval", "Film", "Edit", "Final approval", "Posted"];
 const CLIENT_STATUSES = ["Lead", "Active", "Paused"];
@@ -664,18 +681,12 @@ const ALLY_SEED = {
     ecosystem: {
       keystoneNote: "The Discovery Bank credit card is the keystone. It lifts HealthyFood to 50%, adds the 20% fuel Miles layer, and deepens the Vitality rewards loop. Each pillar feeds Vitality status; status feeds cashback rates; engagement feeds status. It is a loop, not a ladder.",
       pillars: [
-        { id: uid(), name: "Vitality", emoji: "⭐", accent: C.yellow, role: "The engine. Status drives every cashback rate below. You engage, status rises, rates rise.", benefits: [
-          { id: uid(), label: "Vitality assessments", state: "live", note: "Done. Age assessment complete." },
-          { id: uid(), label: "Activity rewards", state: "live", note: "Walking, running, gym. Feeds status.", amp: [] },
-          { id: uid(), label: "Healthy sleep rewards", state: "live", note: "Tracked, feeds points.", amp: [] },
-          { id: uid(), label: "Vitality status tier", state: "progress", note: "Higher tier = higher cashback % across food and fuel." },
-        ] },
-        { id: uid(), name: "Bank", emoji: "💳", accent: C.lilac, role: "The keystone pillar. The credit card multiplies several branches at once.", benefits: [
+        { id: uid(), name: "Discovery Bank", emoji: "💳", accent: C.lilac, role: "The keystone pillar. The credit card multiplies several branches at once.", benefits: [
           { id: uid(), label: "Credit card", state: "progress", keystone: true, note: "Resubmit statements + letter. If declined, wait a month, reapply with payslip 3, get approved." },
           { id: uid(), label: "Discovery Miles on fuel (20%)", state: "locked", note: "Needs the card. Paid at bp with the Discovery card.", ampFrom: "Credit card" },
           { id: uid(), label: "Credit score building", state: "progress", note: "Card approval + on-time use builds the score." },
         ] },
-        { id: uid(), name: "Health", emoji: "🩺", accent: C.mint, role: "The pillar hosting food cashback, the Personal Health Fund, and preventative care. Most benefits already accrue as a dependant.", benefits: [
+        { id: uid(), name: "Discovery Health (Insurance)", emoji: "🩺", accent: C.mint, role: "The pillar hosting food cashback, the Personal Health Fund, and preventative care. Most benefits already accrue as a dependant.", benefits: [
           { id: uid(), label: "HealthyFood 25%", state: "live", note: "Live. Woolies 25%.", },
           { id: uid(), label: "Checkers as primary partner", state: "progress", note: "Mom to switch primary (main-member only). Checkers 10% → 25%." },
           { id: uid(), label: "HealthyFood 50% boost", state: "locked", note: "Card lifts the rate from 25% to 50%.", ampFrom: "Credit card" },
@@ -683,7 +694,7 @@ const ALLY_SEED = {
           { id: uid(), label: "Preventative care (HIV, screenings)", state: "live", note: "Covered. Available as dependant too." },
           { id: uid(), label: "Own plan: Active Smart", state: "parked", note: "R1,350/mo. Control, not benefit access. Parked." },
         ] },
-        { id: uid(), name: "Insure", emoji: "🚗", accent: C.sky, role: "The pillar for fuel cashback and the car. Gated on moving the Corsa to Discovery Insure, which is passive for now.", benefits: [
+        { id: uid(), name: "Discovery Insure", emoji: "🚗", accent: C.sky, role: "The pillar for fuel cashback and the car. Gated on moving the Corsa to Discovery Insure, which is passive for now.", benefits: [
           { id: uid(), label: "Move Corsa to Discovery Insure", state: "parked", note: "Passive. Premium likely rises on a solo policy. Awaiting quote + Jacqui's premium." },
           { id: uid(), label: "Fuel cashback (base)", state: "locked", note: "Up to R1,500/mo at bp/Shell. Needs the Insure switch.", ampFrom: "Move Corsa to Discovery Insure" },
           { id: uid(), label: "Fuel Miles layer (20%)", state: "locked", note: "Stacks on base. Needs both the switch and the card.", ampFrom: "Credit card" },
@@ -764,6 +775,7 @@ function AllyCRM() {
       if (!a.unlocks.chains) a.unlocks.chains = ALLY_SEED.unlocks.chains;
       a = migrateAlly(a);
       m = { ...m, creators: (m.creators || []).map((c) => c.goals ? c : { ...c, goals: c.goal ? [{ id: uid(), text: c.goal }] : [] }) };
+      m = { ...m, tasks: (m.tasks || []).map((t) => t.description !== undefined ? t : { ...t, description: "" }) };
       setAlly(a); setMama(m); loaded.current = true; setLocalLoaded(true);
     })();
   }, []);
@@ -1036,7 +1048,6 @@ function AllyCRM() {
             Desktop: static icon rail. Mobile (<=768px, see .sidebar-rail CSS): becomes a fixed,
             off-canvas drawer that slides in from the left when navOpen, with icon+label rows. ===== */}
         <aside className={`flex flex-col items-center sidebar-rail${navOpen ? " nav-open" : ""}`} style={{ width: 104, flexShrink: 0, borderRight: `1px solid ${LINE}`, padding: "22px 0", gap: 8, background: "#0E0E11", height: "100%", overflowY: "auto" }}>
-          <div className="rail-logo" style={{ width: 48, height: 48, borderRadius: 13, background: "rgba(255,255,255,0.08)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 16, fontSize: 22, fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700 }}>🅰️</div>
           {TAB_ORDER.map((t) => {
             const on = tab === t; const info = MODULES[t];
             const locked = t === "apartment" && !aptUnlocked;
@@ -1113,9 +1124,12 @@ function AllyCRM() {
           {/* scroll area — the only part of the page that scrolls; sidebar and header stay put.
               inner wrapper uses vertical auto-margins: short pages center in the available space
               (no dead strip at the bottom), long pages (Unlocks, long chains) just scroll normally
-              since auto-margins collapse to 0 once content is taller than the viewport. */}
+              since auto-margins collapse to 0 once content is taller than the viewport.
+              Exception: the Mama tab is pinned to top (margin: 0) instead, so switching between
+              its Creators/Tasks/AI Tools/Reports subtabs never jumps to mid-screen just because
+              one subtab has less content than another. */}
           <div className="scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "28px 36px", display: "flex", flexDirection: "column", alignItems: "center" }}>
-            <div style={{ width: "100%", maxWidth: 1360, margin: "auto 0", paddingBottom: 44 }}>
+            <div style={{ width: "100%", maxWidth: 1360, margin: tab === "mama" ? "0" : "auto 0", paddingBottom: 44 }}>
               {tab === "overview" && <PriorityDashboard ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} />}
               {tab === "content" && <ContentModule data={ally} setData={setAlly} q={q} />}
               {tab === "song" && <SongModule data={ally} setData={setAlly} />}
@@ -2242,8 +2256,8 @@ function CreatorCard({ c, open, onToggle, onUpdate, onRemove, openTaskCount }) {
 
 /* ---- tasks ---- */
 function Tasks({ data, setData }) {
-  const [title, setTitle] = useState(""); const [source, setSource] = useState("Discord"); const [link, setLink] = useState(""); const [creatorId, setCreatorId] = useState("");
-  const add = () => { const t = title.trim(); if (!t) return; setData((d) => ({ ...d, tasks: [{ id: uid(), title: t, source, link: link.trim(), creatorId: creatorId || null, status: "To do", created: new Date().toISOString().slice(0, 10), due: null, priority: "Medium", lastProgress: null }, ...d.tasks] })); setTitle(""); setLink(""); };
+  const [title, setTitle] = useState(""); const [description, setDescription] = useState(""); const [source, setSource] = useState("Discord"); const [link, setLink] = useState(""); const [creatorId, setCreatorId] = useState("");
+  const add = () => { const t = title.trim(); if (!t) return; setData((d) => ({ ...d, tasks: [{ id: uid(), title: t, description: description.trim(), source, link: link.trim(), creatorId: creatorId || null, status: "To do", created: new Date().toISOString().slice(0, 10), due: null, priority: "Medium", lastProgress: null }, ...d.tasks] })); setTitle(""); setDescription(""); setLink(""); };
   const advance = (id) => setData((d) => ({ ...d, tasks: d.tasks.map((t) => t.id === id ? { ...t, status: TASK_COLS[Math.min(TASK_COLS.indexOf(t.status) + 1, 2)] } : t) }));
   const back = (id) => setData((d) => ({ ...d, tasks: d.tasks.map((t) => t.id === id ? { ...t, status: TASK_COLS[Math.max(TASK_COLS.indexOf(t.status) - 1, 0)] } : t) }));
   const update = (id, p) => setData((d) => ({ ...d, tasks: d.tasks.map((t) => (t.id === id ? { ...t, ...p } : t)) }));
@@ -2259,10 +2273,13 @@ function Tasks({ data, setData }) {
       )}
       <div className="rounded-2xl p-4 mb-6" style={{ ...card, borderRadius: 16 }}>
         <div className="flex gap-2 flex-wrap mb-3">{SOURCES.map((s) => (<button key={s} onClick={() => setSource(s)} className="rounded-full px-3 py-1" style={{ fontSize: 12, cursor: "pointer", fontFamily: "inherit", background: source === s ? `${SOURCE_TINT[s]}22` : FILL, border: `1px solid ${source === s ? SOURCE_TINT[s] : LINE}`, color: source === s ? SOURCE_TINT[s] : MUT }}>{s}</button>))}</div>
-        <div className="flex gap-2 flex-wrap">
+        <div className="flex gap-2 flex-wrap mb-2">
           <input value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} placeholder={`What came in via ${source}?`} className="flex-1 rounded-lg px-3 py-2" style={{ ...inputStyle, minWidth: 200 }} />
           <input value={link} onChange={(e) => setLink(e.target.value)} placeholder="Link (optional)" className="rounded-lg px-3 py-2" style={{ ...inputStyle, width: 160 }} />
           <select value={creatorId} onChange={(e) => setCreatorId(e.target.value)} className="rounded-lg px-3 py-2" style={{ ...inputStyle, width: 150, color: creatorId ? C.ink : FAINT }}><option value="">No creator</option>{data.creators.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
+        </div>
+        <div className="flex gap-2 flex-wrap items-start">
+          <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Description (optional) — what to actually do. Keeps the title short." rows={2} className="flex-1 rounded-lg px-3 py-2 resize-none" style={{ ...inputStyle, minWidth: 200, lineHeight: 1.45 }} />
           <button onClick={add} style={pillDark}><Plus size={14} style={{ display: "inline", marginRight: 4 }} />Capture</button>
         </div>
       </div>
@@ -2273,13 +2290,7 @@ function Tasks({ data, setData }) {
             <div key={col} className="rounded-2xl p-3" style={{ ...cardSoft, borderRadius: 16 }}>
               <div className="flex items-center justify-between mb-3 px-1"><span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 600, fontSize: 12, letterSpacing: "0.04em", textTransform: "uppercase" }}>{col}</span><span style={{ fontSize: 12, color: MUT }}>{items.length}</span></div>
               <div className="flex flex-col gap-2">
-                {items.map((t) => { const tint = SOURCE_TINT[t.source] || C.lilac; const cr = t.creatorId ? creatorById[t.creatorId] : null; return (
-                  <div key={t.id} className="rounded-xl p-3" style={{ ...card, borderRadius: 12, borderLeft: `2px solid ${tint}` }}>
-                    <div style={{ fontSize: 13.5, textDecoration: col === "Done" ? "line-through" : "none", opacity: col === "Done" ? 0.55 : 1 }}><InlineEdit value={t.title} onChange={(v) => update(t.id, { title: v })} /></div>
-                    <div className="flex items-center gap-2 mt-2 flex-wrap" style={{ fontSize: 11, color: MUT }}><span style={{ color: tint }}>{t.source}</span>{cr && <span>· {cr.name}</span>}{t.link && <a href={t.link.startsWith("http") ? t.link : `https://${t.link}`} target="_blank" rel="noreferrer" style={{ color: C.sky }}><ExternalLink size={11} /></a>}<span className="ml-auto flex gap-1">{col !== "To do" && <button onClick={() => back(t.id)} style={iconBtn} aria-label="Back">←</button>}{col !== "Done" && <button onClick={() => advance(t.id)} style={{ ...iconBtn, color: C.mint }} aria-label="Forward">→</button>}<button onClick={() => remove(t.id)} style={iconBtn} aria-label="Delete"><X size={12} /></button></span></div>
-                    {col !== "Done" && <PriorityControls item={t} onChange={(p) => update(t.id, p)} />}
-                  </div>
-                ); })}
+                {items.map((t) => <TaskCard key={t.id} t={t} col={col} creatorById={creatorById} creators={data.creators} onUpdate={(p) => update(t.id, p)} onAdvance={() => advance(t.id)} onBack={() => back(t.id)} onRemove={() => remove(t.id)} />)}
                 {items.length === 0 && <div className="rounded-xl p-3 text-center" style={{ border: `1px dashed ${LINE}`, fontSize: 12, color: FAINT, borderRadius: 12 }}>Empty</div>}
               </div>
             </div>
@@ -2288,6 +2299,42 @@ function Tasks({ data, setData }) {
       </div>
       {data.tasks.some((t) => t.status === "Done") && <button onClick={clearDone} className="mt-4" style={{ ...iconBtn, fontSize: 12 }}>Clear done tasks</button>}
     </section>
+  );
+}
+
+/* single task card: title + description are always visible (description never collapses), while
+   source / creator / link have a pencil-toggle edit mode so a mis-logged channel or wrong creator
+   can be corrected after the fact without retyping the whole card. */
+function TaskCard({ t, col, creatorById, creators, onUpdate, onAdvance, onBack, onRemove }) {
+  const [editing, setEditing] = useState(false);
+  const tint = SOURCE_TINT[t.source] || C.lilac;
+  const cr = t.creatorId ? creatorById[t.creatorId] : null;
+  return (
+    <div className="rounded-xl p-3" style={{ ...card, borderRadius: 12, borderLeft: `2px solid ${tint}` }}>
+      <div style={{ fontSize: 13.5, textDecoration: col === "Done" ? "line-through" : "none", opacity: col === "Done" ? 0.55 : 1 }}><InlineEdit value={t.title} onChange={(v) => onUpdate({ title: v })} /></div>
+      <div style={{ fontSize: 11.5, color: MUT, marginTop: 2 }}><InlineEdit value={t.description || ""} onChange={(v) => onUpdate({ description: v })} placeholder="Add a description…" /></div>
+      {!editing ? (
+        <div className="flex items-center gap-2 mt-2 flex-wrap" style={{ fontSize: 11, color: MUT }}>
+          <span style={{ color: tint }}>{t.source}</span>{cr && <span>· {cr.name}</span>}{t.link && <a href={t.link.startsWith("http") ? t.link : `https://${t.link}`} target="_blank" rel="noreferrer" style={{ color: C.sky }}><ExternalLink size={11} /></a>}
+          <span className="ml-auto flex gap-1">
+            <button onClick={() => setEditing(true)} style={iconBtn} aria-label="Edit source, creator, link" title="Edit source, creator, link">✎</button>
+            {col !== "To do" && <button onClick={onBack} style={iconBtn} aria-label="Back">←</button>}
+            {col !== "Done" && <button onClick={onAdvance} style={{ ...iconBtn, color: C.mint }} aria-label="Forward">→</button>}
+            <button onClick={onRemove} style={iconBtn} aria-label="Delete"><X size={12} /></button>
+          </span>
+        </div>
+      ) : (
+        <div className="mt-2 flex flex-col gap-2" style={{ fontSize: 11 }}>
+          <div className="flex gap-1 flex-wrap">{SOURCES.map((s) => (<button key={s} onClick={() => onUpdate({ source: s })} className="rounded-full px-2.5 py-0.5" style={{ fontSize: 11, cursor: "pointer", fontFamily: "inherit", background: t.source === s ? `${SOURCE_TINT[s]}22` : FILL, border: `1px solid ${t.source === s ? SOURCE_TINT[s] : LINE}`, color: t.source === s ? SOURCE_TINT[s] : MUT }}>{s}</button>))}</div>
+          <div className="flex gap-2 flex-wrap">
+            <select value={t.creatorId || ""} onChange={(e) => onUpdate({ creatorId: e.target.value || null })} className="rounded-lg px-2 py-1" style={{ ...inputStyle, flex: 1, minWidth: 120, fontSize: 11.5, color: t.creatorId ? C.ink : FAINT }}><option value="">No creator</option>{creators.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
+            <input value={t.link || ""} onChange={(e) => onUpdate({ link: e.target.value })} placeholder="Link" className="rounded-lg px-2 py-1" style={{ ...inputStyle, flex: 1, minWidth: 120, fontSize: 11.5 }} />
+          </div>
+          <button onClick={() => setEditing(false)} className="self-end" style={{ ...iconBtn, fontSize: 11 }}>Done</button>
+        </div>
+      )}
+      {col !== "Done" && <PriorityControls item={t} onChange={onUpdate} />}
+    </div>
   );
 }
 
