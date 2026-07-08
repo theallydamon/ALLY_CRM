@@ -1501,7 +1501,7 @@ function PriorityPillarCard({ pillarKey, tasks, go, rank, onDropPriority, onComp
                     onClick={(e) => { e.stopPropagation(); navigateToTask(go, pillarKey, t.id, { sub: t.sourceSub, ownerId: t.ownerId }); }} className="rounded-lg px-2 py-1.5"
                     style={{ background: C.soft, border: `1px solid ${LINE}`, borderLeft: `2px solid ${PRIORITY_COL_TINT[col]}`, cursor: "grab" }}>
                     <div className="flex items-start gap-2">
-                      <button onClick={(e) => { e.stopPropagation(); onCompleteTask(pillarKey, t.id); }} aria-label="Mark complete" title="Mark complete" style={{ width: 16, height: 16, borderRadius: 5, cursor: "pointer", flexShrink: 0, marginTop: 1, background: C.card, border: `1px solid ${LINE}` }} />
+                      <input type="checkbox" checked={false} onChange={(e) => { e.stopPropagation(); onCompleteTask(pillarKey, t.id); }} onClick={(e) => e.stopPropagation()} aria-label="Mark complete" title="Mark complete" style={{ width: 16, height: 16, cursor: "pointer", flexShrink: 0, marginTop: 1 }} />
                       <div className="flex-1 min-w-0">
                         <div style={{ fontSize: 12.5, lineHeight: 1.3 }}>{t.title}</div>
                         {t.daysUntilDue !== null && <div style={{ fontSize: 11, color: PRIORITY_COL_TINT[col], marginTop: 2 }}>{t.daysUntilDue < 0 ? `${-t.daysUntilDue}d overdue` : t.daysUntilDue === 0 ? "today" : `${t.daysUntilDue}d`}</div>}
@@ -1884,7 +1884,7 @@ function ContentModule({ data, setData, q }) {
                      openDesc only overrides that once you've explicitly toggled it yourself. */
                   const descOpen = openDesc[i.id] !== undefined ? openDesc[i.id] : !!i.desc;
                   return (
-                  <div key={i.id} className="rounded-lg" style={{ background: "rgba(255,255,255,0.035)", border: `1px solid ${LINE}`, borderLeft: `2px solid ${CONTENT_TINT[col]}`, borderRadius: 10, padding: "11px 13px" }}>
+                  <div key={i.id} data-task-id={i.id} className="rounded-lg" style={{ background: "rgba(255,255,255,0.035)", border: `1px solid ${LINE}`, borderLeft: `2px solid ${CONTENT_TINT[col]}`, borderRadius: 10, padding: "11px 13px" }}>
                     <InlineEdit value={i.title} onChange={(v) => updateItem(i.id, { title: v })} strong />
                     <ScriptBox value={i.desc || ""} isHtml={!!i.descHtml} open={descOpen} onFocus={() => openIfNot(i.id)} onChange={(v) => updateItem(i.id, { desc: v, descHtml: true })} onToggle={() => setOpenDesc((o) => ({ ...o, [i.id]: !descOpen }))} />
                     <div className="flex items-center gap-2 mt-1.5 flex-wrap" style={{ fontSize: 10.5, opacity: i.filmed ? 0.55 : 1 }}>
@@ -1966,7 +1966,7 @@ function SongModule({ data, setData }) {
           const isDone = s.status === "done", isCurrent = !isDone && i === currentIdx, isLocked = !isDone && !isCurrent;
           const tint = isDone ? C.mint : isCurrent ? AURAS[i % AURAS.length] : FAINT;
           return (
-          <div key={s.id} className="flex gap-4" style={{ opacity: isLocked ? 0.7 : 1 }}>
+          <div key={s.id} data-task-id={s.id} className="flex gap-4" style={{ opacity: isLocked ? 0.7 : 1 }}>
             <div className="flex flex-col items-center" style={{ width: 36, flexShrink: 0 }}>
               <button onClick={() => toggleStage(i)} aria-label={isDone ? "Mark not done" : "Mark done"} title={isLocked ? "Out of order — click to mark done anyway and skip ahead" : isDone ? "Mark not done" : "Mark done"}
                 style={{ width: 34, height: 34, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", background: isDone ? C.mint : isCurrent ? `${tint}22` : C.card, border: `1px solid ${isDone ? C.mint : isCurrent ? tint : LINE}`, fontFamily: "'Bricolage Grotesque', sans-serif", fontSize: 13, fontWeight: 600, color: isDone ? "#fff" : isCurrent ? tint : MUT }}>
@@ -2055,7 +2055,7 @@ function UnlocksModule({ data, setData }) {
                 {pl.benefits.map((b) => {
                   const st = ECO_STATE[b.state] || ECO_STATE.locked;
                   return (
-                    <div key={b.id} className="rounded-xl p-2.5" style={{ ...cardSoft, borderRadius: 12, opacity: b.state === "locked" ? 0.62 : 1, borderLeft: b.keystone ? `2px solid ${C.lilac}` : `1px solid ${LINE}` }}>
+                    <div key={b.id} data-task-id={b.id} className="rounded-xl p-2.5" style={{ ...cardSoft, borderRadius: 12, opacity: b.state === "locked" ? 0.62 : 1, borderLeft: b.keystone ? `2px solid ${C.lilac}` : `1px solid ${LINE}` }}>
                       <div className="flex items-start gap-2">
                         <button onClick={() => patchBenefit(pl.id, b.id, { state: ECO_CYCLE[b.state] })} aria-label={`State ${b.state}`} className={b.state === "progress" ? "pulse-dot" : ""} style={{ width: 12, height: 12, borderRadius: 99, marginTop: 4, flexShrink: 0, cursor: "pointer", background: st.dot, border: "none" }} />
                         <div className="flex-1 min-w-0">
@@ -2104,7 +2104,7 @@ function UnlocksModule({ data, setData }) {
               </div>
               <div className="flex flex-col">
                 {ch.nodes.map((n, i) => (
-                  <div key={n.id} className="flex gap-3">
+                  <div key={n.id} data-task-id={n.id} className="flex gap-3">
                     <div className="flex flex-col items-center" style={{ width: 30, flexShrink: 0 }}>
                       <button onClick={() => updateNode(ch.id, n.id, { status: cycle[n.status] })} aria-label={`Status ${n.status}`} className={n.status === "active" ? "pulse-dot" : ""} style={{ width: 28, height: 28, borderRadius: 10, cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: n.status === "done" ? tint : n.status === "active" ? `${tint}22` : C.card, border: `1px solid ${n.status === "done" ? tint : n.status === "active" ? tint : LINE}` }}>
                         {n.status === "done" && <Check size={14} color="#fff" strokeWidth={3} />}
@@ -2248,7 +2248,7 @@ function LifeAdminModule({ data, setData, q }) {
               <div className="flex items-center justify-between mb-3 px-1"><span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 600, fontSize: 12, letterSpacing: "0.04em", textTransform: "uppercase" }}>{col}</span><span style={{ fontSize: 12, color: MUT }}>{colItems.length}</span></div>
               <div className="flex flex-col gap-2">
                 {colItems.map((t) => (
-                  <div key={t.id} className="rounded-xl p-3" style={{ ...card, borderRadius: 12, borderLeft: `2px solid ${C.rose}` }}>
+                  <div key={t.id} data-task-id={t.id} className="rounded-xl p-3" style={{ ...card, borderRadius: 12, borderLeft: `2px solid ${C.rose}` }}>
                     <div style={{ fontSize: 13.5, textDecoration: col === "Done" ? "line-through" : "none", opacity: col === "Done" ? 0.55 : 1 }}><InlineEdit value={t.title} onChange={(v) => update(t.id, { title: v })} /></div>
                     <div style={{ fontSize: 11.5, color: MUT, marginTop: 2 }}><InlineEdit value={t.description || ""} onChange={(v) => update(t.id, { description: v })} placeholder="Add a description…" /></div>
                     <div className="flex items-center gap-2 mt-2 flex-wrap" style={{ fontSize: 11, color: MUT }}>
@@ -2322,7 +2322,7 @@ function DealCard({ x, open, onToggleOpen, update, remove, isProspect }) {
   const idx = DEAL_STAGES.indexOf(x.stage);
   const typeTint = DEAL_TYPE_TINT[isProspect ? "Prospect" : "Active"];
   return (
-    <div className="rounded-2xl p-4" style={{ ...card, borderRadius: 16, borderLeft: `3px solid ${tint}`, opacity: x.stage === "Posted" ? 0.65 : 1 }}>
+    <div data-task-id={x.id} className="rounded-2xl p-4" style={{ ...card, borderRadius: 16, borderLeft: `3px solid ${tint}`, opacity: x.stage === "Posted" ? 0.65 : 1 }}>
       <div className="flex items-center gap-3 flex-wrap">
         <div className="flex-1" style={{ minWidth: 150 }}><InlineEdit value={x.brand} onChange={(v) => update(x.id, { brand: v })} strong /><InlineEdit value={x.deliverable} onChange={(v) => update(x.id, { deliverable: v })} placeholder="Deliverable (e.g. 1x Reel + story)" dim /></div>
         <button onClick={() => update(x.id, { type: isProspect ? "Active" : "Prospect" })} className="rounded-full px-2.5 py-1" style={{ fontSize: 10.5, cursor: "pointer", fontFamily: "inherit", background: `${typeTint}1a`, border: `1px solid ${typeTint}55`, color: typeTint, whiteSpace: "nowrap" }}>{isProspect ? "→ mark active" : "→ mark prospect"}</button>
@@ -2505,7 +2505,7 @@ function MamaTaskDashboard({ data, setData, setSub }) {
       <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))" }}>
         {ranked.map((b) => (
           <MamaTaskRing key={b.key} label={b.label} emoji={b.emoji} accent={b.accent} tasks={b.tasks} rank={rankOf[b.key]} pct={fillPct[b.key]}
-            onNavigate={() => setSub(b.sub)} onTaskClick={(t) => { setSub(t.sourceSub || b.sub); window.dispatchEvent(new CustomEvent("ally:navigate-task", { detail: { taskId: t.id, sub: t.sourceSub || b.sub, ownerId: t.ownerId } })); setTimeout(() => flashTaskElement(t.id), 180); }} onCompleteTask={(id) => updateByBucket[b.key](id, b.key === "adminTasksBucket" ? { status: "Done", doneAt: Date.now() } : { done: true, doneAt: Date.now() })} onDropPriority={(id, priority) => updateByBucket[b.key](id, { priority })} />
+            onNavigate={() => setSub(b.sub)} onTaskClick={(t) => { const detail = { taskId: t.id, sub: t.sourceSub || b.sub, ownerId: t.ownerId }; window.__allyPendingTask = detail; setSub(detail.sub); window.dispatchEvent(new CustomEvent("ally:navigate-task", { detail })); setTimeout(() => flashTaskElement(t.id), 220); }} onCompleteTask={(id) => updateByBucket[b.key](id, b.key === "adminTasksBucket" ? { status: "Done", doneAt: Date.now() } : { done: true, doneAt: Date.now() })} onDropPriority={(id, priority) => updateByBucket[b.key](id, { priority })} />
         ))}
       </div>
     </section>
@@ -2555,7 +2555,7 @@ function MamaTaskRing({ label, emoji, accent, tasks, rank, pct, onNavigate, onTa
                     onClick={(e) => { e.stopPropagation(); onTaskClick(t); }} className="rounded-lg px-2 py-1.5"
                     style={{ background: C.soft, border: `1px solid ${LINE}`, borderLeft: `2px solid ${PRIORITY_COL_TINT[col]}`, cursor: "grab" }}>
                     <div className="flex items-start gap-2">
-                      <button onClick={(e) => { e.stopPropagation(); onCompleteTask(t.id); }} aria-label="Mark complete" title="Mark complete" style={{ width: 16, height: 16, borderRadius: 5, cursor: "pointer", flexShrink: 0, marginTop: 1, background: C.card, border: `1px solid ${LINE}` }} />
+                      <input type="checkbox" checked={false} onChange={(e) => { e.stopPropagation(); onCompleteTask(t.id); }} onClick={(e) => e.stopPropagation()} aria-label="Mark complete" title="Mark complete" style={{ width: 16, height: 16, cursor: "pointer", flexShrink: 0, marginTop: 1 }} />
                       <div className="flex-1 min-w-0">
                         <div style={{ fontSize: 12.5, lineHeight: 1.3 }}>{t.title}</div>
                         {t.daysUntilDue !== null && <div style={{ fontSize: 11, color: PRIORITY_COL_TINT[col], marginTop: 2 }}>{t.daysUntilDue < 0 ? `${-t.daysUntilDue}d overdue` : t.daysUntilDue === 0 ? "today" : `${t.daysUntilDue}d`}</div>}
