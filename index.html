@@ -1643,12 +1643,6 @@ function ScriptBox({ value, isHtml, open, onFocus, onChange, onToggle }) {
     lastSeededRef.current = value;
   }, [value, isHtml]);
 
-  useEffect(() => {
-    if (!ref.current) return;
-    if (open) { ref.current.style.height = "auto"; ref.current.style.height = ref.current.scrollHeight + "px"; }
-    else { ref.current.style.height = "28px"; }
-  }, [value, open]);
-
   const commit = () => {
     const html = ref.current.innerHTML;
     lastSeededRef.current = html;
@@ -1712,7 +1706,7 @@ function ScriptBox({ value, isHtml, open, onFocus, onChange, onToggle }) {
     <div className="mt-1.5">
       <button onClick={onToggle} className="flex items-center gap-1" style={{ ...iconBtn, padding: 0, fontSize: 10, color: FAINT }}>
         {open ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
-        <span>{value ? "Script" : "Add script"}</span>
+        <span>{open ? "Collapse script" : value ? "Expand script" : "Add script"}</span>
       </button>
       {open && (
         <div className="flex items-center gap-1 mt-1">
@@ -1736,7 +1730,7 @@ function ScriptBox({ value, isHtml, open, onFocus, onChange, onToggle }) {
       <div ref={ref} contentEditable suppressContentEditableWarning
         onFocus={onFocus} onInput={commit} onPaste={handlePaste} onKeyDown={handleKeyDown}
         data-placeholder="Paste the skit script here…" className="w-full rounded-lg px-2.5 py-1.5 mt-1 script-editable"
-        style={{ ...inputStyle, fontSize: 12.5, lineHeight: 1.5, overflow: "hidden", transition: "height 0.15s ease", minHeight: 28 }} />
+        style={{ ...inputStyle, fontSize: 12.5, lineHeight: 1.5, overflow: open ? "visible" : "hidden", height: open ? "auto" : 28, minHeight: 28 }} />
     </div>
   );
 }
@@ -1746,7 +1740,6 @@ function ContentModule({ data, setData, q }) {
   const h = contentHealth(content);
   const [title, setTitle] = useState("");
   const [openDesc, setOpenDesc] = useState({});
-  const toggleDesc = (id) => setOpenDesc((o) => ({ ...o, [id]: !o[id] }));
   const openIfNot = (id) => setOpenDesc((o) => (o[id] ? o : { ...o, [id]: true }));
   const patch = (p) => setData((d) => ({ ...d, content: { ...d.content, ...p } }));
   const ql = (q || "").toLowerCase();
@@ -1804,10 +1797,15 @@ function ContentModule({ data, setData, q }) {
                 <span style={{ fontSize: 12.5, color: MUT }}>{cItems.length}</span>
               </div>
               <div className="flex flex-col gap-2.5">
-                {cItems.map((i) => (
+                {cItems.map((i) => {
+                  /* description defaults to open (full height) the moment it has content, so an
+                     idea with a pasted paragraph always shows the whole thing without a click —
+                     openDesc only overrides that once you've explicitly toggled it yourself. */
+                  const descOpen = openDesc[i.id] !== undefined ? openDesc[i.id] : !!i.desc;
+                  return (
                   <div key={i.id} className="rounded-lg" style={{ background: "rgba(255,255,255,0.035)", border: `1px solid ${LINE}`, borderLeft: `2px solid ${CONTENT_TINT[col]}`, borderRadius: 10, padding: "11px 13px" }}>
                     <InlineEdit value={i.title} onChange={(v) => updateItem(i.id, { title: v })} strong />
-                    <ScriptBox value={i.desc || ""} isHtml={!!i.descHtml} open={!!openDesc[i.id]} onFocus={() => openIfNot(i.id)} onChange={(v) => updateItem(i.id, { desc: v, descHtml: true })} onToggle={() => toggleDesc(i.id)} />
+                    <ScriptBox value={i.desc || ""} isHtml={!!i.descHtml} open={descOpen} onFocus={() => openIfNot(i.id)} onChange={(v) => updateItem(i.id, { desc: v, descHtml: true })} onToggle={() => setOpenDesc((o) => ({ ...o, [i.id]: !descOpen }))} />
                     <div className="flex items-center gap-2 mt-1.5 flex-wrap" style={{ fontSize: 10.5 }}>
                       <input type="date" value={i.due || ""} onChange={(e) => updateItem(i.id, { due: e.target.value || null })} className="rounded-md" style={{ ...darkInput, fontSize: 10.5, padding: "3px 5px" }} aria-label="Deadline (optional)" title="Deadline (optional) — auto-sets priority, pulls this idea's title onto the main hub" />
                       <DueChip due={i.due} />
@@ -1820,7 +1818,8 @@ function ContentModule({ data, setData, q }) {
                       <button onClick={() => remove(i.id)} style={{ ...iconBtn, padding: 2 }} aria-label="Delete"><X size={11} /></button>
                     </span></div>
                   </div>
-                ))}
+                  );
+                })}
                 {cItems.length === 0 && <div className="rounded-lg text-center" style={{ border: `1px dashed ${LINE}`, fontSize: 12, color: FAINT, borderRadius: 10, padding: "14px 6px" }}>{ql ? "No match" : "Empty"}</div>}
               </div>
             </div>
