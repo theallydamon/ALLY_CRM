@@ -920,15 +920,21 @@ function AllyCRM() {
 
   /* auto-clean: anything marked Done (Admin Tasks / Life Admin's kanban) or checked off (the
      MiniTaskList "done" toggle used under Creators/AI Tools/Reports/Deals/Clients) gets removed
-     24 hours after it was completed, using the doneAt timestamp stamped on it the moment it was
+     12 hours after it was completed, using the doneAt timestamp stamped on it the moment it was
      marked done. Runs once shortly after load (catching data that was already stale when you
      opened the app) and then rechecks periodically while the tab stays open — no need to be
      precise to the minute, this is just tidying, not anything the priority engine depends on
      (completed items are already excluded from collectPriorityTasks regardless of how long they
      linger). Items with no doneAt (older data from before this existed) are left alone rather
-     than guessed at. */
+     than guessed at.
+     Scope: this only touches actual disposable to-do lists (Admin Tasks, Life Admin, and the
+     MiniTaskList sub-tasks under Creators/AI Tools/Reports/Deals/Clients). It does NOT touch
+     Content (Posted ideas stay until you hit "Clear posted archive"), Song stages, the Deals
+     pipeline itself (a deal reaching "Posted" is a history record, not deleted), Apartment
+     ("Bought" items), or Unlocks — those are milestones/records, not disposable tasks, and keep
+     their existing manual-clear-only behavior. */
   useEffect(() => {
-    const STALE_MS = 24 * 60 * 60 * 1000;
+    const STALE_MS = 12 * 60 * 60 * 1000;
     const stale = (t) => !!t.doneAt && Date.now() - t.doneAt > STALE_MS;
     const sweep = () => {
       if (!loaded.current) return;
