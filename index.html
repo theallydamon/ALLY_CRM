@@ -2518,6 +2518,9 @@ function CreatorCard({ c, open, onToggle, onUpdate, onRemove, openTaskCount }) {
         <div className="flex-1 min-w-0"><InlineEdit value={c.name} onChange={(v) => onUpdate({ name: v })} strong /><InlineEdit value={c.niche} onChange={(v) => onUpdate({ niche: v })} placeholder="Niche / platform" dim /></div>
         <button onClick={onToggle} style={iconBtn} aria-label="Expand">{open ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</button>
       </div>
+      {c.links.length > 0 && (
+        <div className="flex gap-2 flex-wrap mt-2">{c.links.map((l) => (<a key={l.id} href={l.url} target="_blank" rel="noreferrer" className="rounded-full px-3 py-1 flex items-center gap-1.5" style={{ ...cardSoft, borderRadius: 99, fontSize: 12, color: C.sky, textDecoration: "none" }}><ExternalLink size={11} />{l.label}</a>))}</div>
+      )}
       <div className="mt-3 rounded-xl px-3 py-2" style={{ ...cardSoft, borderRadius: 12, borderLeft: `2px solid ${aura}` }}>
         <div className="flex items-center justify-between"><div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: MUT }}>Goal{c.goals.length > 1 ? "s" : ""}</div><button onClick={() => onUpdate({ goals: [...c.goals, { id: uid(), text: "" }] })} style={{ ...iconBtn, color: aura, fontSize: 11, display: "flex", alignItems: "center", gap: 3 }}><Plus size={11} /> Add goal</button></div>
         {c.goals.length === 0 && <div style={{ fontSize: 13, color: FAINT }}>What are they trying to achieve?</div>}
