@@ -18,7 +18,19 @@
 <script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore-compat.js"></script>
-<style> html,body,#root{height:100%;margin:0;background:#0B0B0D;} </style>
+<style>
+html,body,#root{height:100%;margin:0;background:#0B0B0D;}
+/* dashboard task navigation: brief flash on whatever element scrollAndHighlight() scrolls to,
+   so a click on a Priorities/Mama dashboard task chip reads clearly as "here it is" once the
+   page lands on the source item. Pure CSS animation on a transient class toggled from JS —
+   no React state involved, so it can't be fought by a stray re-render mid-flash. */
+@keyframes navFlash {
+  0% { box-shadow: 0 0 0 0 rgba(123,103,224,0); background-color: rgba(123,103,224,0); }
+  12% { box-shadow: 0 0 0 3px rgba(123,103,224,0.9); background-color: rgba(123,103,224,0.16); }
+  100% { box-shadow: 0 0 0 3px rgba(123,103,224,0); background-color: rgba(123,103,224,0); }
+}
+.nav-highlight { animation: navFlash 1s ease; border-radius: 12px; }
+</style>
 </head>
 <body>
 <div id="root"></div>
@@ -550,48 +562,59 @@ function collectPriorityTasks(ally, mama) {
       if (!s.paused) out.push({
         id: s.id, pillar: "song", title: s.name, due: s.due || null,
         priority: s.priority || "Medium", lastProgress: s.lastProgress || null, created: s.created || null,
+        sourceType: "song", navTab: "song", navSub: null, navOpenId: null,
       });
     }
   }
   ((ally.unlocks.ecosystem && ally.unlocks.ecosystem.pillars) || []).flatMap((p) => p.benefits).filter((b) => b.state === "progress" && !b.paused).forEach((b) => out.push({
     id: b.id, pillar: "unlocks", title: b.label, due: b.due || null,
     priority: b.priority || "Medium", lastProgress: b.lastProgress || null, created: b.created || null,
+    sourceType: "unlocksBenefit", navTab: "unlocks", navSub: null, navOpenId: null,
   }));
   (ally.unlocks.chains || []).forEach((ch) => ch.nodes.filter((n) => n.status === "active" && !n.paused).forEach((n) => out.push({
     id: n.id, pillar: "unlocks", title: n.label, due: n.due || null,
     priority: n.priority || "Medium", lastProgress: n.lastProgress || null, created: n.created || null,
+    sourceType: "unlocksNode", navTab: "unlocks", navSub: null, navOpenId: null,
   })));
   ally.deals.deals.filter((d) => d.stage !== "Posted" && !d.paused).forEach((d) => out.push({
     id: d.id, pillar: "deals", title: d.brand, due: d.due || null,
     priority: d.priority || "Medium", lastProgress: d.lastProgress || null, created: d.created || null,
+    sourceType: "deal", navTab: "deals", navSub: null, navOpenId: d.id,
   }));
   ally.deals.deals.forEach((d) => (d.tasks || []).filter((t) => !t.done && !t.paused).forEach((t) => out.push({
     id: t.id, pillar: "deals", title: `${t.title} (${d.brand})`, due: t.due || null,
     priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
+    sourceType: "dealTask", navTab: "deals", navSub: null, navOpenId: d.id,
   })));
   ally.deals.clients.forEach((c) => (c.tasks || []).filter((t) => !t.done && !t.paused).forEach((t) => out.push({
     id: t.id, pillar: "deals", title: `${t.title} (${c.name})`, due: t.due || null,
     priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
+    sourceType: "clientTask", navTab: "deals", navSub: null, navOpenId: null,
   })));
   mama.tasks.filter((t) => t.status !== "Done" && !t.paused).forEach((t) => out.push({
     id: t.id, pillar: "mama", title: t.title, due: t.due || null,
     priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
+    sourceType: "mamaAdmin", navTab: "mama", navSub: "adminTasks", navOpenId: null,
   }));
   (mama.creators || []).forEach((cr) => (cr.tasks || []).filter((t) => !t.done && !t.paused).forEach((t) => out.push({
     id: t.id, pillar: "mama", title: `${t.title} (${cr.name})`, due: t.due || null,
     priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
+    sourceType: "mamaCreator", navTab: "mama", navSub: "creators", navOpenId: cr.id,
   })));
   (mama.tools || []).forEach((tl) => (tl.tasks || []).filter((t) => !t.done && !t.paused).forEach((t) => out.push({
     id: t.id, pillar: "mama", title: `${t.title} (${tl.name})`, due: t.due || null,
     priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
+    sourceType: "mamaTool", navTab: "mama", navSub: "tools", navOpenId: null,
   })));
   (mama.reports || []).forEach((rp) => (rp.tasks || []).filter((t) => !t.done && !t.paused).forEach((t) => out.push({
     id: t.id, pillar: "mama", title: `${t.title} (${rp.name || rp.title})`, due: t.due || null,
     priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
+    sourceType: "mamaReport", navTab: "mama", navSub: "reports", navOpenId: null,
   })));
   (ally.lifeAdmin.items || []).filter((t) => t.status !== "Done" && !t.paused).forEach((t) => out.push({
     id: t.id, pillar: "lifeAdmin", title: t.title, due: t.due || null,
     priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
+    sourceType: "lifeAdmin", navTab: "lifeAdmin", navSub: null, navOpenId: null,
   }));
   return out.map((t) => (t._preScored ? t : { ...t, ...computeUrgency(t) }));
 }
@@ -990,6 +1013,24 @@ function AllyCRM() {
   const go = (next) => { setNavOpen(false); if (next === tab) return; setHistory((h) => [...h, tab].slice(-20)); setTab(next); setQ(""); };
   const back = () => { setHistory((h) => { if (!h.length) return h; const prev = h[h.length - 1]; setTab(prev); setQ(""); return h.slice(0, -1); }); };
 
+  /* ---------- dashboard task navigation hub: turns the Priorities/Mama hub cards into a
+     navigation surface. navigateToTask switches to the task's tab (via go, a no-op if already
+     there), then stamps navRequest with a fresh seq so downstream modules (MamaModule's subtab
+     switch, Creators'/DealsModule's expand-card effect) and scrollAndHighlight all re-fire even
+     if the same task is clicked twice in a row. completeTask ticks the checkbox: it patches the
+     underlying record via completePriorityTask, which reuses each pillar's own "done" mechanism,
+     so the source tab and every ring/percentage derived from it update immediately. */
+  const navSeq = useRef(0);
+  const [navRequest, setNavRequest] = useState(null);
+  const navigateToTask = (task) => {
+    if (!task || !task.navTab) return;
+    go(task.navTab);
+    navSeq.current += 1;
+    setNavRequest({ id: task.id, navTab: task.navTab, navSub: task.navSub || null, navOpenId: task.navOpenId || null, seq: navSeq.current });
+  };
+  const completeTask = (task) => completePriorityTask(setAlly, setMama, task);
+  useEffect(() => { if (navRequest) scrollAndHighlight(navRequest.id); }, [navRequest]);
+
   /* export/import: localStorage is per-browser (Chrome and Safari, or a Safari "Add to Dock" web
      app, each keep their own completely separate copy) so this is how data actually moves between
      them — download everything as one JSON file here, then use Import on the other browser/app. */
@@ -1223,14 +1264,14 @@ function AllyCRM() {
               one subtab has less content than another. */}
           <div className="scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "28px 36px", display: "flex", flexDirection: "column", alignItems: "center" }}>
             <div style={{ width: "100%", maxWidth: 1360, margin: tab === "mama" ? "0" : "auto 0", paddingBottom: 44 }}>
-              {tab === "overview" && <PriorityDashboard ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} />}
+              {tab === "overview" && <PriorityDashboard ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} navigateToTask={navigateToTask} completeTask={completeTask} />}
               {tab === "content" && <ContentModule data={ally} setData={setAlly} q={q} />}
               {tab === "song" && <SongModule data={ally} setData={setAlly} />}
               {tab === "unlocks" && <UnlocksModule data={ally} setData={setAlly} />}
               {tab === "apartment" && <ApartmentModule data={ally} setData={setAlly} unlocked={aptUnlocked} go={go} q={q} />}
               {tab === "lifeAdmin" && <LifeAdminModule data={ally} setData={setAlly} q={q} />}
-              {tab === "deals" && <DealsModule data={ally} setData={setAlly} q={q} />}
-              {tab === "mama" && <MamaModule data={mama} setData={setMama} q={q} />}
+              {tab === "deals" && <DealsModule data={ally} setData={setAlly} q={q} navRequest={navRequest} />}
+              {tab === "mama" && <MamaModule data={mama} setData={setMama} q={q} navRequest={navRequest} navigateToTask={navigateToTask} completeTask={completeTask} />}
             </div>
           </div>
         </div>
@@ -1295,8 +1336,74 @@ function setPillarItemPriority(setAlly, setMama, pillar, id, priority) {
   /* content has no draggable per-item priority — it's a single master signal, not handled here */
 }
 
+/* marks a dashboard task's underlying record complete/done, using whatever "done" mechanism its
+   own source tab already uses (a checkbox toggle, a status column, an eco-state cycle...) — same
+   setAlly/setMama as setPillarItemPriority above, so the source tab and every ring/percentage that
+   depends on it update in the same tick the checkbox is ticked. Keyed off task.sourceType, which
+   collectPriorityTasks / MamaTaskDashboard stamp onto every task alongside the nav fields below. */
+function completePriorityTask(setAlly, setMama, task) {
+  const now = Date.now();
+  switch (task.sourceType) {
+    case "song":
+      setAlly((d) => ({ ...d, song: { ...d.song, stages: d.song.stages.map((s) => (s.id === task.id ? { ...s, status: "done", lastProgress: todayISO() } : s)) } }));
+      return;
+    case "unlocksBenefit":
+      setAlly((d) => {
+        const eco = d.unlocks.ecosystem;
+        if (!eco) return d;
+        return { ...d, unlocks: { ...d.unlocks, ecosystem: { ...eco, pillars: eco.pillars.map((pl) => ({ ...pl, benefits: pl.benefits.map((b) => (b.id === task.id ? { ...b, state: "live" } : b)) })) } } };
+      });
+      return;
+    case "unlocksNode":
+      setAlly((d) => ({ ...d, unlocks: { ...d.unlocks, chains: d.unlocks.chains.map((ch) => ({ ...ch, nodes: ch.nodes.map((n) => (n.id === task.id ? { ...n, status: "done" } : n)) })) } }));
+      return;
+    case "deal":
+      setAlly((d) => ({ ...d, deals: { ...d.deals, deals: d.deals.deals.map((x) => (x.id === task.id ? { ...x, stage: "Posted" } : x)) } }));
+      return;
+    case "dealTask":
+      setAlly((d) => ({ ...d, deals: { ...d.deals, deals: d.deals.deals.map((x) => ((x.tasks || []).some((t) => t.id === task.id) ? { ...x, tasks: x.tasks.map((t) => (t.id === task.id ? { ...t, done: true, doneAt: now } : t)) } : x)) } }));
+      return;
+    case "clientTask":
+      setAlly((d) => ({ ...d, deals: { ...d.deals, clients: d.deals.clients.map((c) => ((c.tasks || []).some((t) => t.id === task.id) ? { ...c, tasks: c.tasks.map((t) => (t.id === task.id ? { ...t, done: true, doneAt: now } : t)) } : c)) } }));
+      return;
+    case "mamaAdmin":
+      setMama((d) => ({ ...d, tasks: d.tasks.map((t) => (t.id === task.id ? { ...t, status: "Done", doneAt: now } : t)) }));
+      return;
+    case "mamaCreator":
+      setMama((d) => ({ ...d, creators: d.creators.map((cr) => ((cr.tasks || []).some((t) => t.id === task.id) ? { ...cr, tasks: cr.tasks.map((t) => (t.id === task.id ? { ...t, done: true, doneAt: now } : t)) } : cr)) }));
+      return;
+    case "mamaTool":
+      setMama((d) => ({ ...d, tools: d.tools.map((tl) => ((tl.tasks || []).some((t) => t.id === task.id) ? { ...tl, tasks: tl.tasks.map((t) => (t.id === task.id ? { ...t, done: true, doneAt: now } : t)) } : tl)) }));
+      return;
+    case "mamaReport":
+      setMama((d) => ({ ...d, reports: d.reports.map((rp) => ((rp.tasks || []).some((t) => t.id === task.id) ? { ...rp, tasks: rp.tasks.map((t) => (t.id === task.id ? { ...t, done: true, doneAt: now } : t)) } : rp)) }));
+      return;
+    case "lifeAdmin":
+      setAlly((d) => ({ ...d, lifeAdmin: { ...d.lifeAdmin, items: d.lifeAdmin.items.map((t) => (t.id === task.id ? { ...t, status: "Done", doneAt: now } : t)) } }));
+      return;
+  }
+}
+
+/* finds the DOM node a dashboard task points at (every source render tags its own task's root
+   element with data-nav-id={id}) and scrolls it into view + gives it a ~1s highlight flash, then
+   removes the flash class. Retries for a bit because the target tab/subtab/expand-card usually
+   still needs one or two renders to mount after navigateToTask fires (tab switch -> module mounts
+   -> its own effect flips a subtab/openId -> that renders the actual element) — polling sidesteps
+   having to hand-sequence those renders exactly. Gives up silently after ~1.2s if nothing turns up. */
+function scrollAndHighlight(id, attempts) {
+  if (attempts === undefined) attempts = 20;
+  const el = document.querySelector(`[data-nav-id="${id}"]`);
+  if (el) {
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    el.classList.add("nav-highlight");
+    setTimeout(() => el.classList.remove("nav-highlight"), 1000);
+    return;
+  }
+  if (attempts > 0) setTimeout(() => scrollAndHighlight(id, attempts - 1), 60);
+}
+
 /* ================= PRIORITY DASHBOARD ================= */
-function PriorityDashboard({ ally, mama, go, setAlly, setMama }) {
+function PriorityDashboard({ ally, mama, go, setAlly, setMama, navigateToTask, completeTask }) {
   const tasks = collectPriorityTasks(ally, mama);
   const byPillar = Object.fromEntries(PRIORITY_PILLARS.map((k) => [k, tasks.filter((t) => t.pillar === k)]));
   const contentUrgency = computeContentUrgency(ally.content);
@@ -1320,7 +1427,7 @@ function PriorityDashboard({ ally, mama, go, setAlly, setMama }) {
         {ranked.map((k) => (
           k === "content"
             ? <ContentPillarCard key={k} content={ally.content} go={go} rank={rankOf[k]} pct={fillPct[k]} />
-            : <PriorityPillarCard key={k} pillarKey={k} tasks={byPillar[k]} go={go} rank={rankOf[k]} onDropPriority={onDropPriority} pct={fillPct[k]} />
+            : <PriorityPillarCard key={k} pillarKey={k} tasks={byPillar[k]} go={go} rank={rankOf[k]} onDropPriority={onDropPriority} pct={fillPct[k]} onNavigate={navigateToTask} onComplete={completeTask} />
         ))}
       </div>
     </section>
@@ -1387,7 +1494,7 @@ function ContentPillarCard({ content, go, rank, pct }) {
    dragging across cards (e.g. Deals into Mama) is a strict no-op by design. */
 const DROP_PRIORITY = { Urgent: "High", Medium: "Medium", Low: "Low" };
 
-function PriorityPillarCard({ pillarKey, tasks, go, rank, onDropPriority, pct }) {
+function PriorityPillarCard({ pillarKey, tasks, go, rank, onDropPriority, pct, onNavigate, onComplete }) {
   const mod = MODULES[pillarKey];
   const cols = ["Urgent", "Medium", "Low"];
   const [dragOverCol, setDragOverCol] = useState(null);
@@ -1428,10 +1535,14 @@ function PriorityPillarCard({ pillarKey, tasks, go, rank, onDropPriority, pct })
               <div className="flex flex-col gap-1.5">
                 {items.slice(0, 3).map((t) => (
                   <div key={t.id} draggable onDragStart={(e) => { e.dataTransfer.setData("application/json", JSON.stringify({ id: t.id, pillar: pillarKey })); e.dataTransfer.effectAllowed = "move"; }}
-                    onClick={(e) => e.stopPropagation()} className="rounded-lg px-2 py-1.5"
+                    onClick={(e) => e.stopPropagation()} className="rounded-lg px-2 py-1.5 flex items-start gap-1.5"
                     style={{ background: C.soft, border: `1px solid ${LINE}`, borderLeft: `2px solid ${PRIORITY_COL_TINT[col]}`, cursor: "grab" }}>
-                    <div style={{ fontSize: 12.5, lineHeight: 1.3 }}>{t.title}</div>
-                    {t.daysUntilDue !== null && <div style={{ fontSize: 11, color: PRIORITY_COL_TINT[col], marginTop: 2 }}>{t.daysUntilDue < 0 ? `${-t.daysUntilDue}d overdue` : t.daysUntilDue === 0 ? "today" : `${t.daysUntilDue}d`}</div>}
+                    <button onClick={(e) => { e.stopPropagation(); onComplete(t); }} aria-label="Mark complete" title="Mark complete"
+                      style={{ width: 14, height: 14, borderRadius: 5, cursor: "pointer", flexShrink: 0, marginTop: 2, padding: 0, background: "transparent", border: `1px solid ${LINE}` }} />
+                    <div style={{ flex: 1, minWidth: 0, cursor: "pointer" }} onClick={(e) => { e.stopPropagation(); onNavigate(t); }}>
+                      <div style={{ fontSize: 12.5, lineHeight: 1.3 }}>{t.title}</div>
+                      {t.daysUntilDue !== null && <div style={{ fontSize: 11, color: PRIORITY_COL_TINT[col], marginTop: 2 }}>{t.daysUntilDue < 0 ? `${-t.daysUntilDue}d overdue` : t.daysUntilDue === 0 ? "today" : `${t.daysUntilDue}d`}</div>}
+                    </div>
                   </div>
                 ))}
                 {items.length === 0 && <div style={{ fontSize: 12, color: FAINT, padding: "4px 0" }}>—</div>}
@@ -1899,7 +2010,7 @@ function SongModule({ data, setData }) {
               </button>
               {i < song.stages.length - 1 && <div style={{ width: 2, flex: 1, minHeight: 22, background: isDone ? `${C.mint}66` : LINE }} />}
             </div>
-            <div className="rounded-2xl p-4 mb-4 flex-1" style={{ ...card, borderRadius: 16, borderLeft: `3px solid ${tint}`, background: isCurrent ? `${tint}0d` : card.background }}>
+            <div data-nav-id={s.id} className="rounded-2xl p-4 mb-4 flex-1" style={{ ...card, borderRadius: 16, borderLeft: `3px solid ${tint}`, background: isCurrent ? `${tint}0d` : card.background }}>
               <div className="flex items-center gap-2 flex-wrap">
                 <div className="flex-1" style={{ minWidth: 140, textDecoration: isDone ? "line-through" : "none" }}><InlineEdit value={s.name} onChange={(v) => updateStage(s.id, { name: v })} strong /></div>
                 <span className="rounded-full px-3 py-1" style={{ fontSize: 11, fontWeight: 600, background: `${tint}1e`, border: `1px solid ${tint}55`, color: tint }}>{isDone ? "Done" : isCurrent ? "Current" : "Locked"}</span>
@@ -1980,7 +2091,7 @@ function UnlocksModule({ data, setData }) {
                 {pl.benefits.map((b) => {
                   const st = ECO_STATE[b.state] || ECO_STATE.locked;
                   return (
-                    <div key={b.id} className="rounded-xl p-2.5" style={{ ...cardSoft, borderRadius: 12, opacity: b.state === "locked" ? 0.62 : 1, borderLeft: b.keystone ? `2px solid ${C.lilac}` : `1px solid ${LINE}` }}>
+                    <div key={b.id} data-nav-id={b.id} className="rounded-xl p-2.5" style={{ ...cardSoft, borderRadius: 12, opacity: b.state === "locked" ? 0.62 : 1, borderLeft: b.keystone ? `2px solid ${C.lilac}` : `1px solid ${LINE}` }}>
                       <div className="flex items-start gap-2">
                         <button onClick={() => patchBenefit(pl.id, b.id, { state: ECO_CYCLE[b.state] })} aria-label={`State ${b.state}`} className={b.state === "progress" ? "pulse-dot" : ""} style={{ width: 12, height: 12, borderRadius: 99, marginTop: 4, flexShrink: 0, cursor: "pointer", background: st.dot, border: "none" }} />
                         <div className="flex-1 min-w-0">
@@ -2038,7 +2149,7 @@ function UnlocksModule({ data, setData }) {
                       </button>
                       {i < ch.nodes.length - 1 && <div style={{ width: 2, flex: 1, minHeight: 16, background: n.status === "done" ? `${tint}66` : LINE }} />}
                     </div>
-                    <div className="flex-1 pb-3" style={{ opacity: n.status === "locked" ? 0.6 : 1, minWidth: 0 }}>
+                    <div data-nav-id={n.id} className="flex-1 pb-3" style={{ opacity: n.status === "locked" ? 0.6 : 1, minWidth: 0 }}>
                       <InlineEdit value={n.label} onChange={(v) => updateNode(ch.id, n.id, { label: v })} strong />
                       <InlineEdit value={n.sub} onChange={(v) => updateNode(ch.id, n.id, { sub: v })} placeholder="Detail…" dim />
                       {n.status === "active" && <PriorityControls item={n} onChange={(p) => updateNode(ch.id, n.id, p)} />}
@@ -2173,7 +2284,7 @@ function LifeAdminModule({ data, setData, q }) {
               <div className="flex items-center justify-between mb-3 px-1"><span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 600, fontSize: 12, letterSpacing: "0.04em", textTransform: "uppercase" }}>{col}</span><span style={{ fontSize: 12, color: MUT }}>{colItems.length}</span></div>
               <div className="flex flex-col gap-2">
                 {colItems.map((t) => (
-                  <div key={t.id} className="rounded-xl p-3" style={{ ...card, borderRadius: 12, borderLeft: `2px solid ${C.rose}` }}>
+                  <div key={t.id} data-nav-id={t.id} className="rounded-xl p-3" style={{ ...card, borderRadius: 12, borderLeft: `2px solid ${C.rose}` }}>
                     <div style={{ fontSize: 13.5, textDecoration: col === "Done" ? "line-through" : "none", opacity: col === "Done" ? 0.55 : 1 }}><InlineEdit value={t.title} onChange={(v) => update(t.id, { title: v })} /></div>
                     <div style={{ fontSize: 11.5, color: MUT, marginTop: 2 }}><InlineEdit value={t.description || ""} onChange={(v) => update(t.id, { description: v })} placeholder="Add a description…" /></div>
                     <div className="flex items-center gap-2 mt-2 flex-wrap" style={{ fontSize: 11, color: MUT }}>
@@ -2226,7 +2337,7 @@ function MiniTaskList({ tasks, onChange }) {
       </div>
       {list.length === 0 && <div style={{ fontSize: 11.5, color: FAINT }}>No tasks yet.</div>}
       {list.map((t) => (
-        <div key={t.id} className="rounded-lg px-2.5 py-2" style={{ background: C.soft, border: `1px solid ${LINE}`, opacity: t.done ? 0.5 : 1 }}>
+        <div key={t.id} data-nav-id={t.id} className="rounded-lg px-2.5 py-2" style={{ background: C.soft, border: `1px solid ${LINE}`, opacity: t.done ? 0.5 : 1 }}>
           <div className="flex items-center gap-2">
             <button onClick={() => update(t.id, { done: !t.done, doneAt: !t.done ? Date.now() : null })} aria-label="Toggle done" style={{ width: 18, height: 18, borderRadius: 6, cursor: "pointer", flexShrink: 0, background: t.done ? C.mint : C.card, border: `1px solid ${t.done ? C.mint : LINE}`, display: "flex", alignItems: "center", justifyContent: "center" }}>{t.done && <Check size={11} color="#fff" strokeWidth={3} />}</button>
             <div className="flex-1 min-w-0" style={{ textDecoration: t.done ? "line-through" : "none" }}><InlineEdit value={t.title} onChange={(v) => update(t.id, { title: v })} /></div>
@@ -2247,7 +2358,7 @@ function DealCard({ x, open, onToggleOpen, update, remove, isProspect }) {
   const idx = DEAL_STAGES.indexOf(x.stage);
   const typeTint = DEAL_TYPE_TINT[isProspect ? "Prospect" : "Active"];
   return (
-    <div className="rounded-2xl p-4" style={{ ...card, borderRadius: 16, borderLeft: `3px solid ${tint}`, opacity: x.stage === "Posted" ? 0.65 : 1 }}>
+    <div data-nav-id={x.id} className="rounded-2xl p-4" style={{ ...card, borderRadius: 16, borderLeft: `3px solid ${tint}`, opacity: x.stage === "Posted" ? 0.65 : 1 }}>
       <div className="flex items-center gap-3 flex-wrap">
         <div className="flex-1" style={{ minWidth: 150 }}><InlineEdit value={x.brand} onChange={(v) => update(x.id, { brand: v })} strong /><InlineEdit value={x.deliverable} onChange={(v) => update(x.id, { deliverable: v })} placeholder="Deliverable (e.g. 1x Reel + story)" dim /></div>
         <button onClick={() => update(x.id, { type: isProspect ? "Active" : "Prospect" })} className="rounded-full px-2.5 py-1" style={{ fontSize: 10.5, cursor: "pointer", fontFamily: "inherit", background: `${typeTint}1a`, border: `1px solid ${typeTint}55`, color: typeTint, whiteSpace: "nowrap" }}>{isProspect ? "→ mark active" : "→ mark prospect"}</button>
@@ -2295,8 +2406,13 @@ function ClientCard({ c, updateClient, removeClient }) {
   );
 }
 
-function DealsModule({ data, setData, q }) {
+function DealsModule({ data, setData, q, navRequest }) {
   const [openId, setOpenId] = useState(null);
+  /* same expand-parent-card behavior as Creators: a dashboard task pointing at a deal (navOpenId)
+     opens that deal's card, even though its own Tasks list is already visible either way. */
+  useEffect(() => {
+    if (navRequest && navRequest.navTab === "deals" && navRequest.navOpenId) setOpenId(navRequest.navOpenId);
+  }, [navRequest]);
   const deals = data.deals.deals, clients = data.deals.clients;
   const ql = (q || "").toLowerCase();
   const patch = (p) => setData((d) => ({ ...d, deals: { ...d.deals, ...p } }));
@@ -2360,7 +2476,7 @@ function DealsModule({ data, setData, q }) {
 }
 
 /* ================= MAMA ================= */
-function MamaModule({ data, setData, q }) {
+function MamaModule({ data, setData, q, navRequest, navigateToTask, completeTask }) {
   const [sub, setSub] = useState("dashboard");
   const openAdminTasks = data.tasks.filter((t) => t.status !== "Done").length;
   const subs = [
@@ -2368,7 +2484,15 @@ function MamaModule({ data, setData, q }) {
     { id: "creators", emoji: "🧑‍🎤", label: "Creators", count: data.creators.length },
     { id: "tools", emoji: "🛠️", label: "AI Tools", count: data.tools.filter((t) => t.status !== "Shipped").length },
     { id: "adminTasks", emoji: "✅", label: "Admin Tasks", count: openAdminTasks },
+    { id: "reports", emoji: "🧾", label: "Reports" },
   ];
+  /* a dashboard task (this tab's own mini one, or the main Priorities hub) targets a specific
+     subtab via navRequest.navSub — jump there the moment that request lands, then
+     scrollAndHighlight (fired from the top-level AllyCRM effect) finds the actual task once this
+     subtab's content mounts. */
+  useEffect(() => {
+    if (navRequest && navRequest.navTab === "mama" && navRequest.navSub) setSub(navRequest.navSub);
+  }, [navRequest]);
   return (
     <section>
       <nav className="flex gap-2 mb-6 flex-wrap">
@@ -2381,10 +2505,11 @@ function MamaModule({ data, setData, q }) {
           );
         })}
       </nav>
-      {sub === "dashboard" && <MamaTaskDashboard data={data} setData={setData} setSub={setSub} />}
-      {sub === "creators" && <Creators data={data} setData={setData} q={q} />}
+      {sub === "dashboard" && <MamaTaskDashboard data={data} setData={setData} setSub={setSub} navigateToTask={navigateToTask} completeTask={completeTask} />}
+      {sub === "creators" && <Creators data={data} setData={setData} q={q} navRequest={navRequest} />}
       {sub === "tools" && <Tools data={data} setData={setData} />}
       {sub === "adminTasks" && <AdminTasks data={data} setData={setData} />}
+      {sub === "reports" && <Reports data={data} setData={setData} />}
     </section>
   );
 }
@@ -2394,10 +2519,10 @@ function MamaModule({ data, setData, q }) {
    from every creator's own MiniTaskList, AI Tools Tasks from every tool's, Admin Tasks from the
    generic capture stream — all three already carry due/priority via the shared PriorityControls,
    so computeUrgency + computePillarFillPercent score them exactly like every other pillar. */
-function MamaTaskDashboard({ data, setData, setSub }) {
-  const creatorTasks = data.creators.flatMap((cr) => (cr.tasks || []).filter((t) => !t.done && !t.paused).map((t) => ({ ...t, ...computeUrgency(t), title: `${t.title} (${cr.name})` })));
-  const toolTasks = data.tools.flatMap((tl) => (tl.tasks || []).filter((t) => !t.done && !t.paused).map((t) => ({ ...t, ...computeUrgency(t), title: `${t.title} (${tl.name})` })));
-  const adminTasksList = data.tasks.filter((t) => t.status !== "Done" && !t.paused).map((t) => ({ ...t, ...computeUrgency(t) }));
+function MamaTaskDashboard({ data, setData, setSub, navigateToTask, completeTask }) {
+  const creatorTasks = data.creators.flatMap((cr) => (cr.tasks || []).filter((t) => !t.done && !t.paused).map((t) => ({ ...t, ...computeUrgency(t), title: `${t.title} (${cr.name})`, sourceType: "mamaCreator", navTab: "mama", navSub: "creators", navOpenId: cr.id })));
+  const toolTasks = data.tools.flatMap((tl) => (tl.tasks || []).filter((t) => !t.done && !t.paused).map((t) => ({ ...t, ...computeUrgency(t), title: `${t.title} (${tl.name})`, sourceType: "mamaTool", navTab: "mama", navSub: "tools", navOpenId: null })));
+  const adminTasksList = data.tasks.filter((t) => t.status !== "Done" && !t.paused).map((t) => ({ ...t, ...computeUrgency(t), sourceType: "mamaAdmin", navTab: "mama", navSub: "adminTasks", navOpenId: null }));
 
   const BUCKETS = [
     { key: "creatorTasks", label: "Creator Tasks", emoji: "🧑‍🎤", accent: C.pink, tasks: creatorTasks, sub: "creators" },
@@ -2424,14 +2549,15 @@ function MamaTaskDashboard({ data, setData, setSub }) {
       <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))" }}>
         {ranked.map((b) => (
           <MamaTaskRing key={b.key} label={b.label} emoji={b.emoji} accent={b.accent} tasks={b.tasks} rank={rankOf[b.key]} pct={fillPct[b.key]}
-            onNavigate={() => setSub(b.sub)} onDropPriority={(id, priority) => updateByBucket[b.key](id, { priority })} />
+            onNavigate={() => setSub(b.sub)} onDropPriority={(id, priority) => updateByBucket[b.key](id, { priority })}
+            onNavigateTask={navigateToTask} onCompleteTask={completeTask} />
         ))}
       </div>
     </section>
   );
 }
 
-function MamaTaskRing({ label, emoji, accent, tasks, rank, pct, onNavigate, onDropPriority }) {
+function MamaTaskRing({ label, emoji, accent, tasks, rank, pct, onNavigate, onDropPriority, onNavigateTask, onCompleteTask }) {
   const cols = ["Urgent", "Medium", "Low"];
   const [dragOverCol, setDragOverCol] = useState(null);
   const tint = urgencyTint(pct);
@@ -2471,10 +2597,14 @@ function MamaTaskRing({ label, emoji, accent, tasks, rank, pct, onNavigate, onDr
               <div className="flex flex-col gap-1.5">
                 {items.slice(0, 3).map((t) => (
                   <div key={t.id} draggable onDragStart={(e) => { e.dataTransfer.setData("application/json", JSON.stringify({ id: t.id, scope: label })); e.dataTransfer.effectAllowed = "move"; }}
-                    onClick={(e) => e.stopPropagation()} className="rounded-lg px-2 py-1.5"
+                    onClick={(e) => e.stopPropagation()} className="rounded-lg px-2 py-1.5 flex items-start gap-1.5"
                     style={{ background: C.soft, border: `1px solid ${LINE}`, borderLeft: `2px solid ${PRIORITY_COL_TINT[col]}`, cursor: "grab" }}>
-                    <div style={{ fontSize: 12.5, lineHeight: 1.3 }}>{t.title}</div>
-                    {t.daysUntilDue !== null && <div style={{ fontSize: 11, color: PRIORITY_COL_TINT[col], marginTop: 2 }}>{t.daysUntilDue < 0 ? `${-t.daysUntilDue}d overdue` : t.daysUntilDue === 0 ? "today" : `${t.daysUntilDue}d`}</div>}
+                    <button onClick={(e) => { e.stopPropagation(); onCompleteTask(t); }} aria-label="Mark complete" title="Mark complete"
+                      style={{ width: 14, height: 14, borderRadius: 5, cursor: "pointer", flexShrink: 0, marginTop: 2, padding: 0, background: "transparent", border: `1px solid ${LINE}` }} />
+                    <div style={{ flex: 1, minWidth: 0, cursor: "pointer" }} onClick={(e) => { e.stopPropagation(); onNavigateTask(t); }}>
+                      <div style={{ fontSize: 12.5, lineHeight: 1.3 }}>{t.title}</div>
+                      {t.daysUntilDue !== null && <div style={{ fontSize: 11, color: PRIORITY_COL_TINT[col], marginTop: 2 }}>{t.daysUntilDue < 0 ? `${-t.daysUntilDue}d overdue` : t.daysUntilDue === 0 ? "today" : `${t.daysUntilDue}d`}</div>}
+                    </div>
                   </div>
                 ))}
                 {items.length === 0 && <div style={{ fontSize: 12, color: FAINT, padding: "4px 0" }}>—</div>}
@@ -2487,8 +2617,14 @@ function MamaTaskRing({ label, emoji, accent, tasks, rank, pct, onNavigate, onDr
   );
 }
 
-function Creators({ data, setData, q }) {
+function Creators({ data, setData, q, navRequest }) {
   const [openId, setOpenId] = useState(null);
+  /* a task-navigation request targeting a specific creator (navOpenId) expands that creator's
+     card — the Tasks list itself is always visible either way, this is just "show me the rest of
+     the context too" per the dashboard's expand-parent-card behavior. */
+  useEffect(() => {
+    if (navRequest && navRequest.navTab === "mama" && navRequest.navSub === "creators" && navRequest.navOpenId) setOpenId(navRequest.navOpenId);
+  }, [navRequest]);
   const ql = (q || "").toLowerCase();
   const update = (id, patch) => setData((d) => ({ ...d, creators: d.creators.map((c) => (c.id === id ? { ...c, ...patch } : c)) }));
   const remove = (id) => setData((d) => ({ ...d, creators: d.creators.filter((c) => c.id !== id) }));
@@ -2607,7 +2743,7 @@ function TaskCard({ t, col, onUpdate, onAdvance, onBack, onRemove }) {
   const [editing, setEditing] = useState(false);
   const tint = SOURCE_TINT[t.source] || C.lilac;
   return (
-    <div className="rounded-xl p-3" style={{ ...card, borderRadius: 12, borderLeft: `2px solid ${tint}` }}>
+    <div data-nav-id={t.id} className="rounded-xl p-3" style={{ ...card, borderRadius: 12, borderLeft: `2px solid ${tint}` }}>
       <div style={{ fontSize: 13.5, textDecoration: col === "Done" ? "line-through" : "none", opacity: col === "Done" ? 0.55 : 1 }}><InlineEdit value={t.title} onChange={(v) => onUpdate({ title: v })} /></div>
       <div style={{ fontSize: 11.5, color: MUT, marginTop: 2 }}><InlineEdit value={t.description || ""} onChange={(v) => onUpdate({ description: v })} placeholder="Add a description…" /></div>
       {!editing ? (
