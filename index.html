@@ -24,12 +24,13 @@ html,body,#root{height:100%;margin:0;background:#0B0B0D;}
    so a click on a Priorities/Mama dashboard task chip reads clearly as "here it is" once the
    page lands on the source item. Pure CSS animation on a transient class toggled from JS —
    no React state involved, so it can't be fought by a stray re-render mid-flash. Blinks on/off
-   four times over 2s rather than a single fade, so it reads unmistakably as "this one". */
+   twice over 1s rather than a single fade, so it reads unmistakably as "this one" without
+   lingering. */
 @keyframes navFlash {
-  0%, 25%, 50%, 75%, 100% { box-shadow: 0 0 0 0 rgba(123,103,224,0); background-color: rgba(123,103,224,0); }
-  12.5%, 37.5%, 62.5%, 87.5% { box-shadow: 0 0 0 3px rgba(123,103,224,0.9); background-color: rgba(123,103,224,0.18); }
+  0%, 50%, 100% { box-shadow: 0 0 0 0 rgba(123,103,224,0); background-color: rgba(123,103,224,0); }
+  25%, 75% { box-shadow: 0 0 0 3px rgba(123,103,224,0.9); background-color: rgba(123,103,224,0.18); }
 }
-.nav-highlight { animation: navFlash 2s steps(1, end); border-radius: 12px; }
+.nav-highlight { animation: navFlash 1s steps(1, end); border-radius: 12px; }
 </style>
 </head>
 <body>
@@ -1029,7 +1030,26 @@ function AllyCRM() {
     setNavRequest({ id: task.id, navTab: task.navTab, navSub: task.navSub || null, navOpenId: task.navOpenId || null, seq: navSeq.current });
   };
   const completeTask = (task) => completePriorityTask(setAlly, setMama, task);
-  useEffect(() => { if (navRequest) scrollAndHighlight(navRequest.id); }, [navRequest]);
+  /* the Mama rail icon always lands on Mama's own Task Dashboard, even if you're already sitting
+     on the Mama tab on some other subtab (Creators, Tools...) — go() alone can't do this since it
+     no-ops when you're already on that tab, and MamaModule's subtab is its own local state that
+     only resets on a fresh mount. Routing this through the same navRequest channel forces
+     MamaModule's subtab-switch effect to fire regardless of whether the tab itself changed. */
+  const goMamaDashboard = () => {
+    go("mama");
+    navSeq.current += 1;
+    setNavRequest({ id: null, navTab: "mama", navSub: "dashboard", navOpenId: null, seq: navSeq.current });
+  };
+  useEffect(() => {
+    if (!navRequest) return;
+    if (navRequest.id) scrollAndHighlight(navRequest.id);
+    /* self-clears a couple seconds after landing so a stale request (e.g. "jump to Creators")
+       can never leak into a later, unrelated remount of the same module and hijack its default
+       subtab — without this, switching away from Mama and back in via the plain rail click could
+       reopen whatever subtab the last dashboard-task click happened to target. */
+    const t = setTimeout(() => setNavRequest(null), 1400);
+    return () => clearTimeout(t);
+  }, [navRequest]);
 
   /* export/import: localStorage is per-browser (Chrome and Safari, or a Safari "Add to Dock" web
      app, each keep their own completely separate copy) so this is how data actually moves between
@@ -1186,7 +1206,7 @@ function AllyCRM() {
             const on = tab === t; const info = MODULES[t];
             const locked = t === "apartment" && !aptUnlocked;
             return (
-              <button key={t} className="railbtn" onClick={() => go(t)} title={info.label} aria-label={info.label}
+              <button key={t} className="railbtn" onClick={() => (t === "mama" ? goMamaDashboard() : go(t))} title={info.label} aria-label={info.label}
                 style={{ width: 68, height: 68, borderRadius: 16, border: on ? `1px solid ${LINE}` : "1px solid transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", position: "relative",
                   background: on ? "rgba(255,255,255,0.1)" : "transparent", fontSize: 32, transition: "background 0.15s" }}>
                 <span style={{ filter: on ? "none" : "saturate(0.85)", opacity: locked ? 0.4 : on ? 1 : 0.7 }}>{info.emoji}</span>
@@ -1385,7 +1405,7 @@ function completePriorityTask(setAlly, setMama, task) {
 }
 
 /* finds the DOM node a dashboard task points at (every source render tags its own task's root
-   element with data-nav-id={id}) and scrolls it into view + gives it a ~2s blinking highlight, then
+   element with data-nav-id={id}) and scrolls it into view + gives it a ~1s blinking highlight, then
    removes the flash class. Retries for a bit because the target tab/subtab/expand-card usually
    still needs one or two renders to mount after navigateToTask fires (tab switch -> module mounts
    -> its own effect flips a subtab/openId -> that renders the actual element) — polling sidesteps
@@ -1396,7 +1416,7 @@ function scrollAndHighlight(id, attempts) {
   if (el) {
     el.scrollIntoView({ behavior: "smooth", block: "center" });
     el.classList.add("nav-highlight");
-    setTimeout(() => el.classList.remove("nav-highlight"), 2000);
+    setTimeout(() => el.classList.remove("nav-highlight"), 1000);
     return;
   }
   if (attempts > 0) setTimeout(() => scrollAndHighlight(id, attempts - 1), 60);
