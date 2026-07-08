@@ -515,7 +515,7 @@ function computeUrgency(item) {
 function computeContentUrgency(content) {
   const since = daysSince(content.lastPosted);
   const basePct = since === null ? 40 : since * 33;
-  const dueTodayBonus = (content.items || []).filter((i) => i.due && daysUntil(i.due) <= 0).length * PRIORITY_BASE_PCT.High;
+  const dueTodayBonus = (content.items || []).filter((i) => i.due && !i.filmed && daysUntil(i.due) <= 0).length * PRIORITY_BASE_PCT.High;
   const pct = basePct + dueTodayBonus;
   const bucket = pct > 80 ? "Urgent" : pct >= 40 ? "Medium" : "Low";
   const score = Math.round((1 + (Math.min(pct, 100) / 100) * 5) * 10) / 10;
@@ -536,7 +536,7 @@ function collectPriorityTasks(ally, mama) {
        Ideas with no deadline keep inheriting the shared pillar-wide score exactly as before. */
     const cu = computeContentUrgency(ally.content);
     ally.content.items.forEach((i) => {
-      if (i.due) {
+      if (i.due && !i.filmed) {
         out.push({ id: i.id, pillar: "content", title: i.title, due: i.due, priority: "Medium", lastProgress: null, created: i.created || null });
       } else {
         out.push({ id: i.id, pillar: "content", title: i.title, due: null, lastProgress: null, created: i.created || null, score: cu.score, bucket: cu.bucket, daysUntilDue: null, daysSinceProgress: null, _preScored: true });
@@ -1342,7 +1342,7 @@ function ContentPillarCard({ content, go, rank, pct }) {
   /* individual ideas with their own deadline surface here by title only (never the script/desc
      box), same "title pulls through, description doesn't" rule every other pillar follows. The
      ring above stays purely days-since-post driven regardless of what's in this list. */
-  const dated = content.items.filter((i) => i.due).sort((a, b) => daysUntil(a.due) - daysUntil(b.due)).slice(0, 3);
+  const dated = content.items.filter((i) => i.due && !i.filmed).sort((a, b) => daysUntil(a.due) - daysUntil(b.due)).slice(0, 3);
   return (
     <div onClick={() => go("content")} className="rounded-2xl p-5" style={{ ...card, borderRadius: 18, borderLeft: `4px solid ${mod.accent}`, cursor: "pointer" }}>
       <div className="flex items-center justify-between mb-3">
@@ -1749,7 +1749,7 @@ function ContentModule({ data, setData, q }) {
   const openIfNot = (id) => setOpenDesc((o) => (o[id] ? o : { ...o, [id]: true }));
   const patch = (p) => setData((d) => ({ ...d, content: { ...d.content, ...p } }));
   const ql = (q || "").toLowerCase();
-  const add = () => { const t = title.trim(); if (!t) return; patch({ items: [{ id: uid(), title: t, desc: "", status: "Ideas", created: todayISO(), due: null }, ...content.items] }); setTitle(""); };
+  const add = () => { const t = title.trim(); if (!t) return; patch({ items: [{ id: uid(), title: t, desc: "", status: "Ideas", created: todayISO(), due: null, filmed: false }, ...content.items] }); setTitle(""); };
   const move = (id, dir) => setData((d) => {
     const items = d.content.items.map((i) => { if (i.id !== id) return i; const next = CONTENT_COLS[Math.min(Math.max(CONTENT_COLS.indexOf(i.status) + dir, 0), CONTENT_COLS.length - 1)]; return { ...i, status: next }; });
     return { ...d, content: { ...d.content, items } };
@@ -1812,9 +1812,16 @@ function ContentModule({ data, setData, q }) {
                   <div key={i.id} className="rounded-lg" style={{ background: "rgba(255,255,255,0.035)", border: `1px solid ${LINE}`, borderLeft: `2px solid ${CONTENT_TINT[col]}`, borderRadius: 10, padding: "11px 13px" }}>
                     <InlineEdit value={i.title} onChange={(v) => updateItem(i.id, { title: v })} strong />
                     <ScriptBox value={i.desc || ""} isHtml={!!i.descHtml} open={descOpen} onFocus={() => openIfNot(i.id)} onChange={(v) => updateItem(i.id, { desc: v, descHtml: true })} onToggle={() => setOpenDesc((o) => ({ ...o, [i.id]: !descOpen }))} />
-                    <div className="flex items-center gap-2 mt-1.5 flex-wrap" style={{ fontSize: 10.5 }}>
-                      <input type="date" value={i.due || ""} onChange={(e) => updateItem(i.id, { due: e.target.value || null })} className="rounded-md" style={{ ...darkInput, fontSize: 10.5, padding: "3px 5px" }} aria-label="Deadline (optional)" title="Deadline (optional) — auto-sets priority, pulls this idea's title onto the main hub" />
-                      <DueChip due={i.due} />
+                    <div className="flex items-center gap-2 mt-1.5 flex-wrap" style={{ fontSize: 10.5, opacity: i.filmed ? 0.55 : 1 }}>
+                      <input type="date" value={i.due || ""} disabled={!!i.filmed} onChange={(e) => updateItem(i.id, { due: e.target.value || null })} className="rounded-md" style={{ ...darkInput, fontSize: 10.5, padding: "3px 5px", cursor: i.filmed ? "not-allowed" : "text" }} aria-label="Deadline (optional)" title="Deadline (optional) — auto-sets priority, pulls this idea's title onto the main hub" />
+                      {!i.filmed && <DueChip due={i.due} />}
+                      <button
+                        onClick={() => updateItem(i.id, { filmed: true })}
+                        onDoubleClick={() => updateItem(i.id, { filmed: false })}
+                        className="rounded-full px-2 py-0.5" style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: "0.03em", cursor: "pointer", fontFamily: "inherit", background: i.filmed ? `${C.mint}22` : FILL, border: `1px solid ${i.filmed ? C.mint : LINE}`, color: i.filmed ? C.mint : MUT }}
+                        title={i.filmed ? "Deadline turned off — double-click to turn it back on" : "Mark filmed — turns off this idea's deadline/priority until you double-click it back on"}>
+                        {i.filmed ? "✓ FILMED" : "FILMED"}
+                      </button>
                     </div>
                     <div className="flex items-center gap-1 mt-1.5"><span className="ml-auto flex gap-1">
                       {col !== "Idea" && <button onClick={() => move(i.id, -1)} style={{ ...iconBtn, padding: 2 }} aria-label="Back">←</button>}
