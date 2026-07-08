@@ -566,11 +566,11 @@ function collectPriorityTasks(ally, mama) {
     priority: d.priority || "Medium", lastProgress: d.lastProgress || null, created: d.created || null,
   }));
   ally.deals.deals.forEach((d) => (d.tasks || []).filter((t) => !t.done && !t.paused).forEach((t) => out.push({
-    id: t.id, pillar: "deals", title: `${t.title} (${d.brand})`, due: t.due || null,
+    id: t.id, pillar: "deals", title: `${t.title} (${d.brand})`, due: t.due || null, ownerId: d.id, sourceSub: "deal",
     priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
   })));
   ally.deals.clients.forEach((c) => (c.tasks || []).filter((t) => !t.done && !t.paused).forEach((t) => out.push({
-    id: t.id, pillar: "deals", title: `${t.title} (${c.name})`, due: t.due || null,
+    id: t.id, pillar: "deals", title: `${t.title} (${c.name})`, due: t.due || null, ownerId: c.id, sourceSub: "client",
     priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
   })));
   mama.tasks.filter((t) => t.status !== "Done" && !t.paused).forEach((t) => out.push({
@@ -1312,13 +1312,19 @@ function flashTaskElement(id, attempts = 18) {
   setTimeout(() => el.classList.remove("task-jump-flash"), 1800);
 }
 
+function dispatchTaskNavigation(detail, delays = [120, 320, 650]) {
+  window.__allyPendingTask = detail;
+  delays.forEach((ms) => setTimeout(() => {
+    window.dispatchEvent(new CustomEvent("ally:navigate-task", { detail }));
+    flashTaskElement(detail.taskId);
+  }, ms));
+}
+
 function navigateToTask(go, tab, id, detail = {}) {
-  if (tab === "mama") {
-    window.__allyPendingTask = { ...detail, taskId: id };
-    window.dispatchEvent(new CustomEvent("ally:navigate-task", { detail: window.__allyPendingTask }));
-  }
+  const nav = { ...detail, tab, taskId: id };
+  window.__allyPendingTask = nav;
   go(tab);
-  setTimeout(() => flashTaskElement(id), 180);
+  dispatchTaskNavigation(nav);
 }
 
 function completePillarItem(setAlly, setMama, pillar, id) {
@@ -2372,6 +2378,18 @@ function ClientCard({ c, updateClient, removeClient }) {
 
 function DealsModule({ data, setData, q }) {
   const [openId, setOpenId] = useState(null);
+  useEffect(() => {
+    const handler = (e) => {
+      const d = e.detail || {};
+      if (d.tab !== "deals") return;
+      const ownerDeal = d.ownerId || ((data.deals.deals || []).find((deal) => (deal.tasks || []).some((t) => t.id === d.taskId)) || {}).id;
+      if (ownerDeal) setOpenId(ownerDeal);
+      setTimeout(() => flashTaskElement(d.taskId), 220);
+    };
+    window.addEventListener("ally:navigate-task", handler);
+    if (window.__allyPendingTask) handler({ detail: window.__allyPendingTask });
+    return () => window.removeEventListener("ally:navigate-task", handler);
+  }, [data.deals.deals]);
   const deals = data.deals.deals, clients = data.deals.clients;
   const ql = (q || "").toLowerCase();
   const patch = (p) => setData((d) => ({ ...d, deals: { ...d.deals, ...p } }));
@@ -2505,7 +2523,7 @@ function MamaTaskDashboard({ data, setData, setSub }) {
       <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))" }}>
         {ranked.map((b) => (
           <MamaTaskRing key={b.key} label={b.label} emoji={b.emoji} accent={b.accent} tasks={b.tasks} rank={rankOf[b.key]} pct={fillPct[b.key]}
-            onNavigate={() => setSub(b.sub)} onTaskClick={(t) => { const detail = { taskId: t.id, sub: t.sourceSub || b.sub, ownerId: t.ownerId }; window.__allyPendingTask = detail; setSub(detail.sub); window.dispatchEvent(new CustomEvent("ally:navigate-task", { detail })); setTimeout(() => flashTaskElement(t.id), 220); }} onCompleteTask={(id) => updateByBucket[b.key](id, b.key === "adminTasksBucket" ? { status: "Done", doneAt: Date.now() } : { done: true, doneAt: Date.now() })} onDropPriority={(id, priority) => updateByBucket[b.key](id, { priority })} />
+            onNavigate={() => setSub(b.sub)} onTaskClick={(t) => { const detail = { taskId: t.id, sub: t.sourceSub || b.sub, ownerId: t.ownerId, tab: "mama" }; window.__allyPendingTask = detail; setSub(detail.sub); dispatchTaskNavigation(detail, [120, 300, 620]); }} onCompleteTask={(id) => updateByBucket[b.key](id, b.key === "adminTasksBucket" ? { status: "Done", doneAt: Date.now() } : { done: true, doneAt: Date.now() })} onDropPriority={(id, priority) => updateByBucket[b.key](id, { priority })} />
         ))}
       </div>
     </section>
@@ -2747,7 +2765,7 @@ function Tools({ data, setData }) {
       <SectionHead title="AI Team tools" sub="Small single-file tools solving small Amplified problems. One card per tool." action={<AddBtn onClick={add} label="Add tool" />} />
       <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
         {data.tools.map((t) => (
-          <div key={t.id} className="rounded-2xl p-4 flex flex-col gap-3" style={{ ...card, borderRadius: 16 }}>
+          <div key={t.id} data-task-id={t.id} className="rounded-2xl p-4 flex flex-col gap-3" style={{ ...card, borderRadius: 16 }}>
             <div className="flex items-start justify-between gap-2"><InlineEdit value={t.name} onChange={(v) => update(t.id, { name: v })} strong /><button onClick={() => remove(t.id)} style={iconBtn} aria-label="Delete"><Trash2 size={13} /></button></div>
             <div className="flex gap-1">{TOOL_STAGES.map((s) => (<button key={s} onClick={() => update(t.id, { status: s })} className="rounded-full px-3 py-1 flex-1" style={{ fontSize: 11, cursor: "pointer", fontFamily: "inherit", background: t.status === s ? `${ST[s]}22` : FILL, border: `1px solid ${t.status === s ? ST[s] : LINE}`, color: t.status === s ? ST[s] : MUT }}>{s}</button>))}</div>
             <div><Label text="Description" /><AutoTextarea value={t.problem} onChange={(v) => update(t.id, { problem: v })} placeholder="What does this tool do?" /></div>
@@ -2778,7 +2796,7 @@ function Reports({ data, setData }) {
         </div>
         <div className="flex-1 flex flex-col gap-3" style={{ minWidth: 280 }}>
           {data.reports.map((r) => { const done = r.done.includes(mk); const overdue = !done && today > r.dueDay; return (
-            <div key={r.id} className="rounded-2xl p-4" style={{ ...card, borderRadius: 16, borderLeft: `3px solid ${done ? C.mint : overdue ? C.rose : C.amber}` }}>
+            <div key={r.id} data-task-id={r.id} className="rounded-2xl p-4" style={{ ...card, borderRadius: 16, borderLeft: `3px solid ${done ? C.mint : overdue ? C.rose : C.amber}` }}>
               <div className="flex items-center gap-3 flex-wrap">
                 <button onClick={() => toggle(r.id)} aria-label="Toggle done" style={{ width: 26, height: 26, borderRadius: 9, cursor: "pointer", flexShrink: 0, background: done ? C.mint : C.card, border: `1px solid ${done ? C.mint : LINE}`, display: "flex", alignItems: "center", justifyContent: "center" }}>{done && <Check size={15} color="#fff" strokeWidth={3} />}</button>
                 <div className="flex-1 min-w-0"><InlineEdit value={r.name} onChange={(v) => update(r.id, { name: v })} strong /><div style={{ fontSize: 12, color: overdue ? C.rose : MUT }}>Due day <input type="number" min="1" max="31" value={r.dueDay} onChange={(e) => update(r.id, { dueDay: Math.min(31, Math.max(1, Number(e.target.value) || 1)) })} style={{ ...inputStyle, width: 50, padding: "1px 6px", borderRadius: 6, fontSize: 12, display: "inline-block" }} /> each month{overdue && " · overdue"}{done && ` · done`}</div></div>
