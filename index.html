@@ -515,11 +515,20 @@ function computeContentUrgency(content) {
 function collectPriorityTasks(ally, mama) {
   const out = [];
   {
+    /* the pillar-wide days-since-last-post signal (computeContentUrgency) still governs the
+       Content ring on the main hub untouched — nothing below affects it. Individual ideas can now
+       optionally carry their own deadline though, and once one is set that item is scored like
+       every other pillar's tasks (the trailing computeUrgency pass at the bottom of this function
+       handles it, same as deals/song/mama/unlocks below — it's skipped only for _preScored items).
+       Ideas with no deadline keep inheriting the shared pillar-wide score exactly as before. */
     const cu = computeContentUrgency(ally.content);
-    ally.content.items.forEach((i) => out.push({
-      id: i.id, pillar: "content", title: i.title, due: null, lastProgress: null, created: i.created || null,
-      score: cu.score, bucket: cu.bucket, daysUntilDue: null, daysSinceProgress: null, _preScored: true,
-    }));
+    ally.content.items.forEach((i) => {
+      if (i.due) {
+        out.push({ id: i.id, pillar: "content", title: i.title, due: i.due, priority: "Medium", lastProgress: null, created: i.created || null });
+      } else {
+        out.push({ id: i.id, pillar: "content", title: i.title, due: null, lastProgress: null, created: i.created || null, score: cu.score, bucket: cu.bucket, daysUntilDue: null, daysSinceProgress: null, _preScored: true });
+      }
+    });
   }
   {
     const songCurrentIdx = ally.song.stages.findIndex((s) => s.status !== "done");
@@ -1318,6 +1327,10 @@ function ContentPillarCard({ content, go, rank, pct }) {
   const critical = pct > 100;
   const pipelineCols = ["In Edit", "To Film", "Ideas"];
   const counts = Object.fromEntries(pipelineCols.map((c) => [c, content.items.filter((i) => i.status === c).length]));
+  /* individual ideas with their own deadline surface here by title only (never the script/desc
+     box), same "title pulls through, description doesn't" rule every other pillar follows. The
+     ring above stays purely days-since-post driven regardless of what's in this list. */
+  const dated = content.items.filter((i) => i.due).sort((a, b) => daysUntil(a.due) - daysUntil(b.due)).slice(0, 3);
   return (
     <div onClick={() => go("content")} className="rounded-2xl p-5" style={{ ...card, borderRadius: 18, borderLeft: `4px solid ${mod.accent}`, cursor: "pointer" }}>
       <div className="flex items-center justify-between mb-3">
@@ -1341,6 +1354,17 @@ function ContentPillarCard({ content, go, rank, pct }) {
           </div>
         ))}
       </div>
+      {dated.length > 0 && (
+        <div className="flex flex-col gap-1.5 mt-3 pt-3" style={{ borderTop: `1px solid ${LINE}` }}>
+          <div style={{ fontSize: 10, letterSpacing: "0.06em", textTransform: "uppercase", color: MUT }}>Upcoming deadlines</div>
+          {dated.map((i) => (
+            <div key={i.id} className="flex items-center justify-between gap-2" style={{ fontSize: 12 }}>
+              <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{i.title}</span>
+              <DueChip due={i.due} />
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -1720,7 +1744,7 @@ function ContentModule({ data, setData, q }) {
   const openIfNot = (id) => setOpenDesc((o) => (o[id] ? o : { ...o, [id]: true }));
   const patch = (p) => setData((d) => ({ ...d, content: { ...d.content, ...p } }));
   const ql = (q || "").toLowerCase();
-  const add = () => { const t = title.trim(); if (!t) return; patch({ items: [{ id: uid(), title: t, desc: "", status: "Ideas", created: todayISO() }, ...content.items] }); setTitle(""); };
+  const add = () => { const t = title.trim(); if (!t) return; patch({ items: [{ id: uid(), title: t, desc: "", status: "Ideas", created: todayISO(), due: null }, ...content.items] }); setTitle(""); };
   const move = (id, dir) => setData((d) => {
     const items = d.content.items.map((i) => { if (i.id !== id) return i; const next = CONTENT_COLS[Math.min(Math.max(CONTENT_COLS.indexOf(i.status) + dir, 0), CONTENT_COLS.length - 1)]; return { ...i, status: next }; });
     return { ...d, content: { ...d.content, items } };
@@ -1778,6 +1802,10 @@ function ContentModule({ data, setData, q }) {
                   <div key={i.id} className="rounded-lg" style={{ background: "rgba(255,255,255,0.035)", border: `1px solid ${LINE}`, borderLeft: `2px solid ${CONTENT_TINT[col]}`, borderRadius: 10, padding: "11px 13px" }}>
                     <InlineEdit value={i.title} onChange={(v) => updateItem(i.id, { title: v })} strong />
                     <ScriptBox value={i.desc || ""} isHtml={!!i.descHtml} open={!!openDesc[i.id]} onFocus={() => openIfNot(i.id)} onChange={(v) => updateItem(i.id, { desc: v, descHtml: true })} onToggle={() => toggleDesc(i.id)} />
+                    <div className="flex items-center gap-2 mt-1.5 flex-wrap" style={{ fontSize: 10.5 }}>
+                      <input type="date" value={i.due || ""} onChange={(e) => updateItem(i.id, { due: e.target.value || null })} className="rounded-md" style={{ ...darkInput, fontSize: 10.5, padding: "3px 5px" }} aria-label="Deadline (optional)" title="Deadline (optional) — auto-sets priority, pulls this idea's title onto the main hub" />
+                      <DueChip due={i.due} />
+                    </div>
                     <div className="flex items-center gap-1 mt-1.5"><span className="ml-auto flex gap-1">
                       {col !== "Idea" && <button onClick={() => move(i.id, -1)} style={{ ...iconBtn, padding: 2 }} aria-label="Back">←</button>}
                       {col === "In Edit"
@@ -2240,7 +2268,7 @@ function ClientCard({ c, updateClient, removeClient }) {
       <div className="flex gap-1 mt-2">{CLIENT_STATUSES.map((s) => (
         <button key={s} onClick={() => updateClient(c.id, { status: s })} className="rounded-full px-3 py-1 flex-1" style={{ fontSize: 11, cursor: "pointer", fontFamily: "inherit", background: c.status === s ? `${CLIENT_TINT[s]}22` : FILL, border: `1px solid ${c.status === s ? CLIENT_TINT[s] : LINE}`, color: c.status === s ? CLIENT_TINT[s] : MUT }}>{s}</button>
       ))}</div>
-      <div className="mt-2"><InlineEdit value={c.notes} onChange={(v) => updateClient(c.id, { notes: v })} placeholder="Notes…" dim /></div>
+      <div className="mt-2"><AutoTextarea value={c.notes} onChange={(v) => updateClient(c.id, { notes: v })} placeholder="Notes…" /></div>
       <div className="mt-3">
         <Label text="Tasks" />
         <MiniTaskList tasks={c.tasks} onChange={(tasks) => updateClient(c.id, { tasks })} />
@@ -2689,7 +2717,34 @@ function InlineEdit({ value, onChange, placeholder, strong, dim }) {
     </div>
   );
 }
-function AutoTextarea({ value, onChange, placeholder }) { return <textarea value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} rows={2} className="w-full rounded-lg px-3 py-2 resize-none" style={{ ...inputStyle, lineHeight: 1.45 }} />; }
+/* free-text description box used across Deals (caption/instructions/notes) and AI Tools
+   (description) — auto-grows to fit whatever is typed or pasted in, including a big pasted
+   paragraph, instead of staying pinned to a tiny fixed height. A manual collapse/expand toggle
+   appears once there's enough text to be worth tucking away, so a long note doesn't have to
+   dominate the card once you're done editing it. */
+function AutoTextarea({ value, onChange, placeholder }) {
+  const [collapsed, setCollapsed] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!ref.current || collapsed) return;
+    ref.current.style.height = "auto";
+    ref.current.style.height = ref.current.scrollHeight + "px";
+  }, [value, collapsed]);
+  const long = (value || "").length > 120 || (value || "").includes("\n");
+  return (
+    <div>
+      <textarea ref={ref} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
+        rows={2} className="w-full rounded-lg px-3 py-2"
+        style={{ ...inputStyle, lineHeight: 1.45, resize: "vertical", overflow: collapsed ? "hidden" : "auto", maxHeight: collapsed ? 52 : "none" }} />
+      {long && (
+        <button onClick={() => setCollapsed((v) => !v)} className="flex items-center gap-1 mt-1" style={{ ...iconBtn, padding: 0, fontSize: 10, color: FAINT }}>
+          {collapsed ? <ChevronDown size={10} /> : <ChevronUp size={10} />}
+          <span>{collapsed ? "Expand" : "Collapse"}</span>
+        </button>
+      )}
+    </div>
+  );
+}
 
 ReactDOM.createRoot(document.getElementById("root")).render(<AllyCRM />);
 </script>
