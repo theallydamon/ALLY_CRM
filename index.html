@@ -23,13 +23,13 @@ html,body,#root{height:100%;margin:0;background:#0B0B0D;}
 /* dashboard task navigation: brief flash on whatever element scrollAndHighlight() scrolls to,
    so a click on a Priorities/Mama dashboard task chip reads clearly as "here it is" once the
    page lands on the source item. Pure CSS animation on a transient class toggled from JS —
-   no React state involved, so it can't be fought by a stray re-render mid-flash. */
+   no React state involved, so it can't be fought by a stray re-render mid-flash. Blinks on/off
+   four times over 2s rather than a single fade, so it reads unmistakably as "this one". */
 @keyframes navFlash {
-  0% { box-shadow: 0 0 0 0 rgba(123,103,224,0); background-color: rgba(123,103,224,0); }
-  12% { box-shadow: 0 0 0 3px rgba(123,103,224,0.9); background-color: rgba(123,103,224,0.16); }
-  100% { box-shadow: 0 0 0 3px rgba(123,103,224,0); background-color: rgba(123,103,224,0); }
+  0%, 25%, 50%, 75%, 100% { box-shadow: 0 0 0 0 rgba(123,103,224,0); background-color: rgba(123,103,224,0); }
+  12.5%, 37.5%, 62.5%, 87.5% { box-shadow: 0 0 0 3px rgba(123,103,224,0.9); background-color: rgba(123,103,224,0.18); }
 }
-.nav-highlight { animation: navFlash 1s ease; border-radius: 12px; }
+.nav-highlight { animation: navFlash 2s steps(1, end); border-radius: 12px; }
 </style>
 </head>
 <body>
@@ -1385,7 +1385,7 @@ function completePriorityTask(setAlly, setMama, task) {
 }
 
 /* finds the DOM node a dashboard task points at (every source render tags its own task's root
-   element with data-nav-id={id}) and scrolls it into view + gives it a ~1s highlight flash, then
+   element with data-nav-id={id}) and scrolls it into view + gives it a ~2s blinking highlight, then
    removes the flash class. Retries for a bit because the target tab/subtab/expand-card usually
    still needs one or two renders to mount after navigateToTask fires (tab switch -> module mounts
    -> its own effect flips a subtab/openId -> that renders the actual element) — polling sidesteps
@@ -1396,7 +1396,7 @@ function scrollAndHighlight(id, attempts) {
   if (el) {
     el.scrollIntoView({ behavior: "smooth", block: "center" });
     el.classList.add("nav-highlight");
-    setTimeout(() => el.classList.remove("nav-highlight"), 1000);
+    setTimeout(() => el.classList.remove("nav-highlight"), 2000);
     return;
   }
   if (attempts > 0) setTimeout(() => scrollAndHighlight(id, attempts - 1), 60);
