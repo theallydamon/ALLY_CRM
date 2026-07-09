@@ -1909,6 +1909,7 @@ function ContentModule({ data, setData, q }) {
   const h = contentHealth(content);
   const [title, setTitle] = useState("");
   const [openDesc, setOpenDesc] = useState({});
+  const [showArchive, setShowArchive] = useState(false);
   const openIfNot = (id) => setOpenDesc((o) => (o[id] ? o : { ...o, [id]: true }));
   const patch = (p) => setData((d) => ({ ...d, content: { ...d.content, ...p } }));
   const ql = (q || "").toLowerCase();
@@ -1919,8 +1920,15 @@ function ContentModule({ data, setData, q }) {
   });
   const remove = (id) => patch({ items: content.items.filter((i) => i.id !== id) });
   const updateItem = (id, p) => patch({ items: content.items.map((i) => (i.id === id ? { ...i, ...p } : i)) });
-  const markPosted = (id) => patch({ items: content.items.filter((i) => i.id !== id), lastPosted: todayISO() });
+  /* used to filter the item straight out of `items` — same as a permanent delete, just with no
+     confirmation and no way back, since nothing ever set status to "Posted" for it to land in an
+     archive. Now it archives (status: "Posted") like the rest of this file already assumed it did
+     (see the dead "Clear posted archive" button below, which checked for status === "Posted" that
+     could never actually occur). */
+  const markPosted = (id) => { updateItem(id, { status: "Posted", postedAt: todayISO() }); patch({ lastPosted: todayISO() }); };
+  const restorePosted = (id) => updateItem(id, { status: "To Edit" });
   const clearPosted = () => patch({ items: content.items.filter((i) => i.status !== "Posted") });
+  const postedItems = content.items.filter((i) => i.status === "Posted").sort((a, b) => (b.postedAt || "").localeCompare(a.postedAt || ""));
   const donutSegs = CONTENT_COLS.map((s) => ({ value: h.counts[s], color: CONTENT_TINT[s], label: s }));
   const donutTotal = donutSegs.reduce((s, x) => s + x.value, 0);
 
@@ -2002,7 +2010,27 @@ function ContentModule({ data, setData, q }) {
           );
         })}
       </div>
-      {content.items.some((i) => i.status === "Posted") && <button onClick={clearPosted} className="mt-3" style={{ ...iconBtn, fontSize: 11.5 }}>Clear posted archive</button>}
+      {postedItems.length > 0 && (
+        <div className="mt-3">
+          <button onClick={() => setShowArchive((v) => !v)} className="flex items-center gap-1" style={{ ...iconBtn, fontSize: 11.5 }}>
+            {showArchive ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+            <span>{showArchive ? "Hide" : "Show"} posted archive ({postedItems.length})</span>
+          </button>
+          {showArchive && (
+            <div className="flex flex-col gap-2 mt-2">
+              {postedItems.map((i) => (
+                <div key={i.id} className="flex items-center gap-2 rounded-lg px-3 py-2" style={{ background: C.canvas, border: `1px solid ${LINE}`, fontSize: 12.5 }}>
+                  <span className="flex-1 min-w-0" style={{ color: MUT }}>{i.title}</span>
+                  {i.postedAt && <span style={{ fontSize: 10.5, color: FAINT }}>{i.postedAt}</span>}
+                  <button onClick={() => restorePosted(i.id)} style={{ ...iconBtn, padding: 2 }} aria-label="Restore to To Edit" title="Restore to To Edit">↺</button>
+                  <button onClick={() => remove(i.id)} style={{ ...iconBtn, padding: 2 }} aria-label="Delete permanently" title="Delete permanently"><X size={11} /></button>
+                </div>
+              ))}
+              <button onClick={clearPosted} className="self-start" style={{ ...iconBtn, fontSize: 11 }}>Clear entire archive</button>
+            </div>
+          )}
+        </div>
+      )}
     </section>
   );
 }
