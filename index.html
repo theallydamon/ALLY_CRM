@@ -417,15 +417,15 @@ const monthName = () => new Date().toLocaleDateString("en-ZA", { month: "long" }
 const isApartmentUnlocked = (ally) => !!ally.apartment.unlockedOverride || ally.unlocks.chains.some((ch) => ch.nodes.some((n) => /move\s*in/i.test(n.label) && n.status === "done"));
 
 /* ---------- pipeline constants ---------- */
-const CONTENT_COLS = ["Ideas", "To Film", "In Edit"];
-const CONTENT_TINT = { Ideas: C.lilac, "To Film": C.amber, "In Edit": C.mint, Posted: FAINT };
+const CONTENT_COLS = ["Ideas", "To Film", "To Edit"];
+const CONTENT_TINT = { Ideas: C.lilac, "To Film": C.amber, "To Edit": C.mint, Posted: FAINT };
 
-/* one-time migration: content items saved under the old Scripted/Filmed/Edited status names get
-   remapped to the current Ideas/To Film/In Edit names, so the label shown on screen always matches
+/* one-time migration: content items saved under the old Scripted/Filmed/Edited/In Edit status names
+   get remapped to the current Ideas/To Film/To Edit names, so the label shown on screen always matches
    the value actually stored (a stale mismatch here caused a real crash before, see Unlocks). Applied
    to both the localStorage load path and the Firestore reconcile path below, since either can hand
    back older data. */
-const CONTENT_STATUS_MIGRATE = { Scripted: "Ideas", Filmed: "To Film", Edited: "In Edit" };
+const CONTENT_STATUS_MIGRATE = { Scripted: "Ideas", Filmed: "To Film", Edited: "To Edit", "In Edit": "To Edit" };
 function migrateAlly(a) {
   if (!a) return a;
   let out = a;
@@ -516,7 +516,7 @@ function computeUrgency(item) {
 /* content's ring has two stacked weightings, not just one. The base signal is still the whole
    pillar's days-since-last-post, full stop — 1 day since post = 33% full, 3 days = 100%, and it
    keeps climbing past that into an overflow/critical state if you let it run, exactly as before.
-   It still does not care what's sitting in the pipeline (Ideas/To Film/In Edit are for your own
+   It still does not care what's sitting in the pipeline (Ideas/To Film/To Edit are for your own
    tracking only). On top of that base, though, any individual idea that's due today or overdue
    adds the same "High priority" weighting (PRIORITY_BASE_PCT.High, 20%) used everywhere else in
    the app, once per dated idea — this is additive (summed), not the max()-picks-one-signal rule
@@ -528,7 +528,16 @@ function computeUrgency(item) {
 function computeContentUrgency(content) {
   const since = daysSince(content.lastPosted);
   const basePct = since === null ? 40 : since * 33;
-  const dueTodayBonus = (content.items || []).filter((i) => i.due && !i.filmed && daysUntil(i.due) <= 0).length * PRIORITY_BASE_PCT.High;
+  /* same escalation as taskFillPercent: a dated idea due today contributes the flat High bonus
+     (25%) same as before, then adds another 25% for every additional day it sits overdue instead
+     of staying flat forever once it slips past today. */
+  const dueTodayBonus = (content.items || []).reduce((sum, i) => {
+    if (!i.due || i.filmed) return sum;
+    const dU = daysUntil(i.due);
+    if (dU > 0) return sum;
+    const overdueDays = dU < 0 ? -dU : 0;
+    return sum + PRIORITY_BASE_PCT.High + overdueDays * PRIORITY_BASE_PCT.High;
+  }, 0);
   const pct = basePct + dueTodayBonus;
   const bucket = pct > 80 ? "Urgent" : pct >= 40 ? "Medium" : "Low";
   const score = Math.round((1 + (Math.min(pct, 100) / 100) * 5) * 10) / 10;
@@ -644,8 +653,17 @@ function urgencyTint(pct) {
    (it's meant to look like "more than a full day"), it just takes a lot more piled up to get there
    now instead of two or three items alone doing it. */
 const PRIORITY_BASE_PCT = { Low: 10, Medium: 15, High: 25 };
+/* once something is actually overdue (not just due today), it keeps escalating: +25 percentage
+   points for every extra day past its due date, stacked on top of the flat priority contribution
+   above. So a High-priority task due today still reads as 25%, same as always, but let it slip to
+   1 day overdue and it jumps to 50%, 2 days overdue is 75%, and so on — neglect keeps compounding
+   rather than sitting flat, which is the whole point of a ring that's allowed to overflow past
+   100%. daysUntilDue comes from computeUrgency (or is pre-set to null for content's _preScored
+   pipeline-only ideas), so this only fires for tasks that actually carry a due date. */
 function taskFillPercent(t) {
-  return PRIORITY_BASE_PCT[t.priority] || PRIORITY_BASE_PCT.Medium;
+  const base = PRIORITY_BASE_PCT[t.priority] || PRIORITY_BASE_PCT.Medium;
+  const overdueDays = t.daysUntilDue != null && t.daysUntilDue < 0 ? -t.daysUntilDue : 0;
+  return base + overdueDays * PRIORITY_BASE_PCT.High;
 }
 function computePillarFillPercent(tasks) {
   return tasks.reduce((s, t) => s + taskFillPercent(t), 0);
@@ -1304,7 +1322,7 @@ function AllyCRM() {
 function contentHealth(content) {
   const since = daysSince(content.lastPosted);
   const counts = Object.fromEntries(CONTENT_COLS.map((c) => [c, content.items.filter((i) => i.status === c).length]));
-  const ready = counts["In Edit"];
+  const ready = counts["To Edit"];
   let tint = C.mint, msg = "On track. Keep the machine fed.";
   if (since === null) { tint = C.sky; msg = "Log when you last posted to start the runway clock."; }
   else if (since >= content.cadence && ready === 0) { tint = C.rose; msg = "Post overdue and nothing edited. Film or edit today."; }
@@ -1464,13 +1482,13 @@ function ContentPillarCard({ content, go, rank, pct }) {
   const since = daysSince(content.lastPosted);
   const tint = urgencyTint(pct);
   const critical = pct > 100;
-  const pipelineCols = ["In Edit", "To Film", "Ideas"];
+  const pipelineCols = ["To Edit", "To Film", "Ideas"];
   const counts = Object.fromEntries(pipelineCols.map((c) => [c, content.items.filter((i) => i.status === c).length]));
-  /* individual ideas with their own deadline surface here by title only (never the script/desc
-     box), same "title pulls through, description doesn't" rule every other pillar follows. The
-     ring above stays purely days-since-post driven regardless of what's in this list. */
-  const filmDated = content.items.filter((i) => i.due && !i.filmed).sort((a, b) => daysUntil(a.due) - daysUntil(b.due)).slice(0, 3);
-       const editDated = content.items.filter((i) => i.status === "In Edit" && i.editDue).sort((a, b) => daysUntil(a.editDue) - daysUntil(b.editDue)).slice(0, 3);
+  /* two separate deadline feeds so filming deadlines and editing deadlines stay visually apart —
+     title pulls through by title only (never the script/desc box), same rule every other pillar
+     follows. The ring above stays purely days-since-post driven regardless of what's in either list. */
+  const toFilmDated = content.items.filter((i) => i.status === "To Film" && i.due && !i.filmed).sort((a, b) => daysUntil(a.due) - daysUntil(b.due)).slice(0, 3);
+  const toEditDated = content.items.filter((i) => i.status === "To Edit" && i.due).sort((a, b) => daysUntil(a.due) - daysUntil(b.due)).slice(0, 3);
   return (
     <div onClick={() => go("content")} className="rounded-2xl p-5" style={{ ...card, borderRadius: 18, borderLeft: `4px solid ${mod.accent}`, cursor: "pointer" }}>
       <div className="flex items-center justify-between mb-3">
@@ -1486,25 +1504,39 @@ function ContentPillarCard({ content, go, rank, pct }) {
         <div style={{ fontSize: 13.5, fontWeight: 600, color: tint, marginTop: 10 }}>{since === null ? "no post logged yet" : since === 1 ? "1 day since last post" : `${since} days since last post`}</div>
         {critical && <div style={{ fontSize: 10.5, fontWeight: 700, color: C.rose, marginTop: 3, letterSpacing: "0.03em" }}>⚠ CRITICAL — post overdue</div>}
       </div>
-			<div className="flex flex-col gap-1.5">
-            				<div style={{ fontSize: 10, letterSpacing: "0.06em", textTransform: "uppercase", color: CONTENT_TINT["To Film"] }}>To Film{filmDated.length > 0 ? ` (${filmDated.length})` : ""}</div>
-            {filmDated.length > 0 ? filmDated.map((i) => (
-       					<div key={i.id} className="flex items-center justify-between gap-2" style={{ fontSize: 12 }}>
-                        						<span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{i.title}</span>
-                        						<DueChip due={i.due} />
-                     </div>
-       				)) : <div style={{ fontSize: 12, color: FAINT }}>No filming deadlines set</div>}
-         </div>
-       			<div className="flex flex-col gap-1.5 mt-3 pt-3" style={{ borderTop: `1px solid ${LINE}` }}>
-                  				<div style={{ fontSize: 10, letterSpacing: "0.06em", textTransform: "uppercase", color: CONTENT_TINT["In Edit"] }}>To Edit{editDated.length > 0 ? ` (${editDated.length})` : ""}</div>
-                  {editDated.length > 0 ? editDated.map((i) => (
-       					<div key={i.id} className="flex items-center justify-between gap-2" style={{ fontSize: 12 }}>
-                        						<span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{i.title}</span>
-                        						<DueChip due={i.editDue} />
-                     </div>
-       				)) : <div style={{ fontSize: 12, color: FAINT }}>No edit deadlines set</div>}
-               </div>
+      <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+        {pipelineCols.map((c) => (
+          <div key={c} className="rounded-lg py-2 text-center" style={{ background: C.soft, border: `1px solid ${LINE}` }}>
+            <div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 19, color: CONTENT_TINT[c] }}>{counts[c]}</div>
+            <div style={{ fontSize: 9.5, letterSpacing: "0.04em", textTransform: "uppercase", color: MUT, marginTop: 2 }}>{c}</div>
+          </div>
+        ))}
       </div>
+      {(toFilmDated.length > 0 || toEditDated.length > 0) && (
+        <div className="grid gap-3 mt-3 pt-3" style={{ gridTemplateColumns: "1fr 1fr", borderTop: `1px solid ${LINE}` }}>
+          <div className="flex flex-col gap-1.5" style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 10, letterSpacing: "0.06em", textTransform: "uppercase", color: MUT }}>To Film</div>
+            {toFilmDated.map((i) => (
+              <div key={i.id} className="flex items-center justify-between gap-2" style={{ fontSize: 12 }}>
+                <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{i.title}</span>
+                <DueChip due={i.due} />
+              </div>
+            ))}
+            {toFilmDated.length === 0 && <div style={{ fontSize: 11.5, color: FAINT }}>—</div>}
+          </div>
+          <div className="flex flex-col gap-1.5" style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 10, letterSpacing: "0.06em", textTransform: "uppercase", color: MUT }}>To Edit</div>
+            {toEditDated.map((i) => (
+              <div key={i.id} className="flex items-center justify-between gap-2" style={{ fontSize: 12 }}>
+                <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{i.title}</span>
+                <DueChip due={i.due} />
+              </div>
+            ))}
+            {toEditDated.length === 0 && <div style={{ fontSize: 11.5, color: FAINT }}>—</div>}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1880,7 +1912,7 @@ function ContentModule({ data, setData, q }) {
   const openIfNot = (id) => setOpenDesc((o) => (o[id] ? o : { ...o, [id]: true }));
   const patch = (p) => setData((d) => ({ ...d, content: { ...d.content, ...p } }));
   const ql = (q || "").toLowerCase();
-  const add = () => { const t = title.trim(); if (!t) return; patch({ items: [{ id: uid(), title: t, desc: "", status: "Ideas", created: todayISO(), due: null, filmed: false, editDue: null }, ...content.items] }); setTitle(""); };
+  const add = () => { const t = title.trim(); if (!t) return; patch({ items: [{ id: uid(), title: t, desc: "", status: "Ideas", created: todayISO(), due: null, filmed: false }, ...content.items] }); setTitle(""); };
   const move = (id, dir) => setData((d) => {
     const items = d.content.items.map((i) => { if (i.id !== id) return i; const next = CONTENT_COLS[Math.min(Math.max(CONTENT_COLS.indexOf(i.status) + dir, 0), CONTENT_COLS.length - 1)]; return { ...i, status: next }; });
     return { ...d, content: { ...d.content, items } };
@@ -1944,8 +1976,8 @@ function ContentModule({ data, setData, q }) {
                     <InlineEdit value={i.title} onChange={(v) => updateItem(i.id, { title: v })} strong />
                     <ScriptBox value={i.desc || ""} isHtml={!!i.descHtml} open={descOpen} onFocus={() => openIfNot(i.id)} onChange={(v) => updateItem(i.id, { desc: v, descHtml: true })} onToggle={() => setOpenDesc((o) => ({ ...o, [i.id]: !descOpen }))} />
                     <div className="flex items-center gap-2 mt-1.5 flex-wrap" style={{ fontSize: 10.5, opacity: i.filmed ? 0.55 : 1 }}>
-                      <input type="date" value={i.due || ""} disabled={!!i.filmed} onChange={(e) => updateItem(i.id, { due: e.target.value || null })} className="rounded-md" style={{ ...darkInput, fontSize: 10.5, padding: "3px 5px", cursor: i.filmed ? "not-allowed" : "text" }} aria-label="Deadline (optional)" title="Deadline (optional) — auto-sets priority, pulls this idea's title onto the main hub" />
-                      {!i.filmed && <DueChip due={i.due} />}
+                      <input type="date" value={i.due || ""} disabled={i.filmed && col === "To Film"} onChange={(e) => updateItem(i.id, { due: e.target.value || null })} className="rounded-md" style={{ ...darkInput, fontSize: 10.5, padding: "3px 5px", cursor: i.filmed && col === "To Film" ? "not-allowed" : "text" }} aria-label="Deadline (optional)" title="Deadline (optional) — auto-sets priority, pulls this idea's title onto the main hub (To Film or To Edit column depending on where it sits)" />
+                      {(!i.filmed || col !== "To Film") && <DueChip due={i.due} />}
                       <button
                         onClick={() => updateItem(i.id, { filmed: true })}
                         onDoubleClick={() => updateItem(i.id, { filmed: false })}
@@ -1954,9 +1986,9 @@ function ContentModule({ data, setData, q }) {
                         {i.filmed ? "✓ FILMED" : "FILMED"}
                       </button>
                     </div>
-                    {col === "In Edit" && <div className="flex items-center gap-2 mt-1.5" style={{ fontSize: 10.5 }}><input type="date" value={i.editDue || ""} onChange={(e) => updateItem(i.id, { editDue: e.target.value || null })} className="rounded-md" style={{ ...darkInput, fontSize: 10.5, padding: "3px 5px" }} aria-label="Edit deadline" title="Edit deadline (separate from filming deadline)" /><DueChip due={i.editDue} /></div>}<div className="flex items-center gap-1 mt-1.5"><span className="ml-auto flex gap-1">
+                    <div className="flex items-center gap-1 mt-1.5"><span className="ml-auto flex gap-1">
                       {col !== "Idea" && <button onClick={() => move(i.id, -1)} style={{ ...iconBtn, padding: 2 }} aria-label="Back">←</button>}
-                      {col === "In Edit"
+                      {col === "To Edit"
                         ? <button onClick={() => markPosted(i.id)} className="rounded-full px-2.5 py-0.5" style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.03em", cursor: "pointer", fontFamily: "inherit", background: `${C.mint}22`, border: `1px solid ${C.mint}55`, color: C.mint }}>POSTED</button>
                         : <button onClick={() => move(i.id, 1)} style={{ ...iconBtn, padding: 2, color: C.mint }} aria-label="Forward">→</button>}
                       <button onClick={() => remove(i.id)} style={{ ...iconBtn, padding: 2 }} aria-label="Delete"><X size={11} /></button>
@@ -2307,7 +2339,10 @@ function LifeAdminModule({ data, setData, q }) {
                 {colItems.map((t) => (
                   <div key={t.id} data-nav-id={t.id} className="rounded-xl p-3" style={{ ...card, borderRadius: 12, borderLeft: `2px solid ${C.rose}` }}>
                     <div style={{ fontSize: 13.5, textDecoration: col === "Done" ? "line-through" : "none", opacity: col === "Done" ? 0.55 : 1 }}><InlineEdit value={t.title} onChange={(v) => update(t.id, { title: v })} /></div>
-                    <div style={{ fontSize: 11.5, color: MUT, marginTop: 2 }}><InlineEdit value={t.description || ""} onChange={(v) => update(t.id, { description: v })} placeholder="Add a description…" /></div>
+                    {/* AutoTextarea instead of InlineEdit here specifically — same auto-grow-on-paste
+                        behavior as the content tab's script box, so a long pasted description isn't
+                        squashed into a single-line input like the title above it. */}
+                    <div style={{ marginTop: 4 }}><AutoTextarea value={t.description || ""} onChange={(v) => update(t.id, { description: v })} placeholder="Add a description…" /></div>
                     <div className="flex items-center gap-2 mt-2 flex-wrap" style={{ fontSize: 11, color: MUT }}>
                       <span className="ml-auto flex gap-1">
                         {col !== "To do" && <button onClick={() => back(t.id)} style={iconBtn} aria-label="Back">←</button>}
@@ -2365,7 +2400,7 @@ function MiniTaskList({ tasks, onChange }) {
             <div className="flex-1 min-w-0" style={{ textDecoration: t.done ? "line-through" : "none" }}><InlineEdit value={t.title} onChange={(v) => update(t.id, { title: v })} /></div>
             <button onClick={() => remove(t.id)} style={{ ...iconBtn, padding: 2 }} aria-label="Delete"><X size={11} /></button>
           </div>
-          <div style={{ fontSize: 11, color: MUT, marginTop: 2, marginLeft: 26 }}><InlineEdit value={t.description || ""} onChange={(v) => update(t.id, { description: v })} placeholder="Add a description…" /></div>
+          <div style={{ fontSize: 11, color: MUT, marginTop: 2, marginLeft: 26 }}><InlineEditArea value={t.description || ""} onChange={(v) => update(t.id, { description: v })} placeholder="Add a description…" /></div>
           {!t.done && <PriorityControls item={t} onChange={(p) => update(t.id, p)} />}
         </div>
       ))}
@@ -2768,7 +2803,7 @@ function TaskCard({ t, col, onUpdate, onAdvance, onBack, onRemove }) {
   return (
     <div data-nav-id={t.id} className="rounded-xl p-3" style={{ ...card, borderRadius: 12, borderLeft: `2px solid ${tint}` }}>
       <div style={{ fontSize: 13.5, textDecoration: col === "Done" ? "line-through" : "none", opacity: col === "Done" ? 0.55 : 1 }}><InlineEdit value={t.title} onChange={(v) => onUpdate({ title: v })} /></div>
-      <div style={{ fontSize: 11.5, color: MUT, marginTop: 2 }}><InlineEdit value={t.description || ""} onChange={(v) => onUpdate({ description: v })} placeholder="Add a description…" /></div>
+      <div style={{ fontSize: 11.5, color: MUT, marginTop: 2 }}><InlineEditArea value={t.description || ""} onChange={(v) => onUpdate({ description: v })} placeholder="Add a description…" /></div>
       {!editing ? (
         <div className="flex items-center gap-2 mt-2 flex-wrap" style={{ fontSize: 11, color: MUT }}>
           <span style={{ color: tint }}>{t.source}</span>{t.link && <a href={t.link.startsWith("http") ? t.link : `https://${t.link}`} target="_blank" rel="noreferrer" style={{ color: C.sky }}><ExternalLink size={11} /></a>}
@@ -2888,6 +2923,46 @@ function InlineEdit({ value, onChange, placeholder, strong, dim }) {
         onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); commit(); } else if (e.key === "Escape") { e.preventDefault(); cancel(); } }}
         placeholder={placeholder || ""} className="w-full"
         style={{ ...sharedFont, background: "transparent", border: `1px solid ${C.lilac}`, borderRadius: 6, padding: "2px 4px", margin: "-2px -4px" }} />
+    );
+  }
+  return (
+    <div onDoubleClick={(e) => { e.stopPropagation(); setEditing(true); }} title="Double-click to edit" className="w-full"
+      style={{ ...sharedFont, color: value ? sharedFont.color : FAINT, border: "1px solid transparent", borderRadius: 6, padding: "2px 4px", margin: "-2px -4px", cursor: "text", minHeight: "1.3em", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+      {value || placeholder || ""}
+    </div>
+  );
+}
+/* same double-click-to-edit interaction as InlineEdit, but for fields that can hold a long,
+   multi-paragraph block of text (e.g. a task description someone pastes a whole script into).
+   InlineEdit's edit mode is a plain <input>, which can't show line breaks or wrap — a long paste
+   just scrolled off sideways as a single collapsed line even though the view mode (whiteSpace:
+   pre-wrap div) displayed it as full paragraphs. This swaps in an auto-growing textarea for the
+   edit state instead, so what you see while editing matches what you see once you commit. Enter
+   inserts a newline like a normal textarea; blur or Escape leaves edit mode (commit/cancel), and
+   Cmd/Ctrl+Enter commits explicitly without needing to click away. */
+function InlineEditArea({ value, onChange, placeholder, dim }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value || "");
+  const ref = useRef(null);
+  useEffect(() => { if (!editing) setDraft(value || ""); }, [value, editing]);
+  const resize = () => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = el.scrollHeight + "px";
+  };
+  useEffect(() => { if (editing && ref.current) { ref.current.focus(); ref.current.select(); resize(); } }, [editing]);
+  useLayoutEffect(() => { if (editing) resize(); }, [draft, editing]);
+  const commit = () => { setEditing(false); if (draft !== (value || "")) onChange(draft); };
+  const cancel = () => { setDraft(value || ""); setEditing(false); };
+  const sharedFont = { color: dim ? MUT : C.ink, fontSize: 13, fontWeight: 400, fontFamily: "'Outfit', sans-serif" };
+  if (editing) {
+    return (
+      <textarea ref={ref} value={draft} onChange={(e) => setDraft(e.target.value)} onInput={resize} onBlur={commit}
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); commit(); } else if (e.key === "Escape") { e.preventDefault(); cancel(); } }}
+        placeholder={placeholder || ""} rows={1} className="w-full"
+        style={{ ...sharedFont, background: "transparent", border: `1px solid ${C.lilac}`, borderRadius: 6, padding: "2px 4px", margin: "-2px -4px", resize: "none", overflow: "hidden", lineHeight: 1.4, whiteSpace: "pre-wrap", wordBreak: "break-word", boxSizing: "border-box" }} />
     );
   }
   return (
