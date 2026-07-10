@@ -1404,6 +1404,16 @@ function completePriorityTask(setAlly, setMama, task) {
     case "mamaTool":
       setMama((d) => ({ ...d, tools: d.tools.map((tl) => ((tl.tasks || []).some((t) => t.id === task.id) ? { ...tl, tasks: tl.tasks.map((t) => (t.id === task.id ? { ...t, done: true, doneAt: now } : t)) } : tl)) }));
       return;
+    /* content's two hub lists ("To Film" deadlines, "To Edit" deadlines) each have their own
+       "done" mechanism on the Content tab itself — filmed:true for the first, POSTED for the
+       second (which also resets lastPosted, exactly like clicking POSTED on the Content tab
+       itself does, so the ring reacts the same way whichever place you tick it off from). */
+    case "contentToFilm":
+      setAlly((d) => ({ ...d, content: { ...d.content, items: d.content.items.map((i) => (i.id === task.id ? { ...i, filmed: true } : i)) } }));
+      return;
+    case "contentToEdit":
+      setAlly((d) => ({ ...d, content: { ...d.content, items: d.content.items.map((i) => (i.id === task.id ? { ...i, status: "Posted", postedAt: todayISO() } : i)), lastPosted: todayISO() } }));
+      return;
     case "lifeAdmin":
       setAlly((d) => ({ ...d, lifeAdmin: { ...d.lifeAdmin, items: d.lifeAdmin.items.map((t) => (t.id === task.id ? { ...t, status: "Done", doneAt: now } : t)) } }));
       return;
@@ -1452,7 +1462,7 @@ function PriorityDashboard({ ally, mama, go, setAlly, setMama, navigateToTask, c
       <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))" }}>
         {ranked.map((k) => (
           k === "content"
-            ? <ContentPillarCard key={k} content={ally.content} go={go} rank={rankOf[k]} pct={fillPct[k]} />
+            ? <ContentPillarCard key={k} content={ally.content} go={go} rank={rankOf[k]} pct={fillPct[k]} onNavigate={navigateToTask} onComplete={completeTask} />
             : <PriorityPillarCard key={k} pillarKey={k} tasks={byPillar[k]} go={go} rank={rankOf[k]} onDropPriority={onDropPriority} pct={fillPct[k]} onNavigate={navigateToTask} onComplete={completeTask} />
         ))}
       </div>
@@ -1465,7 +1475,7 @@ const PRIORITY_COL_TINT = { Urgent: C.rose, Medium: C.amber, Low: C.sky };
 /* Content's card doesn't show Urgent/Medium/Low task columns like the other pillars — content has no
    individual priorities anymore, just one master signal (days since last post, entirely independent
    of the pipeline) rendered as its own fill ring, plus a glance at where ideas sit in the pipeline. */
-function ContentPillarCard({ content, go, rank, pct }) {
+function ContentPillarCard({ content, go, rank, pct, onNavigate, onComplete }) {
   const mod = MODULES.content;
   const since = daysSince(content.lastPosted);
   const tint = urgencyTint(pct);
@@ -1505,9 +1515,12 @@ function ContentPillarCard({ content, go, rank, pct }) {
           <div className="flex flex-col gap-1.5" style={{ minWidth: 0 }}>
             <div style={{ fontSize: 10, letterSpacing: "0.06em", textTransform: "uppercase", color: MUT }}>To Film</div>
             {toFilmDated.map((i) => (
-              <div key={i.id} className="flex items-center justify-between gap-2" style={{ fontSize: 12 }}>
-                <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{i.title}</span>
-                <DueChip due={i.due} />
+              <div key={i.id} onClick={(e) => e.stopPropagation()} className="flex items-center gap-1.5" style={{ fontSize: 12 }}>
+                <button onClick={(e) => { e.stopPropagation(); onComplete && onComplete({ id: i.id, sourceType: "contentToFilm" }); }} aria-label="Mark filmed" title="Mark filmed" style={{ width: 14, height: 14, borderRadius: 5, cursor: "pointer", flexShrink: 0, padding: 0, background: "transparent", border: `1px solid ${LINE}` }} />
+                <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, cursor: "pointer" }} onClick={(e) => { e.stopPropagation(); onNavigate && onNavigate({ id: i.id, navTab: "content" }); }}>
+                  <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{i.title}</span>
+                  <DueChip due={i.due} />
+                </div>
               </div>
             ))}
             {toFilmDated.length === 0 && <div style={{ fontSize: 11.5, color: FAINT }}>—</div>}
@@ -1515,9 +1528,12 @@ function ContentPillarCard({ content, go, rank, pct }) {
           <div className="flex flex-col gap-1.5" style={{ minWidth: 0 }}>
             <div style={{ fontSize: 10, letterSpacing: "0.06em", textTransform: "uppercase", color: MUT }}>To Edit</div>
             {toEditDated.map((i) => (
-              <div key={i.id} className="flex items-center justify-between gap-2" style={{ fontSize: 12 }}>
-                <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{i.title}</span>
-                <DueChip due={i.due} />
+              <div key={i.id} onClick={(e) => e.stopPropagation()} className="flex items-center gap-1.5" style={{ fontSize: 12 }}>
+                <button onClick={(e) => { e.stopPropagation(); onComplete && onComplete({ id: i.id, sourceType: "contentToEdit" }); }} aria-label="Mark posted" title="Mark posted" style={{ width: 14, height: 14, borderRadius: 5, cursor: "pointer", flexShrink: 0, padding: 0, background: "transparent", border: `1px solid ${LINE}` }} />
+                <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, cursor: "pointer" }} onClick={(e) => { e.stopPropagation(); onNavigate && onNavigate({ id: i.id, navTab: "content" }); }}>
+                  <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{i.title}</span>
+                  <DueChip due={i.due} />
+                </div>
               </div>
             ))}
             {toEditDated.length === 0 && <div style={{ fontSize: 11.5, color: FAINT }}>—</div>}
@@ -1975,7 +1991,7 @@ function ContentModule({ data, setData, q }) {
                   const descOpen = openDesc[i.id] !== undefined ? openDesc[i.id] : !!i.desc;
                   const toggleDesc = () => setOpenDesc((o) => ({ ...o, [i.id]: !descOpen }));
                   return (
-                  <div key={i.id} onClick={toggleDesc} className="rounded-lg" style={{ cursor: "pointer", background: "rgba(255,255,255,0.035)", border: `1px solid ${LINE}`, borderLeft: `2px solid ${CONTENT_TINT[col]}`, borderRadius: 10, padding: "11px 13px" }}>
+                  <div key={i.id} data-nav-id={i.id} onClick={toggleDesc} className="rounded-lg" style={{ cursor: "pointer", background: "rgba(255,255,255,0.035)", border: `1px solid ${LINE}`, borderLeft: `2px solid ${CONTENT_TINT[col]}`, borderRadius: 10, padding: "11px 13px" }}>
                     <InlineEdit value={i.title} onChange={(v) => updateItem(i.id, { title: v })} strong />
                     <ScriptBox value={i.desc || ""} isHtml={!!i.descHtml} open={descOpen} onFocus={() => openIfNot(i.id)} onChange={(v) => updateItem(i.id, { desc: v, descHtml: true })} onToggle={toggleDesc} />
                     <div className="flex items-center gap-2 mt-1.5 flex-wrap" style={{ fontSize: 10.5, opacity: i.filmed ? 0.55 : 1 }}>
