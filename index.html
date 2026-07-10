@@ -1920,7 +1920,15 @@ function ContentModule({ data, setData, q }) {
   const ql = (q || "").toLowerCase();
   const add = () => { const t = title.trim(); if (!t) return; patch({ items: [{ id: uid(), title: t, desc: description.trim(), status: "Ideas", created: todayISO(), due: null, filmed: false }, ...content.items] }); setTitle(""); setDescription(""); };
   const move = (id, dir) => setData((d) => {
-    const items = d.content.items.map((i) => { if (i.id !== id) return i; const next = CONTENT_COLS[Math.min(Math.max(CONTENT_COLS.indexOf(i.status) + dir, 0), CONTENT_COLS.length - 1)]; return { ...i, status: next }; });
+    const items = d.content.items.map((i) => {
+      if (i.id !== id) return i;
+      const next = CONTENT_COLS[Math.min(Math.max(CONTENT_COLS.indexOf(i.status) + dir, 0), CONTENT_COLS.length - 1)];
+      /* "To Film" and "To Edit" share the same single due-date field, so without this the filming
+         deadline just kept sitting there looking like an editing deadline once the idea moved on —
+         reset it the moment it lands on "To Edit" so it's a blank field ready for you to pick a
+         fresh edit-by date, instead of a stale filming date parading as one. */
+      return next === "To Edit" && i.status !== next ? { ...i, status: next, due: null } : { ...i, status: next };
+    });
     return { ...d, content: { ...d.content, items } };
   });
   const remove = (id) => patch({ items: content.items.filter((i) => i.id !== id) });
@@ -2417,8 +2425,11 @@ const DEAL_TYPE_TINT = { Active: C.mint, Prospect: C.sky };
    and feed straight into the Priorities dashboard via collectPriorityTasks. */
 /* `withLink` is opt-in (Tools' AI Team task lists only, per Ally's call — Deals/Clients/Creators
    keep the plain version) and adds a URL field to the composer and to each row, same "turns into a
-   button once you type something in" pattern Admin Tasks already has for its link field. */
-function MiniTaskList({ tasks, onChange, withLink }) {
+   button once you type something in" pattern Admin Tasks already has for its link field.
+   `composerAtBottom` is opt-in too (Deals/Clients only, per Ally's call) — puts the "add a task"
+   capture row after the existing tasks instead of before them, so scanning the card reads task
+   list first, capture-a-new-one last. */
+function MiniTaskList({ tasks, onChange, withLink, composerAtBottom }) {
   const [title, setTitle] = useState(""); const [description, setDescription] = useState(""); const [due, setDue] = useState(""); const [link, setLink] = useState("");
   const list = tasks || [];
   const add = () => {
@@ -2428,8 +2439,8 @@ function MiniTaskList({ tasks, onChange, withLink }) {
   };
   const update = (id, p) => onChange(list.map((t) => (t.id === id ? { ...t, ...p } : t)));
   const remove = (id) => onChange(list.filter((t) => t.id !== id));
-  return (
-    <div onClick={(e) => e.stopPropagation()} className="flex flex-col gap-1.5">
+  const composer = (
+    <>
       <div className="flex gap-1.5 flex-wrap">
         <input value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} placeholder="Add a task (e.g. Reply to email)…" className="flex-1 rounded-lg px-2 py-1.5" style={{ ...inputStyle, fontSize: 12, minWidth: 140 }} />
         {withLink && <input value={link} onChange={(e) => setLink(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} placeholder="URL (optional)" className="rounded-lg px-2 py-1.5" style={{ ...inputStyle, fontSize: 11, width: 130 }} />}
@@ -2439,9 +2450,16 @@ function MiniTaskList({ tasks, onChange, withLink }) {
         <GrowingTextarea value={description} onChange={setDescription} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); add(); } }} placeholder="Description (optional)…" rows={1} className="flex-1 rounded-lg px-2 py-1.5" style={{ ...inputStyle, fontSize: 11.5, lineHeight: 1.4 }} />
         <button onClick={add} style={{ ...pillDark, fontSize: 11, padding: "5px 10px" }}><Plus size={11} style={{ display: "inline", marginRight: 3 }} />Add</button>
       </div>
-      <div style={{ borderTop: `1px solid ${LINE}`, margin: "2px 0" }} />
+    </>
+  );
+  return (
+    <div onClick={(e) => e.stopPropagation()} className="flex flex-col gap-1.5">
+      {!composerAtBottom && composer}
+      {!composerAtBottom && <div style={{ borderTop: `1px solid ${LINE}`, margin: "2px 0" }} />}
       {list.length === 0 && <div style={{ fontSize: 11.5, color: FAINT }}>No tasks yet.</div>}
       {list.map((t) => <MiniTaskRow key={t.id} t={t} onUpdate={(p) => update(t.id, p)} onRemove={() => remove(t.id)} withLink={withLink} />)}
+      {composerAtBottom && <div style={{ borderTop: `1px solid ${LINE}`, margin: "2px 0" }} />}
+      {composerAtBottom && composer}
     </div>
   );
 }
@@ -2469,6 +2487,22 @@ function MiniTaskRow({ t, onUpdate, onRemove, withLink }) {
     </div>
   );
 }
+/* read-only glance list used when a Deal/Client card is collapsed — title + description only, no
+   controls, so the card still tells you what's outstanding without needing to expand it. */
+function TaskPreviewList({ tasks }) {
+  const list = tasks || [];
+  if (list.length === 0) return <div style={{ fontSize: 12, color: FAINT }}>No tasks yet.</div>;
+  return (
+    <div className="flex flex-col gap-1.5">
+      {list.map((t) => (
+        <div key={t.id} style={{ fontSize: 12.5 }}>
+          <div style={{ color: t.done ? MUT : C.ink, textDecoration: t.done ? "line-through" : "none", opacity: t.done ? 0.6 : 1 }}>{t.title}</div>
+          {t.description && <div style={{ fontSize: 11, color: MUT, marginTop: 1 }}>{t.description}</div>}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 function DealCard({ x, open, onToggleOpen, update, remove, isProspect }) {
   /* card accent follows Active/Prospect status (green/blue), not a random decorative aura —
@@ -2493,7 +2527,7 @@ function DealCard({ x, open, onToggleOpen, update, remove, isProspect }) {
       {(isProspect || x.stage !== "Posted") && <PriorityControls item={x} onChange={(p) => update(x.id, p)} hideDue />}
       <div className="mt-3">
         <Label text="Tasks" />
-        <MiniTaskList tasks={x.tasks} onChange={(tasks) => update(x.id, { tasks })} />
+        {open ? <MiniTaskList tasks={x.tasks} onChange={(tasks) => update(x.id, { tasks })} composerAtBottom /> : <TaskPreviewList tasks={x.tasks} />}
       </div>
       {open && (
         <div className="mt-4 flex flex-col gap-3">
@@ -2509,42 +2543,47 @@ function DealCard({ x, open, onToggleOpen, update, remove, isProspect }) {
 }
 
 function ClientCard({ c, updateClient, removeClient }) {
-  /* notes has no other hidden panel to gate the way DealCard/CreatorCard do, so this card gets its
-     own open flag purely for the notes box — lifted here (rather than left inside AutoTextarea)
-     so the card's own click can drive it too, per the CRM-wide "click the card to expand/collapse
-     its description" convention. */
-  const [notesOpen, setNotesOpen] = useState(true);
+  /* collapsed by default — name + status only, plus a read-only glance at outstanding tasks.
+     Clicking the card expands it to the full interactive task list (capture row at the bottom)
+     and Notes, same convention as DealCard. */
+  const [expanded, setExpanded] = useState(false);
   return (
-    <div onClick={() => setNotesOpen((v) => !v)} className="rounded-2xl p-4" style={{ cursor: "pointer", ...card, borderRadius: 16, borderLeft: `3px solid ${CLIENT_TINT[c.status]}` }}>
+    <div onClick={() => setExpanded((v) => !v)} className="rounded-2xl p-4" style={{ cursor: "pointer", ...card, borderRadius: 16, borderLeft: `3px solid ${CLIENT_TINT[c.status]}` }}>
       <div className="flex items-center gap-2"><div className="flex-1 min-w-0"><InlineEdit value={c.name} onChange={(v) => updateClient(c.id, { name: v })} strong /></div><button onClick={(e) => { e.stopPropagation(); removeClient(c.id); }} style={iconBtn} aria-label="Delete"><Trash2 size={13} /></button></div>
       <InlineEdit value={c.service} onChange={(v) => updateClient(c.id, { service: v })} placeholder="Service / retainer" dim />
       <div className="flex gap-1 mt-2">{CLIENT_STATUSES.map((s) => (
         <button key={s} onClick={(e) => { e.stopPropagation(); updateClient(c.id, { status: s }); }} className="rounded-full px-3 py-1 flex-1" style={{ fontSize: 11, cursor: "pointer", fontFamily: "inherit", background: c.status === s ? `${CLIENT_TINT[s]}22` : FILL, border: `1px solid ${c.status === s ? CLIENT_TINT[s] : LINE}`, color: c.status === s ? CLIENT_TINT[s] : MUT }}>{s}</button>
       ))}</div>
-      <div className="mt-2"><AutoTextarea value={c.notes} onChange={(v) => updateClient(c.id, { notes: v })} placeholder="Notes…" open={notesOpen} onToggle={() => setNotesOpen((v) => !v)} /></div>
       <div className="mt-3">
         <Label text="Tasks" />
-        <MiniTaskList tasks={c.tasks} onChange={(tasks) => updateClient(c.id, { tasks })} />
+        {expanded ? <MiniTaskList tasks={c.tasks} onChange={(tasks) => updateClient(c.id, { tasks })} composerAtBottom /> : <TaskPreviewList tasks={c.tasks} />}
       </div>
+      {expanded && <div className="mt-3"><Label text="Notes" /><AutoTextarea value={c.notes} onChange={(v) => updateClient(c.id, { notes: v })} placeholder="Notes…" /></div>}
     </div>
   );
 }
 
 function DealsModule({ data, setData, q, navRequest }) {
   const [openId, setOpenId] = useState(null);
-  /* same expand-parent-card behavior as Creators: a dashboard task pointing at a deal (navOpenId)
-     opens that deal's card, even though its own Tasks list is already visible either way. */
-  useEffect(() => {
-    if (navRequest && navRequest.navTab === "deals" && navRequest.navOpenId) setOpenId(navRequest.navOpenId);
-  }, [navRequest]);
+  const [sub, setSub] = useState("activeDeals");
   const deals = data.deals.deals, clients = data.deals.clients;
+  /* a dashboard task pointing at a deal (navOpenId) needs to land on whichever of the two deal
+     subtabs that deal actually lives on, now that they're split apart, then opens its card same
+     as before. */
+  useEffect(() => {
+    if (navRequest && navRequest.navTab === "deals" && navRequest.navOpenId) {
+      setOpenId(navRequest.navOpenId);
+      const target = deals.find((x) => x.id === navRequest.navOpenId);
+      if (target) setSub((target.type || "Active") === "Prospect" ? "prospectDeals" : "activeDeals");
+    }
+  }, [navRequest]);
   const ql = (q || "").toLowerCase();
   const patch = (p) => setData((d) => ({ ...d, deals: { ...d.deals, ...p } }));
   const update = (id, p) => patch({ deals: deals.map((x) => (x.id === id ? { ...x, ...p } : x)) });
   const remove = (id) => patch({ deals: deals.filter((x) => x.id !== id) });
-  const add = (type) => { const x = { id: uid(), brand: "New brand", deliverable: "", stage: "Brief", due: "", rate: "", caption: "", instructions: "", notes: "", aura: Math.floor(Math.random() * AURAS.length), priority: "Medium", lastProgress: null, created: todayISO(), type: type || "Prospect", tasks: [] }; patch({ deals: [x, ...deals] }); setOpenId(x.id); };
+  const add = (type) => { const x = { id: uid(), brand: "New brand", deliverable: "", stage: "Brief", due: "", rate: "", caption: "", instructions: "", notes: "", aura: Math.floor(Math.random() * AURAS.length), priority: "Medium", lastProgress: null, created: todayISO(), type: type || "Prospect", tasks: [] }; patch({ deals: [x, ...deals] }); setOpenId(x.id); setSub(type === "Active" ? "activeDeals" : "prospectDeals"); };
   const updateClient = (id, p) => patch({ clients: clients.map((c) => (c.id === id ? { ...c, ...p } : c)) });
-  const addClient = () => patch({ clients: [{ id: uid(), name: "New client", service: "", status: "Lead", notes: "", tasks: [] }, ...clients] });
+  const addClient = () => { patch({ clients: [{ id: uid(), name: "New client", service: "", status: "Lead", notes: "", tasks: [] }, ...clients] }); setSub("prospectClients"); };
   const removeClient = (id) => patch({ clients: clients.filter((c) => c.id !== id) });
 
   const matchDeal = (x) => !ql || x.brand.toLowerCase().includes(ql) || (x.deliverable || "").toLowerCase().includes(ql);
@@ -2558,43 +2597,74 @@ function DealsModule({ data, setData, q, navRequest }) {
 
   const stageBars = DEAL_STAGES.slice(0, 6).map((s, i) => ({ label: s.split(" ")[0], value: activeDeals.filter((d) => d.stage === s).length, color: AURAS[i % AURAS.length] }));
 
+  const subs = [
+    { id: "activeDeals", emoji: "🤝", label: "Active brand deals", count: activeDeals.length },
+    { id: "prospectDeals", emoji: "🔎", label: "Prospective brand deals", count: prospectDeals.length },
+    { id: "activeClients", emoji: "🧑‍💼", label: "Active clients", count: activeClients.length },
+    { id: "prospectClients", emoji: "📇", label: "Prospective clients", count: prospectClients.length },
+  ];
+
   return (
     <section>
-      <SectionHead title="Brand deals" sub="Split into active (confirmed, in motion) and prospective (still in discussion). Every deal and task here feeds the Priorities dashboard." action={<AddBtn onClick={() => add("Prospect")} label="Add deal" />} />
-      {activeDeals.length > 0 && (
-        <div className="rounded-2xl p-4 mb-5" style={{ ...card, borderRadius: 18 }}>
-          <div style={{ fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase", color: MUT, marginBottom: 6 }}>Where active deals sit 📊</div>
-          <Bars data={stageBars} height={120} />
-        </div>
+      <SectionHead title="Brand deals & clients" sub="Every deal and client, split into its own tab. Every deal, client, and task here still feeds the Priorities dashboard." />
+      <nav className="flex gap-2 mb-6 flex-wrap">
+        {subs.map(({ id, emoji, label, count }) => {
+          const on = sub === id;
+          return (
+            <button key={id} onClick={() => setSub(id)} className="flex items-center gap-2 rounded-full px-4 py-2" style={{ background: on ? C.dark : C.card, border: `1px solid ${on ? C.dark : LINE}`, color: on ? C.canvas : C.ink, cursor: "pointer", fontSize: 14, fontWeight: on ? 600 : 400, fontFamily: "inherit" }}>
+              <span>{emoji}</span><span>{label}</span><span style={{ fontSize: 11, background: on ? "rgba(11,11,13,0.15)" : FILL2, color: on ? C.canvas : MUT, borderRadius: 99, padding: "1px 7px" }}>{count}</span>
+            </button>
+          );
+        })}
+      </nav>
+
+      {sub === "activeDeals" && (
+        <>
+          {activeDeals.length > 0 && (
+            <div className="rounded-2xl p-4 mb-5" style={{ ...card, borderRadius: 18 }}>
+              <div style={{ fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase", color: MUT, marginBottom: 6 }}>Where active deals sit 📊</div>
+              <Bars data={stageBars} height={120} />
+            </div>
+          )}
+          <div className="flex flex-col gap-3">
+            {activeDeals.map((x) => (
+              <DealCard key={x.id} x={x} open={openId === x.id} onToggleOpen={() => setOpenId(openId === x.id ? null : x.id)} update={update} remove={remove} isProspect={false} />
+            ))}
+            {activeDeals.length === 0 && <Empty text={ql ? "No active deal matches your search." : "No active deals yet. Promote a prospect once it's confirmed."} />}
+          </div>
+        </>
       )}
 
-      <SectionHead title="Active brand deals" sub="Confirmed and in motion." />
-      <div className="flex flex-col gap-3 mb-8">
-        {activeDeals.map((x) => (
-          <DealCard key={x.id} x={x} open={openId === x.id} onToggleOpen={() => setOpenId(openId === x.id ? null : x.id)} update={update} remove={remove} isProspect={false} />
-        ))}
-        {activeDeals.length === 0 && <Empty text={ql ? "No active deal matches your search." : "No active deals yet. Promote a prospect once it's confirmed."} />}
-      </div>
+      {sub === "prospectDeals" && (
+        <>
+          <div className="flex justify-end mb-3"><AddBtn onClick={() => add("Prospect")} label="Add prospect" /></div>
+          <div className="flex flex-col gap-3">
+            {prospectDeals.map((x) => (
+              <DealCard key={x.id} x={x} open={openId === x.id} onToggleOpen={() => setOpenId(openId === x.id ? null : x.id)} update={update} remove={remove} isProspect={true} />
+            ))}
+            {prospectDeals.length === 0 && <Empty text={ql ? "No prospect matches your search." : "No prospects right now. Add one the moment a brand reaches out."} />}
+          </div>
+        </>
+      )}
 
-      <SectionHead title="Prospective brand deals" sub="In discussion, nothing solidified yet." action={<AddBtn onClick={() => add("Prospect")} label="Add prospect" />} />
-      <div className="flex flex-col gap-3 mb-10">
-        {prospectDeals.map((x) => (
-          <DealCard key={x.id} x={x} open={openId === x.id} onToggleOpen={() => setOpenId(openId === x.id ? null : x.id)} update={update} remove={remove} isProspect={true} />
-        ))}
-        {prospectDeals.length === 0 && <Empty text={ql ? "No prospect matches your search." : "No prospects right now. Add one the moment a brand reaches out."} />}
-      </div>
+      {sub === "activeClients" && (
+        <>
+          <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
+            {activeClients.map((c) => <ClientCard key={c.id} c={c} updateClient={updateClient} removeClient={removeClient} />)}
+          </div>
+          {activeClients.length === 0 && <Empty text={ql ? "No client matches your search." : "No active clients right now. This wakes up when a lead converts."} />}
+        </>
+      )}
 
-      <SectionHead title="Clients" sub="Active retainer or paid SMM work." action={<AddBtn onClick={addClient} label="Add client" />} />
-      <div className="grid gap-3 mb-8" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
-        {activeClients.map((c) => <ClientCard key={c.id} c={c} updateClient={updateClient} removeClient={removeClient} />)}
-      </div>
-      {activeClients.length === 0 && <Empty text={ql ? "No client matches your search." : "No active clients right now. This wakes up when a lead converts."} />}
-
-      <SectionHead title="Prospective clients" sub="Leads and conversations, not yet signed." />
-      <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
-        {prospectClients.map((c) => <ClientCard key={c.id} c={c} updateClient={updateClient} removeClient={removeClient} />)}
-      </div>
-      {prospectClients.length === 0 && <Empty text={ql ? "No lead matches your search." : "No leads in the pipeline yet."} />}
+      {sub === "prospectClients" && (
+        <>
+          <div className="flex justify-end mb-3"><AddBtn onClick={addClient} label="Add client" /></div>
+          <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
+            {prospectClients.map((c) => <ClientCard key={c.id} c={c} updateClient={updateClient} removeClient={removeClient} />)}
+          </div>
+          {prospectClients.length === 0 && <Empty text={ql ? "No lead matches your search." : "No leads in the pipeline yet."} />}
+        </>
+      )}
     </section>
   );
 }
