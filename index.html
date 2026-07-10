@@ -2766,8 +2766,7 @@ function Creators({ data, setData, q, navRequest }) {
 
 function CreatorCard({ c, open, onToggle, onUpdate, onRemove, openTaskCount }) {
   const aura = AURAS[c.aura % AURAS.length];
-  const [noteDraft, setNoteDraft] = useState(""); const [linkLabel, setLinkLabel] = useState(""); const [linkUrl, setLinkUrl] = useState("");
-  const addNote = () => { const text = noteDraft.trim(); if (!text) return; onUpdate({ notes: [{ id: uid(), text, date: new Date().toISOString().slice(0, 10) }, ...c.notes] }); setNoteDraft(""); };
+  const [linkLabel, setLinkLabel] = useState(""); const [linkUrl, setLinkUrl] = useState("");
   const addLink = () => { if (!linkUrl.trim()) return; const url = linkUrl.trim().startsWith("http") ? linkUrl.trim() : `https://${linkUrl.trim()}`; onUpdate({ links: [...c.links, { id: uid(), label: linkLabel.trim() || url.replace(/^https?:\/\//, "").slice(0, 30), url }] }); setLinkLabel(""); setLinkUrl(""); };
   return (
     <div onClick={onToggle} className="rounded-2xl p-4" style={{ cursor: "pointer", ...card, borderRadius: 18, boxShadow: open ? `0 0 0 1px ${aura}44, ${card.boxShadow}` : card.boxShadow }}>
@@ -2786,17 +2785,12 @@ function CreatorCard({ c, open, onToggle, onUpdate, onRemove, openTaskCount }) {
           <div key={g.id} className="flex items-center gap-1"><span style={{ color: aura, fontSize: 13, flexShrink: 0 }}>{c.goals.length > 1 ? `${i + 1}.` : "◆"}</span><InlineEdit value={g.text} onChange={(v) => onUpdate({ goals: c.goals.map((x) => x.id === g.id ? { ...x, text: v } : x) })} placeholder="What are they trying to achieve?" /><button onClick={(e) => { e.stopPropagation(); onUpdate({ goals: c.goals.filter((x) => x.id !== g.id) }); }} style={iconBtn} aria-label="Remove goal"><X size={11} /></button></div>
         ))}
       </div>
-      <div className="flex items-center gap-3 mt-3" style={{ fontSize: 12, color: MUT }}><span><StickyNote size={11} style={{ display: "inline", marginRight: 4 }} />{c.notes.length} notes</span><span><LinkIcon size={11} style={{ display: "inline", marginRight: 4 }} />{c.links.length} links</span>{openTaskCount > 0 && <span style={{ color: aura }}>{openTaskCount} open task{openTaskCount > 1 ? "s" : ""}</span>}</div>
+      <div className="flex items-center gap-3 mt-3" style={{ fontSize: 12, color: MUT }}><span><LinkIcon size={11} style={{ display: "inline", marginRight: 4 }} />{c.links.length} links</span>{openTaskCount > 0 && <span style={{ color: aura }}>{openTaskCount} open task{openTaskCount > 1 ? "s" : ""}</span>}</div>
       {open && (
         <div className="mt-4 flex flex-col gap-4">
           <div>
             <Label text="Tasks" />
             <MiniTaskList tasks={c.tasks} onChange={(tasks) => onUpdate({ tasks })} />
-          </div>
-          <div>
-            <Label text="Research log" />
-            <div className="flex gap-2"><input value={noteDraft} onChange={(e) => setNoteDraft(e.target.value)} onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.key === "Enter" && addNote()} placeholder="Add a research note, insight, or idea…" className="flex-1 rounded-lg px-3 py-2" style={inputStyle} /><button onClick={(e) => { e.stopPropagation(); addNote(); }} style={pillAccent(aura)}>Add</button></div>
-            <div className="mt-2 flex flex-col gap-2" style={{ maxHeight: 220, overflowY: "auto" }}>{c.notes.map((n) => (<div key={n.id} className="rounded-lg px-3 py-2 flex items-start gap-2" style={{ ...cardSoft, borderRadius: 10 }}><div className="flex-1" style={{ fontSize: 13, lineHeight: 1.45 }}>{n.text}<span style={{ fontSize: 10.5, color: FAINT, marginLeft: 8 }}>{n.date}</span></div><button onClick={(e) => { e.stopPropagation(); onUpdate({ notes: c.notes.filter((x) => x.id !== n.id) }); }} style={iconBtn} aria-label="Delete note"><X size={11} /></button></div>))}</div>
           </div>
           <div>
             <Label text="Links" />
