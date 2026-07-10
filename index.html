@@ -412,8 +412,6 @@ const todayISO = () => { const d = new Date(); return `${d.getFullYear()}-${Stri
 const daysSince = (iso) => { if (!iso) return null; const n = new Date(); n.setHours(0, 0, 0, 0); return Math.max(0, Math.round((n - new Date(iso + "T00:00:00")) / 86400000)); };
 const daysUntil = (iso) => { if (!iso) return null; const n = new Date(); n.setHours(0, 0, 0, 0); return Math.round((new Date(iso + "T00:00:00") - n) / 86400000); };
 const fmtR = (n) => "R" + (Number(n) || 0).toLocaleString("en-ZA");
-const monthKey = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; };
-const monthName = () => new Date().toLocaleDateString("en-ZA", { month: "long" });
 const isApartmentUnlocked = (ally) => !!ally.apartment.unlockedOverride || ally.unlocks.chains.some((ch) => ch.nodes.some((n) => /move\s*in/i.test(n.label) && n.status === "done"));
 
 /* ---------- pipeline constants ---------- */
@@ -616,11 +614,6 @@ function collectPriorityTasks(ally, mama) {
     priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
     sourceType: "mamaTool", navTab: "mama", navSub: "tools", navOpenId: null,
   })));
-  (mama.reports || []).forEach((rp) => (rp.tasks || []).filter((t) => !t.done && !t.paused).forEach((t) => out.push({
-    id: t.id, pillar: "mama", title: `${t.title} (${rp.name || rp.title})`, due: t.due || null,
-    priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
-    sourceType: "mamaReport", navTab: "mama", navSub: "reports", navOpenId: null,
-  })));
   (ally.lifeAdmin.items || []).filter((t) => t.status !== "Done" && !t.paused).forEach((t) => out.push({
     id: t.id, pillar: "lifeAdmin", title: t.title, due: t.due || null,
     priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
@@ -815,7 +808,6 @@ const MAMA_SEED = {
   ],
   tasks: [],
   tools: [{ id: uid(), name: "Small HTML tools", problem: "Single-file tools for small Amplified problems. Kickoff scheduled.", status: "Idea", next: "Scope the first tool with the AI team", tasks: [] }],
-  reports: [{ id: uid(), name: "Monthly creator reports", dueDay: 28, done: [], tasks: [] }, { id: uid(), name: "Creator deep dive reports", dueDay: 15, done: [], tasks: [] }],
 };
 const ALLY_KEY = "ally-crm-v1";
 const MAMA_KEY = "creator-strategy-hq-v1";
@@ -967,7 +959,7 @@ function AllyCRM() {
 
 
   /* auto-clean: anything marked Done (Admin Tasks / Life Admin's kanban) or checked off (the
-     MiniTaskList "done" toggle used under Creators/AI Tools/Reports/Deals/Clients) gets removed
+     MiniTaskList "done" toggle used under Creators/AI Tools/Deals/Clients) gets removed
      12 hours after it was completed, using the doneAt timestamp stamped on it the moment it was
      marked done. Runs once shortly after load (catching data that was already stale when you
      opened the app) and then rechecks periodically while the tab stays open — no need to be
@@ -976,7 +968,7 @@ function AllyCRM() {
      linger). Items with no doneAt (older data from before this existed) are left alone rather
      than guessed at.
      Scope: this only touches actual disposable to-do lists (Admin Tasks, Life Admin, and the
-     MiniTaskList sub-tasks under Creators/AI Tools/Reports/Deals/Clients). It does NOT touch
+     MiniTaskList sub-tasks under Creators/AI Tools/Deals/Clients). It does NOT touch
      Content (Posted ideas stay until you hit "Clear posted archive"), Song stages, the Deals
      pipeline itself (a deal reaching "Posted" is a history record, not deleted), Apartment
      ("Bought" items), or Unlocks — those are milestones/records, not disposable tasks, and keep
@@ -1017,12 +1009,7 @@ function AllyCRM() {
         if (tasks.length !== (tl.tasks || []).length) mChanged = true;
         return tasks.length !== (tl.tasks || []).length ? { ...tl, tasks } : tl;
       });
-      const reports = m.reports.map((rp) => {
-        const tasks = (rp.tasks || []).filter((t) => !(t.done && stale(t)));
-        if (tasks.length !== (rp.tasks || []).length) mChanged = true;
-        return tasks.length !== (rp.tasks || []).length ? { ...rp, tasks } : rp;
-      });
-      if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators, tools, reports }));
+      if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators, tools }));
     };
     const kickoff = setTimeout(sweep, 4000);
     const id = setInterval(sweep, 15 * 60 * 1000);
@@ -1131,7 +1118,7 @@ function AllyCRM() {
   /* sidebar badge counts: for the 4 pillars that feed the Priorities dashboard (song, unlocks,
      deals, mama), pull the count from the exact same collectPriorityTasks pool the dashboard uses —
      that's every open task from every source for that pillar (e.g. Mama's badge used to only count
-     the top-level captured-tasks board and miss anything logged under Creators/AI Tools/Reports;
+     the top-level captured-tasks board and miss anything logged under Creators/AI Tools;
      Deals only counted open deal records and missed deal/client sub-task checklists). Now every
      tab's badge means the same thing: how much open, non-paused work is sitting in that pillar. */
   const priorityTaskCounts = (() => {
@@ -1298,7 +1285,7 @@ function AllyCRM() {
               (no dead strip at the bottom), long pages (Unlocks, long chains) just scroll normally
               since auto-margins collapse to 0 once content is taller than the viewport.
               Exception: the Mama tab is pinned to top (margin: 0) instead, so switching between
-              its Creators/Tasks/AI Tools/Reports subtabs never jumps to mid-screen just because
+              its Creators/Tasks/AI Tools subtabs never jumps to mid-screen just because
               one subtab has less content than another. */}
           <div className="scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "28px 36px", display: "flex", flexDirection: "column", alignItems: "center" }}>
             <div style={{ width: "100%", maxWidth: 1360, margin: tab === "mama" ? "0" : "auto 0", paddingBottom: 44 }}>
@@ -1367,7 +1354,6 @@ function setPillarItemPriority(setAlly, setMama, pillar, id, priority) {
       tasks: d.tasks.map((t) => (t.id === id ? { ...t, priority } : t)),
       creators: d.creators.map((cr) => ((cr.tasks || []).some((t) => t.id === id) ? { ...cr, tasks: cr.tasks.map((t) => (t.id === id ? { ...t, priority } : t)) } : cr)),
       tools: d.tools.map((tl) => ((tl.tasks || []).some((t) => t.id === id) ? { ...tl, tasks: tl.tasks.map((t) => (t.id === id ? { ...t, priority } : t)) } : tl)),
-      reports: d.reports.map((rp) => ((rp.tasks || []).some((t) => t.id === id) ? { ...rp, tasks: rp.tasks.map((t) => (t.id === id ? { ...t, priority } : t)) } : rp)),
     }));
     return;
   }
@@ -1412,9 +1398,6 @@ function completePriorityTask(setAlly, setMama, task) {
       return;
     case "mamaTool":
       setMama((d) => ({ ...d, tools: d.tools.map((tl) => ((tl.tasks || []).some((t) => t.id === task.id) ? { ...tl, tasks: tl.tasks.map((t) => (t.id === task.id ? { ...t, done: true, doneAt: now } : t)) } : tl)) }));
-      return;
-    case "mamaReport":
-      setMama((d) => ({ ...d, reports: d.reports.map((rp) => ((rp.tasks || []).some((t) => t.id === task.id) ? { ...rp, tasks: rp.tasks.map((t) => (t.id === task.id ? { ...t, done: true, doneAt: now } : t)) } : rp)) }));
       return;
     case "lifeAdmin":
       setAlly((d) => ({ ...d, lifeAdmin: { ...d.lifeAdmin, items: d.lifeAdmin.items.map((t) => (t.id === task.id ? { ...t, status: "Done", doneAt: now } : t)) } }));
@@ -1666,7 +1649,7 @@ function PriorityControls({ item, onChange, hideDue }) {
     // above via pr === p, which pauses) does anything — the other two are disabled below.
   };
   return (
-    <div className="flex items-center gap-1.5 flex-wrap mt-1.5" style={{ fontSize: 11, opacity: paused ? 0.55 : 1 }}>
+    <div onClick={(e) => e.stopPropagation()} className="flex items-center gap-1.5 flex-wrap mt-1.5" style={{ fontSize: 11, opacity: paused ? 0.55 : 1 }}>
       {!hideDue && (
         <input type="date" value={item.due || ""} disabled={paused} onChange={(e) => onChange({ due: e.target.value || null })}
           className="rounded-md" style={{ ...darkInput, fontSize: 10.5, padding: "3px 5px", cursor: paused ? "not-allowed" : "text" }} aria-label="Due date" />
@@ -1872,7 +1855,7 @@ function ScriptBox({ value, isHtml, open, onFocus, onChange, onToggle }) {
   const miniSelect = { background: "rgba(255,255,255,0.06)", border: `1px solid ${LINE}`, color: C.ink, borderRadius: 6, fontSize: 10.5, fontFamily: "'Outfit', sans-serif", padding: "2px 4px" };
 
   return (
-    <div className="mt-1.5">
+    <div onClick={(e) => e.stopPropagation()} className="mt-1.5">
       <button onClick={onToggle} className="flex items-center gap-1" style={{ ...iconBtn, padding: 0, fontSize: 10, color: FAINT }}>
         {open ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
         <span>{open ? "Collapse script" : value ? "Expand script" : "Add script"}</span>
@@ -1908,12 +1891,13 @@ function ContentModule({ data, setData, q }) {
   const content = data.content;
   const h = contentHealth(content);
   const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
   const [openDesc, setOpenDesc] = useState({});
   const [showArchive, setShowArchive] = useState(false);
   const openIfNot = (id) => setOpenDesc((o) => (o[id] ? o : { ...o, [id]: true }));
   const patch = (p) => setData((d) => ({ ...d, content: { ...d.content, ...p } }));
   const ql = (q || "").toLowerCase();
-  const add = () => { const t = title.trim(); if (!t) return; patch({ items: [{ id: uid(), title: t, desc: "", status: "Ideas", created: todayISO(), due: null, filmed: false }, ...content.items] }); setTitle(""); };
+  const add = () => { const t = title.trim(); if (!t) return; patch({ items: [{ id: uid(), title: t, desc: description.trim(), status: "Ideas", created: todayISO(), due: null, filmed: false }, ...content.items] }); setTitle(""); setDescription(""); };
   const move = (id, dir) => setData((d) => {
     const items = d.content.items.map((i) => { if (i.id !== id) return i; const next = CONTENT_COLS[Math.min(Math.max(CONTENT_COLS.indexOf(i.status) + dir, 0), CONTENT_COLS.length - 1)]; return { ...i, status: next }; });
     return { ...d, content: { ...d.content, items } };
@@ -1958,9 +1942,14 @@ function ContentModule({ data, setData, q }) {
         )}
       </div>
 
-      <div className="flex gap-2 flex-wrap mb-4" style={{ ...card, borderRadius: 12, padding: 12 }}>
-        <input value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} placeholder="Drop a skit idea in the bank…" className="flex-1 rounded-lg px-3 py-2" style={{ ...inputStyle, minWidth: 200, fontSize: 13.5 }} />
-        <button onClick={add} style={{ ...pillDark, fontSize: 13, padding: "8px 16px" }}><Plus size={13} style={{ display: "inline", marginRight: 4 }} />Add idea</button>
+      <div className="rounded-2xl mb-4" style={{ ...card, borderRadius: 12, padding: 12 }}>
+        <div className="flex gap-2 flex-wrap mb-2">
+          <input value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} placeholder="Drop a skit idea in the bank…" className="flex-1 rounded-lg px-3 py-2" style={{ ...inputStyle, minWidth: 200, fontSize: 13.5 }} />
+        </div>
+        <div className="flex gap-2 flex-wrap items-start">
+          <GrowingTextarea value={description} onChange={setDescription} placeholder="Description (optional) — the actual detail. Keeps the title short." rows={2} className="flex-1 rounded-lg px-3 py-2" style={{ ...inputStyle, minWidth: 200, fontSize: 13.5, lineHeight: 1.45 }} />
+          <button onClick={add} style={{ ...pillDark, fontSize: 13, padding: "8px 16px" }}><Plus size={13} style={{ display: "inline", marginRight: 4 }} />Add idea</button>
+        </div>
       </div>
 
       <div className="grid gap-0" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", background: LINE, gap: 1, border: `1px solid ${LINE}`, borderRadius: 14, overflow: "hidden" }}>
@@ -1979,11 +1968,12 @@ function ContentModule({ data, setData, q }) {
                      idea with a pasted paragraph always shows the whole thing without a click —
                      openDesc only overrides that once you've explicitly toggled it yourself. */
                   const descOpen = openDesc[i.id] !== undefined ? openDesc[i.id] : !!i.desc;
+                  const toggleDesc = () => setOpenDesc((o) => ({ ...o, [i.id]: !descOpen }));
                   return (
-                  <div key={i.id} className="rounded-lg" style={{ background: "rgba(255,255,255,0.035)", border: `1px solid ${LINE}`, borderLeft: `2px solid ${CONTENT_TINT[col]}`, borderRadius: 10, padding: "11px 13px" }}>
+                  <div key={i.id} onClick={toggleDesc} className="rounded-lg" style={{ cursor: "pointer", background: "rgba(255,255,255,0.035)", border: `1px solid ${LINE}`, borderLeft: `2px solid ${CONTENT_TINT[col]}`, borderRadius: 10, padding: "11px 13px" }}>
                     <InlineEdit value={i.title} onChange={(v) => updateItem(i.id, { title: v })} strong />
-                    <ScriptBox value={i.desc || ""} isHtml={!!i.descHtml} open={descOpen} onFocus={() => openIfNot(i.id)} onChange={(v) => updateItem(i.id, { desc: v, descHtml: true })} onToggle={() => setOpenDesc((o) => ({ ...o, [i.id]: !descOpen }))} />
-                    <div className="flex items-center gap-2 mt-1.5 flex-wrap" style={{ fontSize: 10.5, opacity: i.filmed ? 0.55 : 1 }}>
+                    <ScriptBox value={i.desc || ""} isHtml={!!i.descHtml} open={descOpen} onFocus={() => openIfNot(i.id)} onChange={(v) => updateItem(i.id, { desc: v, descHtml: true })} onToggle={toggleDesc} />
+                    <div onClick={(e) => e.stopPropagation()} className="flex items-center gap-2 mt-1.5 flex-wrap" style={{ fontSize: 10.5, opacity: i.filmed ? 0.55 : 1 }}>
                       <input type="date" value={i.due || ""} disabled={i.filmed && col === "To Film"} onChange={(e) => updateItem(i.id, { due: e.target.value || null })} className="rounded-md" style={{ ...darkInput, fontSize: 10.5, padding: "3px 5px", cursor: i.filmed && col === "To Film" ? "not-allowed" : "text" }} aria-label="Deadline (optional)" title="Deadline (optional) — auto-sets priority, pulls this idea's title onto the main hub (To Film or To Edit column depending on where it sits)" />
                       {(!i.filmed || col !== "To Film") && <DueChip due={i.due} />}
                       <button
@@ -1994,7 +1984,7 @@ function ContentModule({ data, setData, q }) {
                         {i.filmed ? "✓ FILMED" : "FILMED"}
                       </button>
                     </div>
-                    <div className="flex items-center gap-1 mt-1.5"><span className="ml-auto flex gap-1">
+                    <div onClick={(e) => e.stopPropagation()} className="flex items-center gap-1 mt-1.5"><span className="ml-auto flex gap-1">
                       {col !== "Idea" && <button onClick={() => move(i.id, -1)} style={{ ...iconBtn, padding: 2 }} aria-label="Back">←</button>}
                       {col === "To Edit"
                         ? <button onClick={() => markPosted(i.id)} className="rounded-full px-2.5 py-0.5" style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.03em", cursor: "pointer", fontFamily: "inherit", background: `${C.mint}22`, border: `1px solid ${C.mint}55`, color: C.mint }}>POSTED</button>
@@ -2330,6 +2320,7 @@ function ApartmentModule({ data, setData, unlocked, go, q }) {
    computeUrgency) so it feeds the main Priorities dashboard with zero special-casing. */
 function LifeAdminModule({ data, setData, q }) {
   const [title, setTitle] = useState(""); const [description, setDescription] = useState(""); const [due, setDue] = useState("");
+  const [openDesc, setOpenDesc] = useState({});
   const items = data.lifeAdmin.items || [];
   const ql = (q || "").toLowerCase();
   const add = () => {
@@ -2364,14 +2355,17 @@ function LifeAdminModule({ data, setData, q }) {
             <div key={col} className="rounded-2xl p-3" style={{ ...cardSoft, borderRadius: 16 }}>
               <div className="flex items-center justify-between mb-3 px-1"><span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 600, fontSize: 12, letterSpacing: "0.04em", textTransform: "uppercase" }}>{col}</span><span style={{ fontSize: 12, color: MUT }}>{colItems.length}</span></div>
               <div className="flex flex-col gap-2">
-                {colItems.map((t) => (
-                  <div key={t.id} data-nav-id={t.id} className="rounded-xl p-3" style={{ ...card, borderRadius: 12, borderLeft: `2px solid ${C.rose}` }}>
+                {colItems.map((t) => {
+                  const descOpen = openDesc[t.id] !== undefined ? openDesc[t.id] : true;
+                  const toggleDesc = () => setOpenDesc((o) => ({ ...o, [t.id]: !descOpen }));
+                  return (
+                  <div key={t.id} data-nav-id={t.id} onClick={toggleDesc} className="rounded-xl p-3" style={{ cursor: "pointer", ...card, borderRadius: 12, borderLeft: `2px solid ${C.rose}` }}>
                     <div style={{ fontSize: 13.5, textDecoration: col === "Done" ? "line-through" : "none", opacity: col === "Done" ? 0.55 : 1 }}><InlineEdit value={t.title} onChange={(v) => update(t.id, { title: v })} /></div>
                     {/* AutoTextarea instead of InlineEdit here specifically — same auto-grow-on-paste
                         behavior as the content tab's script box, so a long pasted description isn't
                         squashed into a single-line input like the title above it. */}
-                    <div style={{ marginTop: 4 }}><AutoTextarea value={t.description || ""} onChange={(v) => update(t.id, { description: v })} placeholder="Add a description…" /></div>
-                    <div className="flex items-center gap-2 mt-2 flex-wrap" style={{ fontSize: 11, color: MUT }}>
+                    <div style={{ marginTop: 4 }}><AutoTextarea value={t.description || ""} onChange={(v) => update(t.id, { description: v })} placeholder="Add a description…" open={descOpen} onToggle={toggleDesc} /></div>
+                    <div onClick={(e) => e.stopPropagation()} className="flex items-center gap-2 mt-2 flex-wrap" style={{ fontSize: 11, color: MUT }}>
                       <span className="ml-auto flex gap-1">
                         {col !== "To do" && <button onClick={() => back(t.id)} style={iconBtn} aria-label="Back">←</button>}
                         {col !== "Done" && <button onClick={() => advance(t.id)} style={{ ...iconBtn, color: C.mint }} aria-label="Forward">→</button>}
@@ -2380,7 +2374,8 @@ function LifeAdminModule({ data, setData, q }) {
                     </div>
                     {col !== "Done" && <PriorityControls item={t} onChange={(p) => update(t.id, p)} />}
                   </div>
-                ))}
+                  );
+                })}
                 {colItems.length === 0 && <div className="rounded-xl p-3 text-center" style={{ border: `1px dashed ${LINE}`, fontSize: 12, color: FAINT, borderRadius: 12 }}>Empty</div>}
               </div>
             </div>
@@ -2410,7 +2405,7 @@ function MiniTaskList({ tasks, onChange }) {
   const update = (id, p) => onChange(list.map((t) => (t.id === id ? { ...t, ...p } : t)));
   const remove = (id) => onChange(list.filter((t) => t.id !== id));
   return (
-    <div className="flex flex-col gap-1.5">
+    <div onClick={(e) => e.stopPropagation()} className="flex flex-col gap-1.5">
       <div className="flex gap-1.5">
         <input value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} placeholder="Add a task (e.g. Reply to email)…" className="flex-1 rounded-lg px-2 py-1.5" style={{ ...inputStyle, fontSize: 12 }} />
         <input type="date" value={due} onChange={(e) => setDue(e.target.value)} className="rounded-lg px-2 py-1.5" style={{ ...inputStyle, fontSize: 11, width: 120 }} aria-label="Due date (optional)" title="Due date (optional) — auto-sets the priority" />
@@ -2421,17 +2416,25 @@ function MiniTaskList({ tasks, onChange }) {
       </div>
       <div style={{ borderTop: `1px solid ${LINE}`, margin: "2px 0" }} />
       {list.length === 0 && <div style={{ fontSize: 11.5, color: FAINT }}>No tasks yet.</div>}
-      {list.map((t) => (
-        <div key={t.id} data-nav-id={t.id} className="rounded-lg px-2.5 py-2" style={{ background: C.soft, border: `1px solid ${LINE}`, opacity: t.done ? 0.5 : 1 }}>
-          <div className="flex items-center gap-2">
-            <button onClick={() => update(t.id, { done: !t.done, doneAt: !t.done ? Date.now() : null })} aria-label="Toggle done" style={{ width: 18, height: 18, borderRadius: 6, cursor: "pointer", flexShrink: 0, background: t.done ? C.mint : C.card, border: `1px solid ${t.done ? C.mint : LINE}`, display: "flex", alignItems: "center", justifyContent: "center" }}>{t.done && <Check size={11} color="#fff" strokeWidth={3} />}</button>
-            <div className="flex-1 min-w-0" style={{ textDecoration: t.done ? "line-through" : "none" }}><InlineEdit value={t.title} onChange={(v) => update(t.id, { title: v })} /></div>
-            <button onClick={() => remove(t.id)} style={{ ...iconBtn, padding: 2 }} aria-label="Delete"><X size={11} /></button>
-          </div>
-          <div style={{ fontSize: 11, color: MUT, marginTop: 2, marginLeft: 26 }}><InlineEditArea value={t.description || ""} onChange={(v) => update(t.id, { description: v })} placeholder="Add a description…" /></div>
-          {!t.done && <PriorityControls item={t} onChange={(p) => update(t.id, p)} />}
-        </div>
-      ))}
+      {list.map((t) => <MiniTaskRow key={t.id} t={t} onUpdate={(p) => update(t.id, p)} onRemove={() => remove(t.id)} />)}
+    </div>
+  );
+}
+/* split out from MiniTaskList purely so each sub-task's description can have its own lifted open
+   state — same "click anywhere on the card to expand/collapse its description" convention as every
+   other card, now including these (previously the one place in the CRM where a description never
+   collapsed at all). */
+function MiniTaskRow({ t, onUpdate, onRemove }) {
+  const [descOpen, setDescOpen] = useState(true);
+  return (
+    <div data-nav-id={t.id} onClick={() => setDescOpen((v) => !v)} className="rounded-lg px-2.5 py-2" style={{ cursor: "pointer", background: C.soft, border: `1px solid ${LINE}`, opacity: t.done ? 0.5 : 1 }}>
+      <div onClick={(e) => e.stopPropagation()} className="flex items-center gap-2">
+        <button onClick={() => onUpdate({ done: !t.done, doneAt: !t.done ? Date.now() : null })} aria-label="Toggle done" style={{ width: 18, height: 18, borderRadius: 6, cursor: "pointer", flexShrink: 0, background: t.done ? C.mint : C.card, border: `1px solid ${t.done ? C.mint : LINE}`, display: "flex", alignItems: "center", justifyContent: "center" }}>{t.done && <Check size={11} color="#fff" strokeWidth={3} />}</button>
+        <div className="flex-1 min-w-0" style={{ textDecoration: t.done ? "line-through" : "none" }}><InlineEdit value={t.title} onChange={(v) => onUpdate({ title: v })} /></div>
+        <button onClick={onRemove} style={{ ...iconBtn, padding: 2 }} aria-label="Delete"><X size={11} /></button>
+      </div>
+      <div style={{ fontSize: 11, color: MUT, marginTop: 2, marginLeft: 26 }}><InlineEditArea value={t.description || ""} onChange={(v) => onUpdate({ description: v })} placeholder="Add a description…" open={descOpen} onToggle={() => setDescOpen((v) => !v)} /></div>
+      {!t.done && <PriorityControls item={t} onChange={onUpdate} />}
     </div>
   );
 }
@@ -2443,8 +2446,8 @@ function DealCard({ x, open, onToggleOpen, update, remove, isProspect }) {
   const idx = DEAL_STAGES.indexOf(x.stage);
   const typeTint = DEAL_TYPE_TINT[isProspect ? "Prospect" : "Active"];
   return (
-    <div data-nav-id={x.id} className="rounded-2xl p-4" style={{ ...card, borderRadius: 16, borderLeft: `3px solid ${tint}`, opacity: x.stage === "Posted" ? 0.65 : 1 }}>
-      <div className="flex items-center gap-3 flex-wrap">
+    <div data-nav-id={x.id} onClick={onToggleOpen} className="rounded-2xl p-4" style={{ cursor: "pointer", ...card, borderRadius: 16, borderLeft: `3px solid ${tint}`, opacity: x.stage === "Posted" ? 0.65 : 1 }}>
+      <div onClick={(e) => e.stopPropagation()} className="flex items-center gap-3 flex-wrap">
         <div className="flex-1" style={{ minWidth: 150 }}><InlineEdit value={x.brand} onChange={(v) => update(x.id, { brand: v })} strong /><InlineEdit value={x.deliverable} onChange={(v) => update(x.id, { deliverable: v })} placeholder="Deliverable (e.g. 1x Reel + story)" dim /></div>
         <button onClick={() => update(x.id, { type: isProspect ? "Active" : "Prospect" })} className="rounded-full px-2.5 py-1" style={{ fontSize: 10.5, cursor: "pointer", fontFamily: "inherit", background: `${typeTint}1a`, border: `1px solid ${typeTint}55`, color: typeTint, whiteSpace: "nowrap" }}>{isProspect ? "→ mark active" : "→ mark prospect"}</button>
         {x.due && <DueChip due={x.due} />}
@@ -2452,22 +2455,22 @@ function DealCard({ x, open, onToggleOpen, update, remove, isProspect }) {
         <button onClick={onToggleOpen} style={iconBtn} aria-label="Expand">{open ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</button>
       </div>
       {!isProspect && (
-        <div className="flex gap-1 mt-3 flex-wrap">{DEAL_STAGES.map((s, i) => (
+        <div onClick={(e) => e.stopPropagation()} className="flex gap-1 mt-3 flex-wrap">{DEAL_STAGES.map((s, i) => (
           <button key={s} onClick={() => update(x.id, { stage: s })} className="rounded-full px-2.5 py-1" style={{ fontSize: 10.5, cursor: "pointer", fontFamily: "inherit", background: i < idx ? `${tint}14` : x.stage === s ? `${tint}2b` : FILL, border: `1px solid ${x.stage === s ? tint : i < idx ? `${tint}55` : LINE}`, color: x.stage === s ? tint : i < idx ? tint : MUT }}>{i < idx ? "✓ " : ""}{s}</button>
         ))}</div>
       )}
       {(isProspect || x.stage !== "Posted") && <PriorityControls item={x} onChange={(p) => update(x.id, p)} hideDue />}
-      <div className="mt-3">
+      <div onClick={(e) => e.stopPropagation()} className="mt-3">
         <Label text="Tasks" />
         <MiniTaskList tasks={x.tasks} onChange={(tasks) => update(x.id, { tasks })} />
       </div>
       {open && (
         <div className="mt-4 flex flex-col gap-3">
-          <div style={{ minWidth: 160 }}><Label text="Rate" /><InlineEdit value={x.rate} onChange={(v) => update(x.id, { rate: v })} placeholder="e.g. R6,000" /></div>
+          <div onClick={(e) => e.stopPropagation()} style={{ minWidth: 160 }}><Label text="Rate" /><InlineEdit value={x.rate} onChange={(v) => update(x.id, { rate: v })} placeholder="e.g. R6,000" /></div>
           <div><Label text="Caption" /><AutoTextarea value={x.caption} onChange={(v) => update(x.id, { caption: v })} placeholder="Approved caption, hashtags, promo code…" /></div>
           <div><Label text="Posting instructions" /><AutoTextarea value={x.instructions} onChange={(v) => update(x.id, { instructions: v })} placeholder="Collab handle, spark code, whitelisting, tags…" /></div>
           <div><Label text="Notes" /><AutoTextarea value={x.notes} onChange={(v) => update(x.id, { notes: v })} placeholder="Feedback rounds, contacts, anything else…" /></div>
-          <button onClick={() => remove(x.id)} className="self-end flex items-center gap-1" style={{ ...iconBtn, fontSize: 12, color: C.rose }}><Trash2 size={12} /> Remove deal</button>
+          <button onClick={(e) => { e.stopPropagation(); remove(x.id); }} className="self-end flex items-center gap-1" style={{ ...iconBtn, fontSize: 12, color: C.rose }}><Trash2 size={12} /> Remove deal</button>
         </div>
       )}
     </div>
@@ -2475,15 +2478,20 @@ function DealCard({ x, open, onToggleOpen, update, remove, isProspect }) {
 }
 
 function ClientCard({ c, updateClient, removeClient }) {
+  /* notes has no other hidden panel to gate the way DealCard/CreatorCard do, so this card gets its
+     own open flag purely for the notes box — lifted here (rather than left inside AutoTextarea)
+     so the card's own click can drive it too, per the CRM-wide "click the card to expand/collapse
+     its description" convention. */
+  const [notesOpen, setNotesOpen] = useState(true);
   return (
-    <div className="rounded-2xl p-4" style={{ ...card, borderRadius: 16, borderLeft: `3px solid ${CLIENT_TINT[c.status]}` }}>
-      <div className="flex items-center gap-2"><div className="flex-1 min-w-0"><InlineEdit value={c.name} onChange={(v) => updateClient(c.id, { name: v })} strong /></div><button onClick={() => removeClient(c.id)} style={iconBtn} aria-label="Delete"><Trash2 size={13} /></button></div>
+    <div onClick={() => setNotesOpen((v) => !v)} className="rounded-2xl p-4" style={{ cursor: "pointer", ...card, borderRadius: 16, borderLeft: `3px solid ${CLIENT_TINT[c.status]}` }}>
+      <div onClick={(e) => e.stopPropagation()} className="flex items-center gap-2"><div className="flex-1 min-w-0"><InlineEdit value={c.name} onChange={(v) => updateClient(c.id, { name: v })} strong /></div><button onClick={() => removeClient(c.id)} style={iconBtn} aria-label="Delete"><Trash2 size={13} /></button></div>
       <InlineEdit value={c.service} onChange={(v) => updateClient(c.id, { service: v })} placeholder="Service / retainer" dim />
-      <div className="flex gap-1 mt-2">{CLIENT_STATUSES.map((s) => (
+      <div onClick={(e) => e.stopPropagation()} className="flex gap-1 mt-2">{CLIENT_STATUSES.map((s) => (
         <button key={s} onClick={() => updateClient(c.id, { status: s })} className="rounded-full px-3 py-1 flex-1" style={{ fontSize: 11, cursor: "pointer", fontFamily: "inherit", background: c.status === s ? `${CLIENT_TINT[s]}22` : FILL, border: `1px solid ${c.status === s ? CLIENT_TINT[s] : LINE}`, color: c.status === s ? CLIENT_TINT[s] : MUT }}>{s}</button>
       ))}</div>
-      <div className="mt-2"><AutoTextarea value={c.notes} onChange={(v) => updateClient(c.id, { notes: v })} placeholder="Notes…" /></div>
-      <div className="mt-3">
+      <div className="mt-2"><AutoTextarea value={c.notes} onChange={(v) => updateClient(c.id, { notes: v })} placeholder="Notes…" open={notesOpen} onToggle={() => setNotesOpen((v) => !v)} /></div>
+      <div onClick={(e) => e.stopPropagation()} className="mt-3">
         <Label text="Tasks" />
         <MiniTaskList tasks={c.tasks} onChange={(tasks) => updateClient(c.id, { tasks })} />
       </div>
@@ -2569,7 +2577,6 @@ function MamaModule({ data, setData, q, navRequest, navigateToTask, completeTask
     { id: "creators", emoji: "🧑‍🎤", label: "Creators", count: data.creators.length },
     { id: "tools", emoji: "🛠️", label: "AI Tools", count: data.tools.filter((t) => t.status !== "Shipped").length },
     { id: "adminTasks", emoji: "✅", label: "Admin Tasks", count: openAdminTasks },
-    { id: "reports", emoji: "🧾", label: "Reports" },
   ];
   /* a dashboard task (this tab's own mini one, or the main Priorities hub) targets a specific
      subtab via navRequest.navSub — jump there the moment that request lands, then
@@ -2594,7 +2601,6 @@ function MamaModule({ data, setData, q, navRequest, navigateToTask, completeTask
       {sub === "creators" && <Creators data={data} setData={setData} q={q} navRequest={navRequest} />}
       {sub === "tools" && <Tools data={data} setData={setData} />}
       {sub === "adminTasks" && <AdminTasks data={data} setData={setData} />}
-      {sub === "reports" && <Reports data={data} setData={setData} />}
     </section>
   );
 }
@@ -2733,16 +2739,16 @@ function CreatorCard({ c, open, onToggle, onUpdate, onRemove, openTaskCount }) {
   const addNote = () => { const text = noteDraft.trim(); if (!text) return; onUpdate({ notes: [{ id: uid(), text, date: new Date().toISOString().slice(0, 10) }, ...c.notes] }); setNoteDraft(""); };
   const addLink = () => { if (!linkUrl.trim()) return; const url = linkUrl.trim().startsWith("http") ? linkUrl.trim() : `https://${linkUrl.trim()}`; onUpdate({ links: [...c.links, { id: uid(), label: linkLabel.trim() || url.replace(/^https?:\/\//, "").slice(0, 30), url }] }); setLinkLabel(""); setLinkUrl(""); };
   return (
-    <div className="rounded-2xl p-4" style={{ ...card, borderRadius: 18, boxShadow: open ? `0 0 0 1px ${aura}44, ${card.boxShadow}` : card.boxShadow }}>
-      <div className="flex items-start gap-3">
+    <div onClick={onToggle} className="rounded-2xl p-4" style={{ cursor: "pointer", ...card, borderRadius: 18, boxShadow: open ? `0 0 0 1px ${aura}44, ${card.boxShadow}` : card.boxShadow }}>
+      <div onClick={(e) => e.stopPropagation()} className="flex items-start gap-3">
         <div style={{ width: 42, height: 42, borderRadius: 14, flexShrink: 0, background: aura, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 600, fontSize: 15, color: "#fff" }}>{c.name.split(" ").map((w) => w[0]).slice(0, 2).join("")}</div>
         <div className="flex-1 min-w-0"><InlineEdit value={c.name} onChange={(v) => onUpdate({ name: v })} strong /><InlineEdit value={c.niche} onChange={(v) => onUpdate({ niche: v })} placeholder="Niche / platform" dim /></div>
         <button onClick={onToggle} style={iconBtn} aria-label="Expand">{open ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</button>
       </div>
       {c.links.length > 0 && (
-        <div className="flex gap-2 flex-wrap mt-2">{c.links.map((l) => (<a key={l.id} href={l.url} target="_blank" rel="noreferrer" className="rounded-full px-3 py-1 flex items-center gap-1.5" style={{ ...cardSoft, borderRadius: 99, fontSize: 12, color: C.sky, textDecoration: "none" }}><ExternalLink size={11} />{l.label}</a>))}</div>
+        <div onClick={(e) => e.stopPropagation()} className="flex gap-2 flex-wrap mt-2">{c.links.map((l) => (<a key={l.id} href={l.url} target="_blank" rel="noreferrer" className="rounded-full px-3 py-1 flex items-center gap-1.5" style={{ ...cardSoft, borderRadius: 99, fontSize: 12, color: C.sky, textDecoration: "none" }}><ExternalLink size={11} />{l.label}</a>))}</div>
       )}
-      <div className="mt-3 rounded-xl px-3 py-2" style={{ ...cardSoft, borderRadius: 12, borderLeft: `2px solid ${aura}` }}>
+      <div onClick={(e) => e.stopPropagation()} className="mt-3 rounded-xl px-3 py-2" style={{ ...cardSoft, borderRadius: 12, borderLeft: `2px solid ${aura}` }}>
         <div className="flex items-center justify-between"><div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: MUT }}>Goal{c.goals.length > 1 ? "s" : ""}</div><button onClick={() => onUpdate({ goals: [...c.goals, { id: uid(), text: "" }] })} style={{ ...iconBtn, color: aura, fontSize: 11, display: "flex", alignItems: "center", gap: 3 }}><Plus size={11} /> Add goal</button></div>
         {c.goals.length === 0 && <div style={{ fontSize: 13, color: FAINT }}>What are they trying to achieve?</div>}
         {c.goals.map((g, i) => (
@@ -2750,12 +2756,12 @@ function CreatorCard({ c, open, onToggle, onUpdate, onRemove, openTaskCount }) {
         ))}
       </div>
       <div className="flex items-center gap-3 mt-3" style={{ fontSize: 12, color: MUT }}><span><StickyNote size={11} style={{ display: "inline", marginRight: 4 }} />{c.notes.length} notes</span><span><LinkIcon size={11} style={{ display: "inline", marginRight: 4 }} />{c.links.length} links</span>{openTaskCount > 0 && <span style={{ color: aura }}>{openTaskCount} open task{openTaskCount > 1 ? "s" : ""}</span>}</div>
-      <div className="mt-3">
+      <div onClick={(e) => e.stopPropagation()} className="mt-3">
         <Label text="Tasks" />
         <MiniTaskList tasks={c.tasks} onChange={(tasks) => onUpdate({ tasks })} />
       </div>
       {open && (
-        <div className="mt-4 flex flex-col gap-4">
+        <div onClick={(e) => e.stopPropagation()} className="mt-4 flex flex-col gap-4">
           <div>
             <Label text="Research log" />
             <div className="flex gap-2"><input value={noteDraft} onChange={(e) => setNoteDraft(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addNote()} placeholder="Add a research note, insight, or idea…" className="flex-1 rounded-lg px-3 py-2" style={inputStyle} /><button onClick={addNote} style={pillAccent(aura)}>Add</button></div>
@@ -2821,19 +2827,22 @@ function AdminTasks({ data, setData }) {
   );
 }
 
-/* single admin task card: title + description are always visible (description never collapses),
-   while source / link have a pencil-toggle edit mode so a mis-logged channel can be corrected
-   after the fact without retyping the whole card. No creator tagging here anymore — a task tied
-   to a specific creator or AI tool belongs on that creator's/tool's own card instead. */
+/* single admin task card: source / link have a pencil-toggle edit mode so a mis-logged channel can
+   be corrected after the fact without retyping the whole card. No creator tagging here anymore — a
+   task tied to a specific creator or AI tool belongs on that creator's/tool's own card instead.
+   Description used to always stay fully visible here (the one place in the CRM where it never
+   collapsed) — now it expands/collapses on card click same as everywhere else, via its own lifted
+   open state. */
 function TaskCard({ t, col, onUpdate, onAdvance, onBack, onRemove }) {
   const [editing, setEditing] = useState(false);
+  const [descOpen, setDescOpen] = useState(true);
   const tint = SOURCE_TINT[t.source] || C.lilac;
   return (
-    <div data-nav-id={t.id} className="rounded-xl p-3" style={{ ...card, borderRadius: 12, borderLeft: `2px solid ${tint}` }}>
+    <div data-nav-id={t.id} onClick={() => setDescOpen((v) => !v)} className="rounded-xl p-3" style={{ cursor: "pointer", ...card, borderRadius: 12, borderLeft: `2px solid ${tint}` }}>
       <div style={{ fontSize: 13.5, textDecoration: col === "Done" ? "line-through" : "none", opacity: col === "Done" ? 0.55 : 1 }}><InlineEdit value={t.title} onChange={(v) => onUpdate({ title: v })} /></div>
-      <div style={{ fontSize: 11.5, color: MUT, marginTop: 2 }}><InlineEditArea value={t.description || ""} onChange={(v) => onUpdate({ description: v })} placeholder="Add a description…" /></div>
+      <div style={{ fontSize: 11.5, color: MUT, marginTop: 2 }}><InlineEditArea value={t.description || ""} onChange={(v) => onUpdate({ description: v })} placeholder="Add a description…" open={descOpen} onToggle={() => setDescOpen((v) => !v)} /></div>
       {!editing ? (
-        <div className="flex items-center gap-2 mt-2 flex-wrap" style={{ fontSize: 11, color: MUT }}>
+        <div onClick={(e) => e.stopPropagation()} className="flex items-center gap-2 mt-2 flex-wrap" style={{ fontSize: 11, color: MUT }}>
           <span style={{ color: tint }}>{t.source}</span>{t.link && <a href={t.link.startsWith("http") ? t.link : `https://${t.link}`} target="_blank" rel="noreferrer" style={{ color: C.sky }}><ExternalLink size={11} /></a>}
           <span className="ml-auto flex gap-1">
             <button onClick={() => setEditing(true)} style={iconBtn} aria-label="Edit source, link" title="Edit source, link">✎</button>
@@ -2843,7 +2852,7 @@ function TaskCard({ t, col, onUpdate, onAdvance, onBack, onRemove }) {
           </span>
         </div>
       ) : (
-        <div className="mt-2 flex flex-col gap-2" style={{ fontSize: 11 }}>
+        <div onClick={(e) => e.stopPropagation()} className="mt-2 flex flex-col gap-2" style={{ fontSize: 11 }}>
           <div className="flex gap-1 flex-wrap">{SOURCES.map((s) => (<button key={s} onClick={() => onUpdate({ source: s })} className="rounded-full px-2.5 py-0.5" style={{ fontSize: 11, cursor: "pointer", fontFamily: "inherit", background: t.source === s ? `${SOURCE_TINT[s]}22` : FILL, border: `1px solid ${t.source === s ? SOURCE_TINT[s] : LINE}`, color: t.source === s ? SOURCE_TINT[s] : MUT }}>{s}</button>))}</div>
           <input value={t.link || ""} onChange={(e) => onUpdate({ link: e.target.value })} placeholder="Link" className="rounded-lg px-2 py-1" style={{ ...inputStyle, fontSize: 11.5 }} />
           <button onClick={() => setEditing(false)} className="self-end" style={{ ...iconBtn, fontSize: 11 }}>Done</button>
@@ -2863,53 +2872,27 @@ function Tools({ data, setData }) {
     <section>
       <SectionHead title="AI Team tools" sub="Small single-file tools solving small Amplified problems. One card per tool." action={<AddBtn onClick={add} label="Add tool" />} />
       <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
-        {data.tools.map((t) => (
-          <div key={t.id} className="rounded-2xl p-4 flex flex-col gap-3" style={{ ...card, borderRadius: 16 }}>
-            <div className="flex items-start justify-between gap-2"><InlineEdit value={t.name} onChange={(v) => update(t.id, { name: v })} strong /><button onClick={() => remove(t.id)} style={iconBtn} aria-label="Delete"><Trash2 size={13} /></button></div>
-            <div className="flex gap-1">{TOOL_STAGES.map((s) => (<button key={s} onClick={() => update(t.id, { status: s })} className="rounded-full px-3 py-1 flex-1" style={{ fontSize: 11, cursor: "pointer", fontFamily: "inherit", background: t.status === s ? `${ST[s]}22` : FILL, border: `1px solid ${t.status === s ? ST[s] : LINE}`, color: t.status === s ? ST[s] : MUT }}>{s}</button>))}</div>
-            <div><Label text="Description" /><AutoTextarea value={t.problem} onChange={(v) => update(t.id, { problem: v })} placeholder="What does this tool do?" /></div>
-            <div><Label text="Next step" /><InlineEdit value={t.next} onChange={(v) => update(t.id, { next: v })} placeholder="The very next action" /></div>
-            <div><Label text="Tasks" /><MiniTaskList tasks={t.tasks} onChange={(tasks) => update(t.id, { tasks })} /></div>
-          </div>
-        ))}
+        {data.tools.map((t) => <ToolCard key={t.id} t={t} update={update} remove={remove} ST={ST} />)}
       </div>
       {data.tools.length === 0 && <Empty text="No tools yet." />}
     </section>
   );
 }
-
-function Reports({ data, setData }) {
-  const mk = monthKey();
-  const doneCount = data.reports.filter((r) => r.done.includes(mk)).length, total = data.reports.length, pct = total ? doneCount / total : 0;
-  const toggle = (id) => setData((d) => ({ ...d, reports: d.reports.map((r) => r.id === id ? { ...r, done: r.done.includes(mk) ? r.done.filter((m) => m !== mk) : [...r.done, mk] } : r) }));
-  const update = (id, patch) => setData((d) => ({ ...d, reports: d.reports.map((r) => (r.id === id ? { ...r, ...patch } : r)) }));
-  const add = () => setData((d) => ({ ...d, reports: [...d.reports, { id: uid(), name: "New recurring report", dueDay: 28, done: [], tasks: [] }] }));
-  const remove = (id) => setData((d) => ({ ...d, reports: d.reports.filter((r) => r.id !== id) }));
-  const today = new Date().getDate();
+/* split out from Tools purely so the description box can have its own lifted open state — same
+   "click anywhere on the card to expand/collapse its description" convention as every other card. */
+function ToolCard({ t, update, remove, ST }) {
+  const [descOpen, setDescOpen] = useState(true);
   return (
-    <section>
-      <SectionHead title="Recurring reports" sub={`Your ${monthName()} cycle. The ring closes as reports go out.`} action={<AddBtn onClick={add} label="Add report" />} />
-      <div className="flex gap-5 flex-wrap items-start">
-        <div className="rounded-2xl p-6 flex flex-col items-center" style={{ ...card, borderRadius: 18, minWidth: 170 }}>
-          <Ring pct={pct} tint={C.lilac} size={110} thick={11} label={`${doneCount}/${total}`} sub={monthName().slice(0, 3).toUpperCase()} />
-        </div>
-        <div className="flex-1 flex flex-col gap-3" style={{ minWidth: 280 }}>
-          {data.reports.map((r) => { const done = r.done.includes(mk); const overdue = !done && today > r.dueDay; return (
-            <div key={r.id} className="rounded-2xl p-4" style={{ ...card, borderRadius: 16, borderLeft: `3px solid ${done ? C.mint : overdue ? C.rose : C.amber}` }}>
-              <div className="flex items-center gap-3 flex-wrap">
-                <button onClick={() => toggle(r.id)} aria-label="Toggle done" style={{ width: 26, height: 26, borderRadius: 9, cursor: "pointer", flexShrink: 0, background: done ? C.mint : C.card, border: `1px solid ${done ? C.mint : LINE}`, display: "flex", alignItems: "center", justifyContent: "center" }}>{done && <Check size={15} color="#fff" strokeWidth={3} />}</button>
-                <div className="flex-1 min-w-0"><InlineEdit value={r.name} onChange={(v) => update(r.id, { name: v })} strong /><div style={{ fontSize: 12, color: overdue ? C.rose : MUT }}>Due day <input type="number" min="1" max="31" value={r.dueDay} onChange={(e) => update(r.id, { dueDay: Math.min(31, Math.max(1, Number(e.target.value) || 1)) })} style={{ ...inputStyle, width: 50, padding: "1px 6px", borderRadius: 6, fontSize: 12, display: "inline-block" }} /> each month{overdue && " · overdue"}{done && ` · done`}</div></div>
-                <button onClick={() => remove(r.id)} style={iconBtn} aria-label="Delete"><Trash2 size={13} /></button>
-              </div>
-              <div className="mt-3"><Label text="Tasks" /><MiniTaskList tasks={r.tasks} onChange={(tasks) => update(r.id, { tasks })} /></div>
-            </div>
-          ); })}
-          {total === 0 && <Empty text="No recurring reports set up." />}
-        </div>
-      </div>
-    </section>
+    <div onClick={() => setDescOpen((v) => !v)} className="rounded-2xl p-4 flex flex-col gap-3" style={{ cursor: "pointer", ...card, borderRadius: 16 }}>
+      <div onClick={(e) => e.stopPropagation()} className="flex items-start justify-between gap-2"><InlineEdit value={t.name} onChange={(v) => update(t.id, { name: v })} strong /><button onClick={() => remove(t.id)} style={iconBtn} aria-label="Delete"><Trash2 size={13} /></button></div>
+      <div onClick={(e) => e.stopPropagation()} className="flex gap-1">{TOOL_STAGES.map((s) => (<button key={s} onClick={() => update(t.id, { status: s })} className="rounded-full px-3 py-1 flex-1" style={{ fontSize: 11, cursor: "pointer", fontFamily: "inherit", background: t.status === s ? `${ST[s]}22` : FILL, border: `1px solid ${t.status === s ? ST[s] : LINE}`, color: t.status === s ? ST[s] : MUT }}>{s}</button>))}</div>
+      <div><Label text="Description" /><AutoTextarea value={t.problem} onChange={(v) => update(t.id, { problem: v })} placeholder="What does this tool do?" open={descOpen} onToggle={() => setDescOpen((v) => !v)} /></div>
+      <div><Label text="Next step" /><InlineEdit value={t.next} onChange={(v) => update(t.id, { next: v })} placeholder="The very next action" /></div>
+      <div onClick={(e) => e.stopPropagation()}><Label text="Tasks" /><MiniTaskList tasks={t.tasks} onChange={(tasks) => update(t.id, { tasks })} /></div>
+    </div>
   );
 }
+
 
 /* ================= shared ================= */
 const inputStyle = { background: "rgba(255,255,255,0.05)", border: `1px solid ${LINE}`, color: C.ink, fontSize: 13.5, fontFamily: "'Outfit', sans-serif" };
@@ -2954,7 +2937,7 @@ function InlineEdit({ value, onChange, placeholder, strong, dim }) {
     );
   }
   return (
-    <div onDoubleClick={(e) => { e.stopPropagation(); setEditing(true); }} title="Double-click to edit" className="w-full"
+    <div onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => { e.stopPropagation(); setEditing(true); }} title="Double-click to edit" className="w-full"
       style={{ ...sharedFont, color: value ? sharedFont.color : FAINT, border: "1px solid transparent", borderRadius: 6, padding: "2px 4px", margin: "-2px -4px", cursor: "text", minHeight: "1.3em", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
       {value || placeholder || ""}
     </div>
@@ -2968,9 +2951,19 @@ function InlineEdit({ value, onChange, placeholder, strong, dim }) {
    edit state instead, so what you see while editing matches what you see once you commit. Enter
    inserts a newline like a normal textarea; blur or Escape leaves edit mode (commit/cancel), and
    Cmd/Ctrl+Enter commits explicitly without needing to click away. */
-function InlineEditArea({ value, onChange, placeholder, dim }) {
+/* `open`/`onToggle` are optional, same controlled pattern as AutoTextarea/ScriptBox: pass them so a
+   parent card's click can expand/collapse this description too (this used to always stay fully
+   visible — overridden so every description box in the CRM behaves the same way instead of Admin
+   Tasks/mini-task descriptions being the one exception). Omit them and it stays exactly as before,
+   always fully visible with no collapse. Collapsing only affects the view (non-editing) state —
+   double-click still opens the full auto-growing textarea to edit, uncollapsed, same as ever. */
+function InlineEditArea({ value, onChange, placeholder, dim, open, onToggle }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value || "");
+  const [collapsedState, setCollapsedState] = useState(false);
+  const controlled = open !== undefined;
+  const collapsed = controlled ? !open : collapsedState;
+  const toggle = () => (controlled ? onToggle && onToggle() : setCollapsedState((v) => !v));
   const ref = useRef(null);
   useEffect(() => { if (!editing) setDraft(value || ""); }, [value, editing]);
   const resize = () => {
@@ -2984,6 +2977,7 @@ function InlineEditArea({ value, onChange, placeholder, dim }) {
   const commit = () => { setEditing(false); if (draft !== (value || "")) onChange(draft); };
   const cancel = () => { setDraft(value || ""); setEditing(false); };
   const sharedFont = { color: dim ? MUT : C.ink, fontSize: 13, fontWeight: 400, fontFamily: "'Outfit', sans-serif" };
+  const long = (value || "").length > 120 || (value || "").includes("\n");
   if (editing) {
     return (
       <textarea ref={ref} value={draft} onChange={(e) => setDraft(e.target.value)} onInput={resize} onBlur={commit}
@@ -2994,19 +2988,35 @@ function InlineEditArea({ value, onChange, placeholder, dim }) {
     );
   }
   return (
-    <div onDoubleClick={(e) => { e.stopPropagation(); setEditing(true); }} title="Double-click to edit" className="w-full"
-      style={{ ...sharedFont, color: value ? sharedFont.color : FAINT, border: "1px solid transparent", borderRadius: 6, padding: "2px 4px", margin: "-2px -4px", cursor: "text", minHeight: "1.3em", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-      {value || placeholder || ""}
+    <div onClick={(e) => e.stopPropagation()}>
+      <div onDoubleClick={(e) => { e.stopPropagation(); setEditing(true); }} title="Double-click to edit" className="w-full"
+        style={{ ...sharedFont, color: value ? sharedFont.color : FAINT, border: "1px solid transparent", borderRadius: 6, padding: "2px 4px", margin: "-2px -4px", cursor: "text", minHeight: "1.3em", maxHeight: collapsed ? 40 : "none", overflow: collapsed ? "hidden" : "visible", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+        {value || placeholder || ""}
+      </div>
+      {long && (
+        <button onClick={toggle} className="flex items-center gap-1 mt-0.5" style={{ ...iconBtn, padding: 0, fontSize: 10, color: FAINT }}>
+          {collapsed ? <ChevronDown size={10} /> : <ChevronUp size={10} />}
+          <span>{collapsed ? "Expand" : "Collapse"}</span>
+        </button>
+      )}
     </div>
   );
 }
-/* free-text description box used across Deals (caption/instructions/notes) and AI Tools
-   (description) — auto-grows to fit whatever is typed or pasted in, including a big pasted
-   paragraph, instead of staying pinned to a tiny fixed height. A manual collapse/expand toggle
-   appears once there's enough text to be worth tucking away, so a long note doesn't have to
-   dominate the card once you're done editing it. */
-function AutoTextarea({ value, onChange, placeholder }) {
-  const [collapsed, setCollapsed] = useState(false);
+/* free-text description box used across Deals (caption/instructions/notes), Clients, AI Tools
+   (description), and Life Admin item descriptions — auto-grows to fit whatever is typed or pasted
+   in, including a big pasted paragraph, instead of staying pinned to a tiny fixed height. A manual
+   collapse/expand toggle appears once there's enough text to be worth tucking away, so a long note
+   doesn't have to dominate the card once you're done editing it.
+   `open`/`onToggle` are optional: pass them to let a parent card drive the collapse state itself
+   (e.g. so clicking anywhere on the card also expands/collapses this box, matching ScriptBox's
+   pattern) — omit them and it manages its own state exactly as before. Either way, clicking into
+   the textarea itself or the toggle link stops the click from bubbling up to a card-level handler,
+   so typing/pasting/collapsing this box never also fires an unrelated card click-toggle. */
+function AutoTextarea({ value, onChange, placeholder, open, onToggle }) {
+  const [collapsedState, setCollapsedState] = useState(false);
+  const controlled = open !== undefined;
+  const collapsed = controlled ? !open : collapsedState;
+  const toggle = () => (controlled ? onToggle && onToggle() : setCollapsedState((v) => !v));
   const ref = useRef(null);
   /* grows the box to fit whatever's inside it — resized synchronously (useLayoutEffect, so it
      happens before the browser paints, not a tick later) on every value change, AND directly from
@@ -3023,12 +3033,12 @@ function AutoTextarea({ value, onChange, placeholder }) {
   useLayoutEffect(resize, [value, collapsed]);
   const long = (value || "").length > 120 || (value || "").includes("\n");
   return (
-    <div>
+    <div onClick={(e) => e.stopPropagation()}>
       <textarea ref={ref} value={value} onChange={(e) => onChange(e.target.value)} onInput={resize} placeholder={placeholder}
         rows={2} className="w-full rounded-lg px-3 py-2"
         style={{ ...inputStyle, lineHeight: 1.45, resize: "vertical", overflow: collapsed ? "hidden" : "auto", maxHeight: collapsed ? 52 : "none", boxSizing: "border-box", whiteSpace: "pre-wrap", overflowWrap: "break-word" }} />
       {long && (
-        <button onClick={() => setCollapsed((v) => !v)} className="flex items-center gap-1 mt-1" style={{ ...iconBtn, padding: 0, fontSize: 10, color: FAINT }}>
+        <button onClick={toggle} className="flex items-center gap-1 mt-1" style={{ ...iconBtn, padding: 0, fontSize: 10, color: FAINT }}>
           {collapsed ? <ChevronDown size={10} /> : <ChevronUp size={10} />}
           <span>{collapsed ? "Expand" : "Collapse"}</span>
         </button>
@@ -3039,7 +3049,7 @@ function AutoTextarea({ value, onChange, placeholder }) {
 
 /* lightweight auto-growing textarea for one-off capture composers — the "Description (optional)"
    fields on Life Admin, Admin Tasks, and every MiniTaskList "add a task" row (Deals, Clients,
-   Creators, AI Tools, Reports all share MiniTaskList). These were plain fixed-height, resize-none
+   Creators, AI Tools all share MiniTaskList). These were plain fixed-height, resize-none
    textareas, so pasting anything longer than the box just sat there needing a scroll instead of
    the box growing to show it — this fixes that the same way AutoTextarea does for the bigger
    Caption/Instructions/Notes boxes, minus the collapse toggle (not useful here: these composers
