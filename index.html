@@ -530,7 +530,7 @@ function computeContentUrgency(content) {
      (25%) same as before, then adds another 25% for every additional day it sits overdue instead
      of staying flat forever once it slips past today. */
   const dueTodayBonus = (content.items || []).reduce((sum, i) => {
-    if (!i.due || i.filmed) return sum;
+    if (!i.due || i.status === "Posted") return sum;
     const dU = daysUntil(i.due);
     if (dU > 0) return sum;
     const overdueDays = dU < 0 ? -dU : 0;
@@ -1406,11 +1406,15 @@ function completePriorityTask(setAlly, setMama, task) {
       setMama((d) => ({ ...d, tools: d.tools.map((tl) => ((tl.tasks || []).some((t) => t.id === task.id) ? { ...tl, tasks: tl.tasks.map((t) => (t.id === task.id ? { ...t, done: true, doneAt: now } : t)) } : tl)) }));
       return;
     /* content's two hub lists ("To Film" deadlines, "To Edit" deadlines) each have their own
-       "done" mechanism on the Content tab itself — filmed:true for the first, POSTED for the
-       second (which also resets lastPosted, exactly like clicking POSTED on the Content tab
-       itself does, so the ring reacts the same way whichever place you tick it off from). */
+       "done" mechanism on the Content tab itself: ticking a "To Film" item advances it straight
+       to "To Edit" (same as the → arrow on its card) and resets the due date, since there's no
+       separate "filmed" flag anymore — the column alone decides whether a deadline is a filming
+       date or an editing date, so nothing can silently disable it out of sync with reality.
+       Ticking a "To Edit" item marks it POSTED (which also resets lastPosted, exactly like
+       clicking POSTED on the Content tab itself does, so the ring reacts the same way whichever
+       place you tick it off from). */
     case "contentToFilm":
-      setAlly((d) => ({ ...d, content: { ...d.content, items: d.content.items.map((i) => (i.id === task.id ? { ...i, filmed: true } : i)) } }));
+      setAlly((d) => ({ ...d, content: { ...d.content, items: d.content.items.map((i) => (i.id === task.id ? { ...i, status: "To Edit", due: null } : i)) } }));
       return;
     case "contentToEdit":
       setAlly((d) => ({ ...d, content: { ...d.content, items: d.content.items.map((i) => (i.id === task.id ? { ...i, status: "Posted", postedAt: todayISO() } : i)), lastPosted: todayISO() } }));
@@ -1486,7 +1490,7 @@ function ContentPillarCard({ content, go, rank, pct, onNavigate, onComplete }) {
   /* two separate deadline feeds so filming deadlines and editing deadlines stay visually apart —
      title pulls through by title only (never the script/desc box), same rule every other pillar
      follows. The ring above stays purely days-since-post driven regardless of what's in either list. */
-  const toFilmDated = content.items.filter((i) => i.status === "To Film" && i.due && !i.filmed).sort((a, b) => daysUntil(a.due) - daysUntil(b.due)).slice(0, 3);
+  const toFilmDated = content.items.filter((i) => i.status === "To Film" && i.due).sort((a, b) => daysUntil(a.due) - daysUntil(b.due)).slice(0, 3);
   const toEditDated = content.items.filter((i) => i.status === "To Edit" && i.due).sort((a, b) => daysUntil(a.due) - daysUntil(b.due)).slice(0, 3);
   return (
     <div onClick={() => go("content")} className="rounded-2xl p-5" style={{ ...card, borderRadius: 18, borderLeft: `4px solid ${mod.accent}`, cursor: "pointer" }}>
@@ -1517,7 +1521,7 @@ function ContentPillarCard({ content, go, rank, pct, onNavigate, onComplete }) {
             <div style={{ fontSize: 10, letterSpacing: "0.06em", textTransform: "uppercase", color: MUT }}>To Film</div>
             {toFilmDated.map((i) => (
               <div key={i.id} onClick={(e) => e.stopPropagation()} className="flex items-center gap-1.5" style={{ fontSize: 12 }}>
-                <button onClick={(e) => { e.stopPropagation(); onComplete && onComplete({ id: i.id, sourceType: "contentToFilm" }); }} aria-label="Mark filmed" title="Mark filmed" style={{ width: 14, height: 14, borderRadius: 5, cursor: "pointer", flexShrink: 0, padding: 0, background: "transparent", border: `1px solid ${LINE}` }} />
+                <button onClick={(e) => { e.stopPropagation(); onComplete && onComplete({ id: i.id, sourceType: "contentToFilm" }); }} aria-label="Move to In Edit" title="Move to In Edit" style={{ width: 14, height: 14, borderRadius: 5, cursor: "pointer", flexShrink: 0, padding: 0, background: "transparent", border: `1px solid ${LINE}` }} />
                 <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, cursor: "pointer" }} onClick={(e) => { e.stopPropagation(); onNavigate && onNavigate({ id: i.id, navTab: "content" }); }}>
                   <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{i.title}</span>
                   <DueChip due={i.due} />
@@ -1919,7 +1923,7 @@ function ContentModule({ data, setData, q }) {
   const openIfNot = (id) => setOpenDesc((o) => (o[id] ? o : { ...o, [id]: true }));
   const patch = (p) => setData((d) => ({ ...d, content: { ...d.content, ...p } }));
   const ql = (q || "").toLowerCase();
-  const add = () => { const t = title.trim(); if (!t) return; patch({ items: [{ id: uid(), title: t, desc: description.trim(), status: "Ideas", created: todayISO(), due: null, filmed: false }, ...content.items] }); setTitle(""); setDescription(""); };
+  const add = () => { const t = title.trim(); if (!t) return; patch({ items: [{ id: uid(), title: t, desc: description.trim(), status: "Ideas", created: todayISO(), due: null }, ...content.items] }); setTitle(""); setDescription(""); };
   const move = (id, dir) => setData((d) => {
     const items = d.content.items.map((i) => {
       if (i.id !== id) return i;
@@ -2003,16 +2007,9 @@ function ContentModule({ data, setData, q }) {
                   <div key={i.id} data-nav-id={i.id} onClick={toggleDesc} className="rounded-lg" style={{ cursor: "pointer", background: "rgba(255,255,255,0.035)", border: `1px solid ${LINE}`, borderLeft: `2px solid ${CONTENT_TINT[col]}`, borderRadius: 10, padding: "11px 13px" }}>
                     <InlineEdit value={i.title} onChange={(v) => updateItem(i.id, { title: v })} strong />
                     <ScriptBox value={i.desc || ""} isHtml={!!i.descHtml} open={descOpen} onFocus={() => openIfNot(i.id)} onChange={(v) => updateItem(i.id, { desc: v, descHtml: true })} onToggle={toggleDesc} />
-                    <div className="flex items-center gap-2 mt-1.5 flex-wrap" style={{ fontSize: 10.5, opacity: i.filmed ? 0.55 : 1 }}>
-                      <input type="date" value={i.due || ""} disabled={i.filmed && col === "To Film"} onClick={(e) => e.stopPropagation()} onChange={(e) => updateItem(i.id, { due: e.target.value || null })} className="rounded-md" style={{ ...darkInput, fontSize: 10.5, padding: "3px 5px", cursor: i.filmed && col === "To Film" ? "not-allowed" : "text" }} aria-label="Deadline (optional)" title="Deadline (optional) — auto-sets priority, pulls this idea's title onto the main hub (To Film or To Edit column depending on where it sits)" />
-                      {(!i.filmed || col !== "To Film") && <DueChip due={i.due} />}
-                      <button
-                        onClick={(e) => { e.stopPropagation(); updateItem(i.id, { filmed: true }); }}
-                        onDoubleClick={(e) => { e.stopPropagation(); updateItem(i.id, { filmed: false }); }}
-                        className="rounded-full px-2 py-0.5" style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: "0.03em", cursor: "pointer", fontFamily: "inherit", background: i.filmed ? `${C.mint}22` : FILL, border: `1px solid ${i.filmed ? C.mint : LINE}`, color: i.filmed ? C.mint : MUT }}
-                        title={i.filmed ? "Deadline turned off — double-click to turn it back on" : "Mark filmed — turns off this idea's deadline/priority until you double-click it back on"}>
-                        {i.filmed ? "✓ FILMED" : "FILMED"}
-                      </button>
+                    <div className="flex items-center gap-2 mt-1.5 flex-wrap" style={{ fontSize: 10.5 }}>
+                      <input type="date" value={i.due || ""} onClick={(e) => e.stopPropagation()} onChange={(e) => updateItem(i.id, { due: e.target.value || null })} className="rounded-md" style={{ ...darkInput, fontSize: 10.5, padding: "3px 5px" }} aria-label="Deadline (optional)" title="Deadline (optional) — auto-sets priority, pulls this idea's title onto the main hub's To Film or To Edit deadline list depending on which column it's sitting in right now" />
+                      <DueChip due={i.due} />
                     </div>
                     <div className="flex items-center gap-1 mt-1.5"><span className="ml-auto flex gap-1">
                       {col !== "Idea" && <button onClick={(e) => { e.stopPropagation(); move(i.id, -1); }} style={{ ...iconBtn, padding: 2 }} aria-label="Back">←</button>}
