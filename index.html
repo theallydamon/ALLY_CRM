@@ -367,7 +367,7 @@ const MODULES = {
   mama:      { emoji: "💼", label: "Mama",      accent: C.brown, bg: C.brownBg },
   deals:     { emoji: "🤝", label: "Deals",     accent: C.pink,  bg: C.pinkBg },
 };
-const TAB_ORDER = ["overview", "content", "song", "unlocks", "apartment", "lifeAdmin", "mama", "deals"];
+const TAB_ORDER = ["overview", "content", "song", "lifeAdmin", "mama", "deals"];
 
 /* ---------- storage shim: window.storage in the app, localStorage in the repo ---------- */
 const store = {
@@ -451,16 +451,47 @@ function migrateAlly(a) {
   if (!out.lifeAdmin || !Array.isArray(out.lifeAdmin.items)) {
     out = { ...out, lifeAdmin: { items: (out.lifeAdmin && out.lifeAdmin.items) || [] } };
   }
+  /* Brand deals moved from a single 7-step stage string ("Brief"..."Posted") to the Reel/Story
+     model: a content piece, per-stage deadlines, and a Script box. Fold any old deal over once —
+     map its old stage onto the nearest new Reel stage, carry its single `due` onto that stage's
+     deadline, and default everything else. Idempotent: a deal that already has a valid new stage
+     and a piece is returned untouched. */
+  if (out.deals && Array.isArray(out.deals.deals)) {
+    const OLD_STAGE_MAP = { "Brief": "script", "Script": "script", "Script approval": "approval", "Film": "film", "Edit": "film", "Final approval": "feedback", "Posted": "done" };
+    const validStages = REEL_STAGE_KEYS.concat("done");
+    const migrated = out.deals.deals.map((d) => {
+      if (d.piece !== undefined && validStages.includes(d.stage || "script")) return d;
+      const newStage = OLD_STAGE_MAP[d.stage] || (REEL_STAGE_KEYS.includes(d.stage) ? d.stage : "script");
+      const stageDue = (d.stageDue && typeof d.stageDue === "object") ? d.stageDue : (d.due && newStage !== "done" ? { [newStage]: d.due } : {});
+      return { ...d, piece: d.piece || "Reel", stage: newStage, stageDue, storyDue: d.storyDue || "", script: d.script || "", caption: d.caption || "" };
+    });
+    out = { ...out, deals: { ...out.deals, deals: migrated } };
+  }
   return out;
 }
 const DEAL_STAGES = ["Brief", "Script", "Script approval", "Film", "Edit", "Final approval", "Posted"];
+/* Reel production stages. Each carries its own per-stage deadline (deal.stageDue[key]); the
+   current stage (deal.stage) is what surfaces in the Priorities hub, titled by `hub`. When the
+   last stage is completed, deal.stage becomes "done". Stories skip stages entirely and use a
+   single deal.storyDue deadline, surfacing in the hub as "Post story (Brand)". */
+const REEL_STAGES = [
+  { key: "script",   label: "Script",            hub: "Write script" },
+  { key: "approval", label: "Send for approval", hub: "Send script for approval" },
+  { key: "film",     label: "Film + edit",       hub: "Film + edit" },
+  { key: "feedback", label: "Send for feedback", hub: "Send for feedback" },
+  { key: "post",     label: "Scheduled to post", hub: "Post" },
+];
+const REEL_STAGE_KEYS = REEL_STAGES.map((s) => s.key);
+const dealHeadlineDue = (x) => ((x.piece || "Reel") === "Story")
+  ? (x.storyDue || "")
+  : (((x.stageDue || {})[x.stage || "script"]) || "");
 const CLIENT_STATUSES = ["Lead", "Active", "Paused"];
 const MIX_ROUTES = ["Fiverr", "Crighton", "Cassidy's boyfriend", "DIY"];
 const SOURCES = ["Discord", "Basecamp", "Email", "Sheets", "Meeting", "Self"];
 const SOURCE_TINT = { Discord: C.lilac, Basecamp: C.amber, Email: C.sky, Sheets: C.mint, Meeting: C.pink, Self: C.peach };
 const TASK_COLS = ["To do", "Doing", "Done"];
 const TOOL_STAGES = ["Idea", "Building", "Shipped"];
-const PRIORITY_PILLARS = ["mama", "song", "content", "deals", "unlocks", "lifeAdmin"];
+const PRIORITY_PILLARS = ["mama", "song", "content", "deals", "lifeAdmin"];
 
 /* ---------- priority engine: shared urgency scoring across all 6 pillars ---------- */
 const PRIORITY_LEVELS = ["Low", "Medium", "High"];
@@ -576,26 +607,25 @@ function collectPriorityTasks(ally, mama) {
       });
     }
   }
-  ((ally.unlocks.ecosystem && ally.unlocks.ecosystem.pillars) || []).flatMap((p) => p.benefits).filter((b) => b.state === "progress" && !b.paused).forEach((b) => out.push({
-    id: b.id, pillar: "unlocks", title: b.label, due: b.due || null,
-    priority: b.priority || "Medium", lastProgress: b.lastProgress || null, created: b.created || null,
-    sourceType: "unlocksBenefit", navTab: "unlocks", navSub: null, navOpenId: null,
-  }));
-  (ally.unlocks.chains || []).forEach((ch) => ch.nodes.filter((n) => n.status === "active" && !n.paused).forEach((n) => out.push({
-    id: n.id, pillar: "unlocks", title: n.label, due: n.due || null,
-    priority: n.priority || "Medium", lastProgress: n.lastProgress || null, created: n.created || null,
-    sourceType: "unlocksNode", navTab: "unlocks", navSub: null, navOpenId: null,
-  })));
-  ally.deals.deals.filter((d) => d.stage !== "Posted" && !d.paused).forEach((d) => out.push({
-    id: d.id, pillar: "deals", title: d.brand, due: d.due || null,
-    priority: d.priority || "Medium", lastProgress: d.lastProgress || null, created: d.created || null,
-    sourceType: "deal", navTab: "deals", navSub: null, navOpenId: d.id,
-  }));
-  ally.deals.deals.forEach((d) => (d.tasks || []).filter((t) => !t.done && !t.paused).forEach((t) => out.push({
-    id: t.id, pillar: "deals", title: `${t.title} (${d.brand})`, due: t.due || null,
-    priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
-    sourceType: "dealTask", navTab: "deals", navSub: null, navOpenId: d.id,
-  })));
+  /* each active deal surfaces its CURRENT stage as the hub task: a Reel shows the current
+     production stage ("Write script (Brand)", "Film + edit (Brand)"...) with that stage's own
+     deadline; a Story shows "Post story (Brand)" with its single deadline. Done deals drop out. */
+  ally.deals.deals.filter((d) => (d.type || "Active") === "Active" && (d.stage || "script") !== "done" && !d.paused).forEach((d) => {
+    if ((d.piece || "Reel") === "Story") {
+      out.push({
+        id: d.id, pillar: "deals", title: `Post story (${d.brand})`, due: d.storyDue || null,
+        priority: d.priority || "Medium", lastProgress: d.lastProgress || null, created: d.created || null,
+        sourceType: "deal", navTab: "deals", navSub: null, navOpenId: d.id,
+      });
+    } else {
+      const st = REEL_STAGES.find((s) => s.key === (d.stage || "script"));
+      if (st) out.push({
+        id: d.id, pillar: "deals", title: `${st.hub} (${d.brand})`, due: (d.stageDue || {})[st.key] || null,
+        priority: d.priority || "Medium", lastProgress: d.lastProgress || null, created: d.created || null,
+        sourceType: "deal", navTab: "deals", navSub: null, navOpenId: d.id,
+      });
+    }
+  });
   ally.deals.clients.forEach((c) => (c.tasks || []).filter((t) => !t.done && !t.paused).forEach((t) => out.push({
     id: t.id, pillar: "deals", title: `${t.title} (${c.name})`, due: t.due || null,
     priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
@@ -1300,8 +1330,6 @@ function AllyCRM() {
               {tab === "overview" && <PriorityDashboard ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} navigateToTask={navigateToTask} completeTask={completeTask} />}
               {tab === "content" && <ContentModule data={ally} setData={setAlly} q={q} />}
               {tab === "song" && <SongModule data={ally} setData={setAlly} />}
-              {tab === "unlocks" && <UnlocksModule data={ally} setData={setAlly} />}
-              {tab === "apartment" && <ApartmentModule data={ally} setData={setAlly} unlocked={aptUnlocked} go={go} q={q} />}
               {tab === "lifeAdmin" && <LifeAdminModule data={ally} setData={setAlly} q={q} />}
               {tab === "deals" && <DealsModule data={ally} setData={setAlly} q={q} navRequest={navRequest} />}
               {tab === "mama" && <MamaModule data={mama} setData={setMama} q={q} navRequest={navRequest} navigateToTask={navigateToTask} completeTask={completeTask} />}
@@ -1390,10 +1418,15 @@ function completePriorityTask(setAlly, setMama, task) {
       setAlly((d) => ({ ...d, unlocks: { ...d.unlocks, chains: d.unlocks.chains.map((ch) => ({ ...ch, nodes: ch.nodes.map((n) => (n.id === task.id ? { ...n, status: "done" } : n)) })) } }));
       return;
     case "deal":
-      setAlly((d) => ({ ...d, deals: { ...d.deals, deals: d.deals.deals.map((x) => (x.id === task.id ? { ...x, stage: "Posted" } : x)) } }));
-      return;
-    case "dealTask":
-      setAlly((d) => ({ ...d, deals: { ...d.deals, deals: d.deals.deals.map((x) => ((x.tasks || []).some((t) => t.id === task.id) ? { ...x, tasks: x.tasks.map((t) => (t.id === task.id ? { ...t, done: true, doneAt: now } : t)) } : x)) } }));
+      /* completing a deal's hub task advances it to the next production stage; a Story (or the
+         final Reel stage) goes straight to "done". */
+      setAlly((d) => ({ ...d, deals: { ...d.deals, deals: d.deals.deals.map((x) => {
+        if (x.id !== task.id) return x;
+        if ((x.piece || "Reel") === "Story") return { ...x, stage: "done" };
+        const i = REEL_STAGE_KEYS.indexOf(x.stage || "script");
+        const next = i < REEL_STAGE_KEYS.length - 1 ? REEL_STAGE_KEYS[i + 1] : "done";
+        return { ...x, stage: next };
+      }) } }));
       return;
     case "clientTask":
       setAlly((d) => ({ ...d, deals: { ...d.deals, clients: d.deals.clients.map((c) => ((c.tasks || []).some((t) => t.id === task.id) ? { ...c, tasks: c.tasks.map((t) => (t.id === task.id ? { ...t, done: true, doneAt: now } : t)) } : c)) } }));
@@ -2367,12 +2400,12 @@ function LifeAdminModule({ data, setData, q }) {
     setData((d) => ({ ...d, lifeAdmin: { ...d.lifeAdmin, items: [{ id: uid(), title: t, description: description.trim(), status: "To do", created: todayISO(), due: due || null, priority: priorityForNewTask(due || null), lastProgress: null }, ...(d.lifeAdmin.items || [])] } }));
     setTitle(""); setDescription(""); setDue("");
   };
-  const advance = (id) => setData((d) => ({ ...d, lifeAdmin: { ...d.lifeAdmin, items: d.lifeAdmin.items.map((t) => { if (t.id !== id) return t; const status = TASK_COLS[Math.min(TASK_COLS.indexOf(t.status) + 1, 2)]; return { ...t, status, doneAt: status === "Done" ? Date.now() : t.doneAt }; }) } }));
-  const back = (id) => setData((d) => ({ ...d, lifeAdmin: { ...d.lifeAdmin, items: d.lifeAdmin.items.map((t) => { if (t.id !== id) return t; const status = TASK_COLS[Math.max(TASK_COLS.indexOf(t.status) - 1, 0)]; return { ...t, status, doneAt: status === "Done" ? t.doneAt : null }; }) } }));
+  const toggleDone = (id) => setData((d) => ({ ...d, lifeAdmin: { ...d.lifeAdmin, items: d.lifeAdmin.items.map((t) => { if (t.id !== id) return t; const done = t.status === "Done"; return { ...t, status: done ? "To do" : "Done", doneAt: done ? null : Date.now() }; }) } }));
   const update = (id, p) => setData((d) => ({ ...d, lifeAdmin: { ...d.lifeAdmin, items: d.lifeAdmin.items.map((t) => (t.id === id ? { ...t, ...p } : t)) } }));
   const remove = (id) => setData((d) => ({ ...d, lifeAdmin: { ...d.lifeAdmin, items: d.lifeAdmin.items.filter((t) => t.id !== id) } }));
   const clearDone = () => setData((d) => ({ ...d, lifeAdmin: { ...d.lifeAdmin, items: d.lifeAdmin.items.filter((t) => t.status !== "Done") } }));
-  const visible = ql ? items.filter((t) => t.title.toLowerCase().includes(ql) || (t.description || "").toLowerCase().includes(ql)) : items;
+  const matched = ql ? items.filter((t) => t.title.toLowerCase().includes(ql) || (t.description || "").toLowerCase().includes(ql)) : items;
+  const visible = matched.slice().sort((a, b) => (a.status === "Done" ? 1 : 0) - (b.status === "Done" ? 1 : 0));
   return (
     <section>
       <SectionHead title="Life admin" sub="Your own stuff: paperwork, errands, calls to make. Same due date and priority logic as everywhere else." />
@@ -2387,39 +2420,29 @@ function LifeAdminModule({ data, setData, q }) {
         </div>
       </div>
       <div style={{ borderTop: `1px solid ${LINE}`, margin: "-2px 0 20px" }} />
-      <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))" }}>
-        {TASK_COLS.map((col) => {
-          const colItems = visible.filter((t) => t.status === col);
+      {/* flat card grid — no columns. Cards fill 3-wide on desktop and wrap onto new rows
+          indefinitely as they're added; a per-card checkbox marks done (done cards sink to the
+          bottom, dimmed) and "Clear done" sweeps them out. */}
+      <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(400px, 1fr))" }}>
+        {visible.map((t) => {
+          const descOpen = openDesc[t.id] !== undefined ? openDesc[t.id] : true;
+          const toggleDesc = () => setOpenDesc((o) => ({ ...o, [t.id]: !descOpen }));
+          const isDone = t.status === "Done";
           return (
-            <div key={col} className="rounded-2xl p-3" style={{ ...cardSoft, borderRadius: 16 }}>
-              <div className="flex items-center justify-between mb-3 px-1"><span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 600, fontSize: 12, letterSpacing: "0.04em", textTransform: "uppercase" }}>{col}</span><span style={{ fontSize: 12, color: MUT }}>{colItems.length}</span></div>
-              <div className="flex flex-col gap-2">
-                {colItems.map((t) => {
-                  const descOpen = openDesc[t.id] !== undefined ? openDesc[t.id] : true;
-                  const toggleDesc = () => setOpenDesc((o) => ({ ...o, [t.id]: !descOpen }));
-                  return (
-                  <div key={t.id} data-nav-id={t.id} onClick={toggleDesc} className="rounded-xl p-3" style={{ cursor: "pointer", ...card, borderRadius: 12, borderLeft: `2px solid ${C.rose}` }}>
-                    <div style={{ fontSize: 13.5, textDecoration: col === "Done" ? "line-through" : "none", opacity: col === "Done" ? 0.55 : 1 }}><InlineEdit value={t.title} onChange={(v) => update(t.id, { title: v })} /></div>
-                    {/* AutoTextarea instead of InlineEdit here specifically — same auto-grow-on-paste
-                        behavior as the content tab's script box, so a long pasted description isn't
-                        squashed into a single-line input like the title above it. */}
-                    <div style={{ marginTop: 4 }}><AutoTextarea value={t.description || ""} onChange={(v) => update(t.id, { description: v })} placeholder="Add a description…" open={descOpen} onToggle={toggleDesc} /></div>
-                    <div className="flex items-center gap-2 mt-2 flex-wrap" style={{ fontSize: 11, color: MUT }}>
-                      <span className="ml-auto flex gap-1">
-                        {col !== "To do" && <button onClick={(e) => { e.stopPropagation(); back(t.id); }} style={iconBtn} aria-label="Back">←</button>}
-                        {col !== "Done" && <button onClick={(e) => { e.stopPropagation(); advance(t.id); }} style={{ ...iconBtn, color: C.mint }} aria-label="Forward">→</button>}
-                        <button onClick={(e) => { e.stopPropagation(); remove(t.id); }} style={iconBtn} aria-label="Delete"><X size={12} /></button>
-                      </span>
-                    </div>
-                    {col !== "Done" && <PriorityControls item={t} onChange={(p) => update(t.id, p)} />}
-                  </div>
-                  );
-                })}
-                {colItems.length === 0 && <div className="rounded-xl p-3 text-center" style={{ border: `1px dashed ${LINE}`, fontSize: 12, color: FAINT, borderRadius: 12 }}>Empty</div>}
+            <div key={t.id} data-nav-id={t.id} onClick={toggleDesc} className="rounded-2xl p-3" style={{ cursor: "pointer", ...card, borderRadius: 14, borderLeft: `2px solid ${C.rose}`, opacity: isDone ? 0.55 : 1, height: "fit-content" }}>
+              <div className="flex items-start gap-2">
+                <button onClick={(e) => { e.stopPropagation(); toggleDone(t.id); }} aria-label="Toggle done" style={{ marginTop: 2, width: 18, height: 18, borderRadius: 6, cursor: "pointer", flexShrink: 0, background: isDone ? C.mint : C.card, border: `1px solid ${isDone ? C.mint : LINE}`, display: "flex", alignItems: "center", justifyContent: "center" }}>{isDone && <Check size={11} color="#fff" strokeWidth={3} />}</button>
+                <div className="flex-1 min-w-0" style={{ fontSize: 13.5, textDecoration: isDone ? "line-through" : "none" }}><InlineEdit value={t.title} onChange={(v) => update(t.id, { title: v })} /></div>
+                <button onClick={(e) => { e.stopPropagation(); remove(t.id); }} style={{ ...iconBtn, padding: 2 }} aria-label="Delete"><X size={12} /></button>
               </div>
+              {/* AutoTextarea (not InlineEdit) so a long pasted description auto-grows instead of
+                  being squashed into a single line. */}
+              <div style={{ marginTop: 4, marginLeft: 26 }}><AutoTextarea value={t.description || ""} onChange={(v) => update(t.id, { description: v })} placeholder="Add a description…" open={descOpen} onToggle={toggleDesc} /></div>
+              {!isDone && <div style={{ marginLeft: 26 }}><PriorityControls item={t} onChange={(p) => update(t.id, p)} /></div>}
             </div>
           );
         })}
+        {visible.length === 0 && <Empty text={ql ? "No item matches your search." : "Nothing here yet. Add your first bit of life admin above."} />}
       </div>
       {items.some((t) => t.status === "Done") && <button onClick={clearDone} className="mt-4" style={{ ...iconBtn, fontSize: 12 }}>Clear done</button>}
     </section>
@@ -2515,36 +2538,73 @@ function TaskPreviewList({ tasks }) {
 }
 
 function DealCard({ x, open, onToggleOpen, update, remove, isProspect }) {
-  /* card accent follows Active/Prospect status (green/blue), not a random decorative aura —
-     so at a glance every active deal is green and every prospect is blue, consistently. */
+  /* card accent follows Active/Prospect status (green/blue). Two layouts, driven by the
+     content-piece toggle:
+       • Reel  → the 5-stage production line, each stage carrying its OWN deadline. The current
+                 stage (x.stage) is highlighted; its deadline is the card's headline deadline and
+                 the one that feeds the Priorities hub ("Write script (Brand)"...). Marking a later
+                 stage current ticks off the earlier ones. Reel gets Script + Caption boxes.
+       • Story → no stages: a single deadline (x.storyDue → "Post story (Brand)" in the hub) and a
+                 Caption box. */
   const tint = isProspect ? C.sky : C.mint;
-  const idx = DEAL_STAGES.indexOf(x.stage);
   const typeTint = DEAL_TYPE_TINT[isProspect ? "Prospect" : "Active"];
+  const piece = x.piece || "Reel";
+  const stageKey = x.stage || "script";
+  const done = stageKey === "done";
+  const stageIdx = REEL_STAGE_KEYS.indexOf(stageKey);
+  const stageDue = x.stageDue || {};
+  const setStage = (key) => update(x.id, { stage: key });
+  const setStageDue = (key, val) => update(x.id, { stageDue: { ...(x.stageDue || {}), [key]: val } });
   return (
-    <div data-nav-id={x.id} onClick={onToggleOpen} className="rounded-2xl p-4" style={{ cursor: "pointer", ...card, borderRadius: 16, borderLeft: `3px solid ${tint}`, opacity: x.stage === "Posted" ? 0.65 : 1 }}>
+    <div data-nav-id={x.id} onClick={onToggleOpen} className="rounded-2xl p-4" style={{ cursor: "pointer", ...card, borderRadius: 16, borderLeft: `3px solid ${tint}`, opacity: done ? 0.65 : 1 }}>
+      {/* header: brand name (card title) + active/prospect + expand */}
       <div className="flex items-center gap-3 flex-wrap">
-        <div className="flex-1" style={{ minWidth: 150 }}><InlineEdit value={x.brand} onChange={(v) => update(x.id, { brand: v })} strong /><InlineEdit value={x.deliverable} onChange={(v) => update(x.id, { deliverable: v })} placeholder="Deliverable (e.g. 1x Reel + story)" dim /></div>
+        <div className="flex-1" style={{ minWidth: 150 }}><InlineEdit value={x.brand} onChange={(v) => update(x.id, { brand: v })} strong /></div>
         <button onClick={(e) => { e.stopPropagation(); update(x.id, { type: isProspect ? "Active" : "Prospect" }); }} className="rounded-full px-2.5 py-1" style={{ fontSize: 10.5, cursor: "pointer", fontFamily: "inherit", background: `${typeTint}1a`, border: `1px solid ${typeTint}55`, color: typeTint, whiteSpace: "nowrap" }}>{isProspect ? "→ mark active" : "→ mark prospect"}</button>
-        {x.due && <DueChip due={x.due} />}
-        <input type="date" value={x.due || ""} onClick={(e) => e.stopPropagation()} onChange={(e) => update(x.id, { due: e.target.value })} className="rounded-lg px-2 py-1" style={{ ...inputStyle, fontSize: 12 }} aria-label="Due" />
         <button onClick={(e) => { e.stopPropagation(); onToggleOpen(); }} style={iconBtn} aria-label="Expand">{open ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</button>
       </div>
-      {!isProspect && (
-        <div className="flex gap-1 mt-3 flex-wrap">{DEAL_STAGES.map((s, i) => (
-          <button key={s} onClick={(e) => { e.stopPropagation(); update(x.id, { stage: s }); }} className="rounded-full px-2.5 py-1" style={{ fontSize: 10.5, cursor: "pointer", fontFamily: "inherit", background: i < idx ? `${tint}14` : x.stage === s ? `${tint}2b` : FILL, border: `1px solid ${x.stage === s ? tint : i < idx ? `${tint}55` : LINE}`, color: x.stage === s ? tint : i < idx ? tint : MUT }}>{i < idx ? "✓ " : ""}{s}</button>
-        ))}</div>
-      )}
-      {(isProspect || x.stage !== "Posted") && <PriorityControls item={x} onChange={(p) => update(x.id, p)} hideDue />}
-      <div className="mt-3">
-        <Label text="Tasks" />
-        {open ? <MiniTaskList tasks={x.tasks} onChange={(tasks) => update(x.id, { tasks })} composerAtBottom /> : <TaskPreviewList tasks={x.tasks} />}
+
+      {/* content-piece toggle */}
+      <div onClick={(e) => e.stopPropagation()} className="flex gap-1 mt-3" style={{ maxWidth: 220 }}>
+        {["Reel", "Story"].map((p) => (
+          <button key={p} onClick={() => update(x.id, { piece: p })} className="rounded-full px-3 py-1 flex-1" style={{ fontSize: 11, cursor: "pointer", fontFamily: "inherit", background: piece === p ? `${tint}2b` : FILL, border: `1px solid ${piece === p ? tint : LINE}`, color: piece === p ? tint : MUT }}>{p === "Reel" ? "🎬 Reel" : "📖 Story"}</button>
+        ))}
       </div>
+
+      {/* active Reel: per-stage line with its own deadline on each stage */}
+      {!isProspect && piece === "Reel" && (
+        <div onClick={(e) => e.stopPropagation()} className="mt-3 flex flex-col gap-1.5">
+          {REEL_STAGES.map((s, i) => {
+            const isCurrent = !done && s.key === stageKey;
+            const complete = done || i < stageIdx;
+            return (
+              <div key={s.key} className="flex items-center gap-2 flex-wrap">
+                <button onClick={() => setStage(s.key)} className="rounded-full px-2.5 py-1" style={{ fontSize: 10.5, cursor: "pointer", fontFamily: "inherit", flex: "0 0 auto", minWidth: 158, textAlign: "left", background: complete ? `${tint}14` : isCurrent ? `${tint}2b` : FILL, border: `1px solid ${isCurrent ? tint : complete ? `${tint}55` : LINE}`, color: isCurrent || complete ? tint : MUT }}>{complete ? "✓ " : ""}{s.label}</button>
+                <input type="date" value={stageDue[s.key] || ""} onChange={(e) => setStageDue(s.key, e.target.value)} className="rounded-lg px-2 py-1" style={{ ...inputStyle, fontSize: 11 }} aria-label={`${s.label} deadline`} title={`${s.label} deadline`} />
+                {isCurrent && stageDue[s.key] && <DueChip due={stageDue[s.key]} />}
+              </div>
+            );
+          })}
+          {done && <div style={{ fontSize: 11, color: MUT }}>All stages complete ✓ <button onClick={() => setStage("script")} style={{ ...iconBtn, fontSize: 11 }}>reopen</button></div>}
+        </div>
+      )}
+
+      {/* active Story: single deadline */}
+      {!isProspect && piece === "Story" && (
+        <div onClick={(e) => e.stopPropagation()} className="mt-3 flex items-center gap-2 flex-wrap">
+          <Label text="Deadline" />
+          <input type="date" value={x.storyDue || ""} onChange={(e) => update(x.id, { storyDue: e.target.value })} className="rounded-lg px-2 py-1" style={{ ...inputStyle, fontSize: 12 }} aria-label="Story deadline" />
+          {x.storyDue && <DueChip due={x.storyDue} />}
+        </div>
+      )}
+
+      {!done && <PriorityControls item={x} onChange={(p) => update(x.id, p)} hideDue />}
+
+      {/* expanded: Script (Reel only) + Caption */}
       {open && (
-        <div className="mt-4 flex flex-col gap-3">
-          <div style={{ minWidth: 160 }}><Label text="Rate" /><InlineEdit value={x.rate} onChange={(v) => update(x.id, { rate: v })} placeholder="e.g. R6,000" /></div>
-          <div><Label text="Caption" /><AutoTextarea value={x.caption} onChange={(v) => update(x.id, { caption: v })} placeholder="Approved caption, hashtags, promo code…" /></div>
-          <div><Label text="Posting instructions" /><AutoTextarea value={x.instructions} onChange={(v) => update(x.id, { instructions: v })} placeholder="Collab handle, spark code, whitelisting, tags…" /></div>
-          <div><Label text="Notes" /><AutoTextarea value={x.notes} onChange={(v) => update(x.id, { notes: v })} placeholder="Feedback rounds, contacts, anything else…" /></div>
+        <div className="mt-4 flex flex-col gap-3" onClick={(e) => e.stopPropagation()}>
+          {piece === "Reel" && <div><Label text="Script" /><AutoTextarea value={x.script} onChange={(v) => update(x.id, { script: v })} placeholder="Write the script…" /></div>}
+          <div><Label text="Caption" /><AutoTextarea value={x.caption} onChange={(v) => update(x.id, { caption: v })} placeholder="Caption, hashtags, promo code…" /></div>
           <button onClick={(e) => { e.stopPropagation(); remove(x.id); }} className="self-end flex items-center gap-1" style={{ ...iconBtn, fontSize: 12, color: C.rose }}><Trash2 size={12} /> Remove deal</button>
         </div>
       )}
@@ -2591,21 +2651,22 @@ function DealsModule({ data, setData, q, navRequest }) {
   const patch = (p) => setData((d) => ({ ...d, deals: { ...d.deals, ...p } }));
   const update = (id, p) => patch({ deals: deals.map((x) => (x.id === id ? { ...x, ...p } : x)) });
   const remove = (id) => patch({ deals: deals.filter((x) => x.id !== id) });
-  const add = (type) => { const x = { id: uid(), brand: "New brand", deliverable: "", stage: "Brief", due: "", rate: "", caption: "", instructions: "", notes: "", aura: Math.floor(Math.random() * AURAS.length), priority: "Medium", lastProgress: null, created: todayISO(), type: type || "Prospect", tasks: [] }; patch({ deals: [x, ...deals] }); setOpenId(x.id); setSub(type === "Active" ? "activeDeals" : "prospectDeals"); };
+  const add = (type) => { const x = { id: uid(), brand: "New brand", piece: "Reel", stage: "script", stageDue: {}, storyDue: "", script: "", caption: "", priority: "Medium", lastProgress: null, created: todayISO(), type: type || "Prospect" }; patch({ deals: [x, ...deals] }); setOpenId(x.id); setSub(type === "Active" ? "activeDeals" : "prospectDeals"); };
   const updateClient = (id, p) => patch({ clients: clients.map((c) => (c.id === id ? { ...c, ...p } : c)) });
   const addClient = () => { patch({ clients: [{ id: uid(), name: "New client", service: "", status: "Lead", notes: "", tasks: [] }, ...clients] }); setSub("prospectClients"); };
   const removeClient = (id) => patch({ clients: clients.filter((c) => c.id !== id) });
 
-  const matchDeal = (x) => !ql || x.brand.toLowerCase().includes(ql) || (x.deliverable || "").toLowerCase().includes(ql);
+  const matchDeal = (x) => !ql || x.brand.toLowerCase().includes(ql);
   const matchClient = (c) => !ql || c.name.toLowerCase().includes(ql) || (c.service || "").toLowerCase().includes(ql);
 
   const activeDeals = deals.filter((x) => (x.type || "Active") === "Active" && matchDeal(x))
-    .sort((a, b) => { const ap = a.stage === "Posted", bp = b.stage === "Posted"; if (ap !== bp) return ap ? 1 : -1; if (a.due && b.due) return a.due.localeCompare(b.due); return a.due ? -1 : b.due ? 1 : 0; });
+    .sort((a, b) => { const ap = (a.stage || "script") === "done", bp = (b.stage || "script") === "done"; if (ap !== bp) return ap ? 1 : -1; const ad = dealHeadlineDue(a), bd = dealHeadlineDue(b); if (ad && bd) return ad.localeCompare(bd); return ad ? -1 : bd ? 1 : 0; });
   const prospectDeals = deals.filter((x) => (x.type || "Active") === "Prospect" && matchDeal(x));
   const activeClients = clients.filter((c) => c.status !== "Lead" && matchClient(c));
   const prospectClients = clients.filter((c) => c.status === "Lead" && matchClient(c));
 
-  const stageBars = DEAL_STAGES.slice(0, 6).map((s, i) => ({ label: s.split(" ")[0], value: activeDeals.filter((d) => d.stage === s).length, color: AURAS[i % AURAS.length] }));
+  /* distribution of active Reels across the production line (Stories have no stages) */
+  const stageBars = REEL_STAGES.map((s, i) => ({ label: s.label.split(" ")[0], value: activeDeals.filter((d) => (d.piece || "Reel") === "Reel" && (d.stage || "script") === s.key).length, color: AURAS[i % AURAS.length] }));
 
   const subs = [
     { id: "activeDeals", emoji: "🤝", label: "Active brand deals", count: activeDeals.length },
