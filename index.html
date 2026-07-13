@@ -512,32 +512,33 @@ function computeUrgency(item) {
   return { score: Math.round(score * 10) / 10, bucket, daysUntilDue: dUntil, daysSinceProgress: dSince };
 }
 
-/* content's ring has two stacked weightings, not just one. The base signal is still the whole
-   pillar's days-since-last-post, full stop — 1 day since post = 33% full, 3 days = 100%, and it
-   keeps climbing past that into an overflow/critical state if you let it run, exactly as before.
-   It still does not care what's sitting in the pipeline (Ideas/To Film/To Edit are for your own
-   tracking only). On top of that base, though, any individual idea that's due today or overdue
-   adds the same "High priority" weighting (PRIORITY_BASE_PCT.High, 20%) used everywhere else in
-   the app, once per dated idea — this is additive (summed), not the max()-picks-one-signal rule
-   the other pillars use, since a looming deadline should make an already-overdue pillar read as
-   even more urgent rather than being silently absorbed by it. Ideas due later than today (1+ days
-   out) don't add anything here; they still show on the hub's "Upcoming deadlines" list, they just
-   don't inflate this ring until the day arrives. Every open content piece still inherits this same
-   score/bucket, so individual ideas never compete with each other on "urgency". */
+/* content's ring stacks two weightings. The base signal is still the whole pillar's
+   days-since-last-post, full stop — 1 day since post = 33% full, 3 days = 100%, and it keeps
+   climbing past that into an overflow/critical state if you let it run.
+   On top of that base, only items actually in production — "To Film" and "To Edit" — with a live
+   deadline add anything. Ideas never add to the ring (they're a holding bank; a date on an idea is
+   just a note). Each dated To Film/To Edit item contributes a FLAT amount by how close its deadline
+   is, re-bracketing itself automatically as the date approaches:
+     due today or overdue -> 15   (flat, no per-day escalation)
+     due in 1-2 days       -> 10
+     due 3+ days out       -> 5
+   These are summed (additive) across every dated To Film/To Edit item, then added to the base. A
+   disabled deadline (dueOff) and anything already Posted contribute nothing. */
+function contentDueWeight(daysUntilDue) {
+  if (daysUntilDue === null || daysUntilDue === undefined) return 0;
+  if (daysUntilDue <= 0) return 15; // due today or overdue (flat)
+  if (daysUntilDue <= 2) return 10; // due in 1-2 days
+  return 5;                          // due 3+ days out
+}
 function computeContentUrgency(content) {
   const since = daysSince(content.lastPosted);
   const basePct = since === null ? 40 : since * 33;
-  /* same escalation as taskFillPercent: a dated idea due today contributes the flat High bonus
-     (25%) same as before, then adds another 25% for every additional day it sits overdue instead
-     of staying flat forever once it slips past today. */
-  const dueTodayBonus = (content.items || []).reduce((sum, i) => {
+  const deadlineLoad = (content.items || []).reduce((sum, i) => {
     if (!i.due || i.dueOff || i.status === "Posted") return sum;
-    const dU = daysUntil(i.due);
-    if (dU > 0) return sum;
-    const overdueDays = dU < 0 ? -dU : 0;
-    return sum + PRIORITY_BASE_PCT.High + overdueDays * PRIORITY_BASE_PCT.High;
+    if (i.status !== "To Film" && i.status !== "To Edit") return sum;
+    return sum + contentDueWeight(daysUntil(i.due));
   }, 0);
-  const pct = basePct + dueTodayBonus;
+  const pct = basePct + deadlineLoad;
   const bucket = pct > 80 ? "Urgent" : pct >= 40 ? "Medium" : "Low";
   const score = Math.round((1 + (Math.min(pct, 100) / 100) * 5) * 10) / 10;
   return { score, bucket, pct, since };
@@ -557,7 +558,7 @@ function collectPriorityTasks(ally, mama) {
        Ideas with no deadline keep inheriting the shared pillar-wide score exactly as before. */
     const cu = computeContentUrgency(ally.content);
     ally.content.items.forEach((i) => {
-      if (i.due && !i.dueOff && !i.filmed) {
+      if (i.due && !i.dueOff && !i.filmed && (i.status === "To Film" || i.status === "To Edit")) {
         out.push({ id: i.id, pillar: "content", title: i.title, due: i.due, priority: "Medium", lastProgress: null, created: i.created || null });
       } else {
         out.push({ id: i.id, pillar: "content", title: i.title, due: null, lastProgress: null, created: i.created || null, score: cu.score, bucket: cu.bucket, daysUntilDue: null, daysSinceProgress: null, _preScored: true });
