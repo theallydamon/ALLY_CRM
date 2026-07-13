@@ -531,7 +531,7 @@ function computeContentUrgency(content) {
      (25%) same as before, then adds another 25% for every additional day it sits overdue instead
      of staying flat forever once it slips past today. */
   const dueTodayBonus = (content.items || []).reduce((sum, i) => {
-    if (!i.due || i.status === "Posted") return sum;
+    if (!i.due || i.dueOff || i.status === "Posted") return sum;
     const dU = daysUntil(i.due);
     if (dU > 0) return sum;
     const overdueDays = dU < 0 ? -dU : 0;
@@ -557,7 +557,7 @@ function collectPriorityTasks(ally, mama) {
        Ideas with no deadline keep inheriting the shared pillar-wide score exactly as before. */
     const cu = computeContentUrgency(ally.content);
     ally.content.items.forEach((i) => {
-      if (i.due && !i.filmed) {
+      if (i.due && !i.dueOff && !i.filmed) {
         out.push({ id: i.id, pillar: "content", title: i.title, due: i.due, priority: "Medium", lastProgress: null, created: i.created || null });
       } else {
         out.push({ id: i.id, pillar: "content", title: i.title, due: null, lastProgress: null, created: i.created || null, score: cu.score, bucket: cu.bucket, daysUntilDue: null, daysSinceProgress: null, _preScored: true });
@@ -1491,8 +1491,8 @@ function ContentPillarCard({ content, go, rank, pct, onNavigate, onComplete }) {
   /* two separate deadline feeds so filming deadlines and editing deadlines stay visually apart —
      title pulls through by title only (never the script/desc box), same rule every other pillar
      follows. The ring above stays purely days-since-post driven regardless of what's in either list. */
-  const toFilmDated = content.items.filter((i) => i.status === "To Film" && i.due).sort((a, b) => daysUntil(a.due) - daysUntil(b.due)).slice(0, 3);
-  const toEditDated = content.items.filter((i) => i.status === "To Edit" && i.due).sort((a, b) => daysUntil(a.due) - daysUntil(b.due)).slice(0, 3);
+  const toFilmDated = content.items.filter((i) => i.status === "To Film" && i.due && !i.dueOff).sort((a, b) => daysUntil(a.due) - daysUntil(b.due)).slice(0, 3);
+  const toEditDated = content.items.filter((i) => i.status === "To Edit" && i.due && !i.dueOff).sort((a, b) => daysUntil(a.due) - daysUntil(b.due)).slice(0, 3);
   return (
     <div onClick={() => go("content")} className="rounded-2xl p-5" style={{ ...card, borderRadius: 18, borderLeft: `4px solid ${mod.accent}`, cursor: "pointer" }}>
       <div className="flex items-center justify-between mb-3">
@@ -1617,13 +1617,23 @@ function PriorityPillarCard({ pillarKey, tasks, go, rank, onDropPriority, pct, o
   );
 }
 
-function DueChip({ due, inline }) {
+/* `off` + `onToggle` are optional. Pass onToggle to make the chip a click-to-disable switch:
+   the date stays stored on the item, but while off the chip renders struck-through/greyed and every
+   urgency reader (computeContentUrgency, collectPriorityTasks, the hub To Film/To Edit feeds) skips
+   it — so a deadline can be muted without losing the date, then clicked again to bring it back.
+   stopPropagation keeps the toggle from also firing the card's expand/collapse click. */
+function DueChip({ due, inline, off, onToggle }) {
   const d = daysUntil(due);
   if (d === null) return null;
-  const tint = d < 0 ? C.rose : d <= 2 ? C.amber : MUT;
+  const tint = off ? MUT : d < 0 ? C.rose : d <= 2 ? C.amber : MUT;
   const text = d < 0 ? `overdue ${-d}d` : d === 0 ? "today" : `${d}d`;
-  if (inline) return <span style={{ color: tint }}>{text}</span>;
-  return <span style={{ fontSize: 10.5, color: tint, background: `${tint}1a`, border: `1px solid ${tint}44`, borderRadius: 99, padding: "2px 8px", flexShrink: 0 }}>{text}</span>;
+  const deco = off ? "line-through" : "none";
+  if (inline) return <span style={{ color: tint, textDecoration: deco }}>{text}</span>;
+  const clickable = !!onToggle;
+  return <span
+    onClick={clickable ? (e) => { e.stopPropagation(); onToggle(); } : undefined}
+    title={clickable ? (off ? "Deadline off — click to switch it back on" : "Click to disable this deadline") : undefined}
+    style={{ fontSize: 10.5, color: tint, background: `${tint}1a`, border: `1px solid ${tint}44`, borderRadius: 99, padding: "2px 8px", flexShrink: 0, textDecoration: deco, opacity: off ? 0.75 : 1, cursor: clickable ? "pointer" : "default", userSelect: "none" }}>{text}</span>;
 }
 
 /* the same day bands as dueBandScore, but returning an actual priority label instead of a score —
@@ -2006,11 +2016,11 @@ function ContentModule({ data, setData, q }) {
                   const toggleDesc = () => setOpenDesc((o) => ({ ...o, [i.id]: !descOpen }));
                   return (
                   <div key={i.id} data-nav-id={i.id} onClick={toggleDesc} className="rounded-lg" style={{ cursor: "pointer", background: "rgba(255,255,255,0.035)", border: `1px solid ${LINE}`, borderLeft: `2px solid ${CONTENT_TINT[col]}`, borderRadius: 10, padding: "11px 13px" }}>
-                    <InlineEdit value={i.title} onChange={(v) => updateItem(i.id, { title: v })} strong />
+                    <InlineEdit value={i.title} onChange={(v) => updateItem(i.id, { title: v })} strong bubbleClicks />
                     <ScriptBox value={i.desc || ""} isHtml={!!i.descHtml} open={descOpen} onFocus={() => openIfNot(i.id)} onChange={(v) => updateItem(i.id, { desc: v, descHtml: true })} onToggle={toggleDesc} />
                     <div className="flex items-center gap-2 mt-1.5 flex-wrap" style={{ fontSize: 10.5 }}>
-                      <input type="date" value={i.due || ""} onClick={(e) => e.stopPropagation()} onChange={(e) => updateItem(i.id, { due: e.target.value || null })} className="rounded-md" style={{ ...darkInput, fontSize: 10.5, padding: "3px 5px" }} aria-label="Deadline (optional)" title="Deadline (optional) — auto-sets priority, pulls this idea's title onto the main hub's To Film or To Edit deadline list depending on which column it's sitting in right now" />
-                      <DueChip due={i.due} />
+                      <input type="date" value={i.due || ""} onClick={(e) => e.stopPropagation()} onChange={(e) => updateItem(i.id, { due: e.target.value || null })} className="rounded-md" style={{ ...darkInput, fontSize: 10.5, padding: "3px 5px", opacity: i.dueOff ? 0.5 : 1 }} aria-label="Deadline (optional)" title="Deadline (optional) — auto-sets priority, pulls this idea's title onto the main hub's To Film or To Edit deadline list depending on which column it's sitting in right now" />
+                      <DueChip due={i.due} off={i.dueOff} onToggle={() => updateItem(i.id, { dueOff: !i.dueOff })} />
                     </div>
                     <div className="flex items-center gap-1 mt-1.5"><span className="ml-auto flex gap-1">
                       {col !== "Idea" && <button onClick={(e) => { e.stopPropagation(); move(i.id, -1); }} style={{ ...iconBtn, padding: 2 }} aria-label="Back">←</button>}
@@ -3070,7 +3080,12 @@ function Empty({ text }) { return <div className="rounded-2xl p-8 text-center mt
    it up, edit, then Enter/click away to save — Escape reverts. Sits as plain text the rest of the
    time so a stray single click/tap (e.g. on a card that also navigates elsewhere) doesn't
    accidentally start an edit. */
-function InlineEdit({ value, onChange, placeholder, strong, dim }) {
+/* `bubbleClicks` (opt-in) changes only WHERE a single click is swallowed. Normally the whole
+   full-width field eats the click so a stray tap never leaks to a card behind it. With bubbleClicks
+   on, only the actual text glyphs swallow the click (and still double-click to edit) — any empty
+   space beside/around the text lets the click fall through to the parent card, so tapping the blank
+   part of a card's top row expands/collapses it while double-tapping the title still edits. */
+function InlineEdit({ value, onChange, placeholder, strong, dim, bubbleClicks }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value || "");
   const ref = useRef(null);
@@ -3088,9 +3103,20 @@ function InlineEdit({ value, onChange, placeholder, strong, dim }) {
         style={{ ...sharedFont, background: "transparent", border: `1px solid ${C.lilac}`, borderRadius: 6, padding: "2px 4px", margin: "-2px -4px" }} />
     );
   }
+  const textStyle = { ...sharedFont, color: value ? sharedFont.color : FAINT, border: "1px solid transparent", borderRadius: 6, padding: "2px 4px", margin: "-2px -4px", cursor: "text", minHeight: "1.3em", whiteSpace: "pre-wrap", wordBreak: "break-word" };
+  if (bubbleClicks) {
+    return (
+      <div className="w-full" style={{ minHeight: "1.3em" }}>
+        <span onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => { e.stopPropagation(); setEditing(true); }} title="Double-click to edit"
+          style={{ ...textStyle, display: "inline-block", maxWidth: "100%" }}>
+          {value || placeholder || ""}
+        </span>
+      </div>
+    );
+  }
   return (
     <div onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => { e.stopPropagation(); setEditing(true); }} title="Double-click to edit" className="w-full"
-      style={{ ...sharedFont, color: value ? sharedFont.color : FAINT, border: "1px solid transparent", borderRadius: 6, padding: "2px 4px", margin: "-2px -4px", cursor: "text", minHeight: "1.3em", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+      style={textStyle}>
       {value || placeholder || ""}
     </div>
   );
