@@ -994,6 +994,68 @@ function AllyCRM() {
     };
   }, [ally, mama]);
 
+  /* ---------- global undo/redo (Cmd/Ctrl+Z, Cmd/Ctrl+Shift+Z) ----------
+     Snapshot-based history over the whole data model (ally + mama together), so ANY change anywhere —
+     ticking a task off the hub, dragging a chip, editing a deal, deleting a note — is one undoable step.
+     A burst of rapid edits (e.g. typing) collapses into a single step: the pre-burst snapshot is pushed
+     when the burst starts, and nothing else is pushed until the edits settle (500ms quiet). Recording
+     only arms after the first real user interaction, so loading and cloud-sync writes never land on the
+     stack. While focus is in a text field we let the browser's native text undo win instead. */
+  const undoStack = useRef([]);   // snapshots to go back to
+  const redoStack = useRef([]);   // snapshots to go forward to
+  const committed = useRef(null); // last settled snapshot (the current restore point)
+  const undoTimer = useRef(null); // burst debounce
+  const suppress = useRef(false); // set while WE drive setAlly/setMama, so the watcher doesn't re-record
+  const undoArmed = useRef(false);
+  const snapClone = (o) => { try { return JSON.parse(JSON.stringify(o)); } catch (e) { return o; } };
+  const takeSnap = () => ({ ally: snapClone(allyRef.current), mama: snapClone(mamaRef.current) });
+
+  useEffect(() => {
+    const arm = () => { undoArmed.current = true; };
+    window.addEventListener("pointerdown", arm, { once: true });
+    window.addEventListener("keydown", arm, { once: true });
+    return () => { window.removeEventListener("pointerdown", arm); window.removeEventListener("keydown", arm); };
+  }, []);
+
+  useEffect(() => {
+    if (!loaded.current || !ally || !mama) return;
+    const snap = takeSnap();
+    if (committed.current === null || !undoArmed.current) { committed.current = snap; return; }
+    if (suppress.current) { suppress.current = false; committed.current = snap; return; }
+    if (!undoTimer.current) {                       // start of an edit burst
+      undoStack.current.push(committed.current);
+      if (undoStack.current.length > 60) undoStack.current.shift();
+      redoStack.current = [];
+    }
+    clearTimeout(undoTimer.current);
+    undoTimer.current = setTimeout(() => { undoTimer.current = null; committed.current = takeSnap(); }, 500);
+  }, [ally, mama]);
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (!(e.metaKey || e.ctrlKey) || (e.key !== "z" && e.key !== "Z")) return;
+      const el = document.activeElement;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return; // native text undo
+      e.preventDefault();
+      if (undoTimer.current) { clearTimeout(undoTimer.current); undoTimer.current = null; committed.current = takeSnap(); }
+      if (e.shiftKey) {
+        if (!redoStack.current.length) return;
+        const next = redoStack.current.pop();
+        undoStack.current.push(takeSnap());
+        suppress.current = true; committed.current = next;
+        setAlly(next.ally); setMama(next.mama);
+      } else {
+        if (!undoStack.current.length) return;
+        const prev = undoStack.current.pop();
+        redoStack.current.push(takeSnap());
+        suppress.current = true; committed.current = prev;
+        setAlly(prev.ally); setMama(prev.mama);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
 
   /* auto-clean: anything marked Done (Admin Tasks / Life Admin's kanban) or checked off (the
      MiniTaskList "done" toggle used under Creators/AI Tools/Deals/Clients) gets removed
@@ -1478,6 +1540,21 @@ function scrollAndHighlight(id, attempts) {
   if (attempts > 0) setTimeout(() => scrollAndHighlight(id, attempts - 1), 60);
 }
 
+/* Shared tick-off checkbox for every hub dashboard task. Empty rounded box that, on click, fills
+   mint with a checkmark for a beat, then fires onComplete (which marks the underlying record done via
+   completePriorityTask, dropping it off the dashboard). Local `done` state so the tick reads before it
+   goes. Same 14px footprint as the old bare complete-dots it replaces. */
+function CompleteCheckbox({ onComplete, size = 14, mt = 0, label = "Mark complete" }) {
+  const [done, setDone] = useState(false);
+  return (
+    <button onClick={(e) => { e.stopPropagation(); if (done) return; setDone(true); setTimeout(() => onComplete && onComplete(), 240); }}
+      aria-label={label} title={label}
+      style={{ width: size, height: size, borderRadius: 5, cursor: "pointer", flexShrink: 0, marginTop: mt, padding: 0, display: "flex", alignItems: "center", justifyContent: "center", background: done ? C.mint : "transparent", border: `1px solid ${done ? C.mint : LINE}`, transition: "background 0.15s, border-color 0.15s" }}>
+      {done && <Check size={size - 4} color="#0B0B0D" strokeWidth={3} />}
+    </button>
+  );
+}
+
 /* ================= PRIORITY DASHBOARD ================= */
 function PriorityDashboard({ ally, mama, go, setAlly, setMama, navigateToTask, completeTask }) {
   const tasks = collectPriorityTasks(ally, mama);
@@ -1556,7 +1633,7 @@ function ContentPillarCard({ content, go, rank, pct, onNavigate, onComplete }) {
             <div style={{ fontSize: 10, letterSpacing: "0.06em", textTransform: "uppercase", color: MUT }}>To Film</div>
             {toFilmDated.map((i) => (
               <div key={i.id} onClick={(e) => e.stopPropagation()} className="flex items-center gap-1.5" style={{ fontSize: 12 }}>
-                <button onClick={(e) => { e.stopPropagation(); onComplete && onComplete({ id: i.id, sourceType: "contentToFilm" }); }} aria-label="Move to In Edit" title="Move to In Edit" style={{ width: 14, height: 14, borderRadius: 5, cursor: "pointer", flexShrink: 0, padding: 0, background: "transparent", border: `1px solid ${LINE}` }} />
+                <CompleteCheckbox onComplete={() => onComplete && onComplete({ id: i.id, sourceType: "contentToFilm" })} label="Move to In Edit" />
                 <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, cursor: "pointer" }} onClick={(e) => { e.stopPropagation(); onNavigate && onNavigate({ id: i.id, navTab: "content" }); }}>
                   <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{i.title}</span>
                   <DueChip due={i.due} />
@@ -1569,7 +1646,7 @@ function ContentPillarCard({ content, go, rank, pct, onNavigate, onComplete }) {
             <div style={{ fontSize: 10, letterSpacing: "0.06em", textTransform: "uppercase", color: MUT }}>To Edit</div>
             {toEditDated.map((i) => (
               <div key={i.id} onClick={(e) => e.stopPropagation()} className="flex items-center gap-1.5" style={{ fontSize: 12 }}>
-                <button onClick={(e) => { e.stopPropagation(); onComplete && onComplete({ id: i.id, sourceType: "contentToEdit" }); }} aria-label="Mark posted" title="Mark posted" style={{ width: 14, height: 14, borderRadius: 5, cursor: "pointer", flexShrink: 0, padding: 0, background: "transparent", border: `1px solid ${LINE}` }} />
+                <CompleteCheckbox onComplete={() => onComplete && onComplete({ id: i.id, sourceType: "contentToEdit" })} label="Mark posted" />
                 <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, cursor: "pointer" }} onClick={(e) => { e.stopPropagation(); onNavigate && onNavigate({ id: i.id, navTab: "content" }); }}>
                   <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{i.title}</span>
                   <DueChip due={i.due} />
@@ -1633,8 +1710,7 @@ function PriorityPillarCard({ pillarKey, tasks, go, rank, onDropPriority, pct, o
                   <div key={t.id} draggable onDragStart={(e) => { e.dataTransfer.setData("application/json", JSON.stringify({ id: t.id, pillar: pillarKey })); e.dataTransfer.effectAllowed = "move"; }}
                     onClick={(e) => e.stopPropagation()} className="rounded-lg px-2 py-1.5 flex items-start gap-1.5"
                     style={{ background: C.soft, border: `1px solid ${LINE}`, borderLeft: `2px solid ${PRIORITY_COL_TINT[col]}`, cursor: "grab" }}>
-                    <button onClick={(e) => { e.stopPropagation(); onComplete(t); }} aria-label="Mark complete" title="Mark complete"
-                      style={{ width: 14, height: 14, borderRadius: 5, cursor: "pointer", flexShrink: 0, marginTop: 2, padding: 0, background: "transparent", border: `1px solid ${LINE}` }} />
+                    <CompleteCheckbox onComplete={() => onComplete(t)} mt={2} />
                     <div style={{ flex: 1, minWidth: 0, cursor: "pointer" }} onClick={(e) => { e.stopPropagation(); onNavigate(t); }}>
                       <div style={{ fontSize: 12.5, lineHeight: 1.3 }}>{t.title}</div>
                       {t.daysUntilDue !== null && <div style={{ fontSize: 11, color: PRIORITY_COL_TINT[col], marginTop: 2 }}>{t.daysUntilDue < 0 ? `${-t.daysUntilDue}d overdue` : t.daysUntilDue === 0 ? "today" : `${t.daysUntilDue}d`}</div>}
@@ -2862,8 +2938,7 @@ function MamaTaskRing({ label, emoji, accent, tasks, rank, pct, onNavigate, onDr
                   <div key={t.id} draggable onDragStart={(e) => { e.dataTransfer.setData("application/json", JSON.stringify({ id: t.id, scope: label })); e.dataTransfer.effectAllowed = "move"; }}
                     onClick={(e) => e.stopPropagation()} className="rounded-lg px-2 py-1.5 flex items-start gap-1.5"
                     style={{ background: C.soft, border: `1px solid ${LINE}`, borderLeft: `2px solid ${PRIORITY_COL_TINT[col]}`, cursor: "grab" }}>
-                    <button onClick={(e) => { e.stopPropagation(); onCompleteTask(t); }} aria-label="Mark complete" title="Mark complete"
-                      style={{ width: 14, height: 14, borderRadius: 5, cursor: "pointer", flexShrink: 0, marginTop: 2, padding: 0, background: "transparent", border: `1px solid ${LINE}` }} />
+                    <CompleteCheckbox onComplete={() => onCompleteTask(t)} mt={2} />
                     <div style={{ flex: 1, minWidth: 0, cursor: "pointer" }} onClick={(e) => { e.stopPropagation(); onNavigateTask(t); }}>
                       <div style={{ fontSize: 12.5, lineHeight: 1.3 }}>{t.title}</div>
                       {t.daysUntilDue !== null && <div style={{ fontSize: 11, color: PRIORITY_COL_TINT[col], marginTop: 2 }}>{t.daysUntilDue < 0 ? `${-t.daysUntilDue}d overdue` : t.daysUntilDue === 0 ? "today" : `${t.daysUntilDue}d`}</div>}
