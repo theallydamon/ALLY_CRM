@@ -1799,16 +1799,16 @@ function PriorityControls({ item, onChange, hideDue }) {
     // above via pr === p, which pauses) does anything — the other two are disabled below.
   };
   return (
-    <div onClick={(e) => e.stopPropagation()} className="flex items-center gap-1.5 flex-wrap mt-1.5" style={{ fontSize: 11, opacity: paused ? 0.55 : 1 }}>
+    <div className="flex items-center gap-1.5 flex-wrap mt-1.5" style={{ fontSize: 11, opacity: paused ? 0.55 : 1 }}>
       {!hideDue && (
-        <input type="date" value={item.due || ""} disabled={paused} onChange={(e) => onChange({ due: e.target.value || null })}
+        <input type="date" value={item.due || ""} disabled={paused} onClick={(e) => e.stopPropagation()} onChange={(e) => onChange({ due: e.target.value || null })}
           className="rounded-md" style={{ ...darkInput, fontSize: 10.5, padding: "3px 5px", cursor: paused ? "not-allowed" : "text" }} aria-label="Due date" />
       )}
       <div className="flex gap-1">
         {PRIORITY_LEVELS.map((p) => {
           const locked = !!dateTarget && p !== dateTarget;
           return (
-            <button key={p} onClick={() => setPriority(p)} disabled={locked} className="rounded-full px-2 py-0.5"
+            <button key={p} onClick={(e) => { e.stopPropagation(); setPriority(p); }} disabled={locked} className="rounded-full px-2 py-0.5"
               title={!paused && pr === p && !dateTarget ? "Click again to pause — stop tracking this as a priority"
                 : !paused && pr === p && dateTarget ? "Set by the due date. Click to pause, or clear/edit the date to change it."
                 : paused ? "Paused — click a level to resume"
@@ -1819,7 +1819,7 @@ function PriorityControls({ item, onChange, hideDue }) {
           );
         })}
       </div>
-      <button onClick={() => onChange({ lastProgress: todayISO() })} className="flex items-center gap-1 rounded-full px-2 py-0.5"
+      <button onClick={(e) => { e.stopPropagation(); onChange({ lastProgress: todayISO() }); }} className="flex items-center gap-1 rounded-full px-2 py-0.5"
         style={{ fontSize: 10, cursor: "pointer", fontFamily: "inherit", background: FILL, border: `1px solid ${LINE}`, color: MUT }}
         title="Log progress today"><Zap size={10} /> progress</button>
       {paused ? (
@@ -2511,7 +2511,7 @@ function LifeAdminModule({ data, setData, q }) {
             <div key={t.id} data-nav-id={t.id} onClick={toggleDesc} className="rounded-2xl p-3" style={{ cursor: "pointer", ...card, borderRadius: 14, borderLeft: `2px solid ${C.rose}`, opacity: isDone ? 0.55 : 1, height: "fit-content" }}>
               <div className="flex items-start gap-2">
                 <button onClick={(e) => { e.stopPropagation(); toggleDone(t.id); }} aria-label="Toggle done" style={{ marginTop: 2, width: 18, height: 18, borderRadius: 6, cursor: "pointer", flexShrink: 0, background: isDone ? C.mint : C.card, border: `1px solid ${isDone ? C.mint : LINE}`, display: "flex", alignItems: "center", justifyContent: "center" }}>{isDone && <Check size={11} color="#fff" strokeWidth={3} />}</button>
-                <div className="flex-1 min-w-0" style={{ fontSize: 13.5, textDecoration: isDone ? "line-through" : "none" }}><InlineEdit value={t.title} onChange={(v) => update(t.id, { title: v })} /></div>
+                <div className="flex-1 min-w-0" style={{ fontSize: 13.5, textDecoration: isDone ? "line-through" : "none" }}><InlineEdit value={t.title} onChange={(v) => update(t.id, { title: v })} bubbleClicks /></div>
                 <button onClick={(e) => { e.stopPropagation(); remove(t.id); }} style={{ ...iconBtn, padding: 2 }} aria-label="Delete"><X size={12} /></button>
               </div>
               {/* AutoTextarea (not InlineEdit) so a long pasted description auto-grows instead of
@@ -2585,7 +2585,7 @@ function MiniTaskRow({ t, onUpdate, onRemove, withLink }) {
     <div data-nav-id={t.id} onClick={() => { if (hasTextSelection()) return; setDescOpen((v) => !v); }} className="rounded-lg px-2.5 py-2" style={{ cursor: "pointer", background: C.soft, border: `1px solid ${LINE}`, opacity: t.done ? 0.5 : 1 }}>
       <div className="flex items-center gap-2">
         <button onClick={(e) => { e.stopPropagation(); onUpdate({ done: !t.done, doneAt: !t.done ? Date.now() : null }); }} aria-label="Toggle done" style={{ width: 18, height: 18, borderRadius: 6, cursor: "pointer", flexShrink: 0, background: t.done ? C.mint : C.card, border: `1px solid ${t.done ? C.mint : LINE}`, display: "flex", alignItems: "center", justifyContent: "center" }}>{t.done && <Check size={11} color="#fff" strokeWidth={3} />}</button>
-        <div className="flex-1 min-w-0" style={{ textDecoration: t.done ? "line-through" : "none" }}><InlineEdit value={t.title} onChange={(v) => onUpdate({ title: v })} /></div>
+        <div className="flex-1 min-w-0" style={{ textDecoration: t.done ? "line-through" : "none" }}><InlineEdit value={t.title} onChange={(v) => onUpdate({ title: v })} bubbleClicks /></div>
         <button onClick={(e) => { e.stopPropagation(); onRemove(); }} style={{ ...iconBtn, padding: 2 }} aria-label="Delete"><X size={11} /></button>
       </div>
       <div style={{ fontSize: 11, color: MUT, marginTop: 2, marginLeft: 26 }}><InlineEditArea value={t.description || ""} onChange={(v) => onUpdate({ description: v })} placeholder="Add a description…" open={descOpen} onToggle={() => setDescOpen((v) => !v)} /></div>
@@ -2638,7 +2638,7 @@ function DealCard({ x, open, onToggleOpen, update, remove, isProspect }) {
     <div data-nav-id={x.id} onClick={() => { if (hasTextSelection()) return; onToggleOpen(); }} className="rounded-2xl p-4" style={{ cursor: "pointer", ...card, borderRadius: 16, borderLeft: `3px solid ${tint}`, opacity: done ? 0.65 : 1 }}>
       {/* header: brand name (card title) + active/prospect + expand */}
       <div className="flex items-center gap-3 flex-wrap">
-        <div className="flex-1" style={{ minWidth: 150 }}><InlineEdit value={x.brand} onChange={(v) => update(x.id, { brand: v })} strong /></div>
+        <div className="flex-1" style={{ minWidth: 150 }}><InlineEdit value={x.brand} onChange={(v) => update(x.id, { brand: v })} strong bubbleClicks /></div>
         <button onClick={(e) => { e.stopPropagation(); update(x.id, { type: isProspect ? "Active" : "Prospect" }); }} className="rounded-full px-2.5 py-1" style={{ fontSize: 10.5, cursor: "pointer", fontFamily: "inherit", background: `${typeTint}1a`, border: `1px solid ${typeTint}55`, color: typeTint, whiteSpace: "nowrap" }}>{isProspect ? "→ mark active" : "→ mark prospect"}</button>
         <button onClick={(e) => { e.stopPropagation(); onToggleOpen(); }} style={iconBtn} aria-label="Expand">{open ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</button>
       </div>
@@ -2673,7 +2673,7 @@ function DealCard({ x, open, onToggleOpen, update, remove, isProspect }) {
         <div onClick={(e) => e.stopPropagation()} className="mt-3 flex items-center gap-2 flex-wrap">
           <Label text="Deadline" />
           <input type="date" value={x.storyDue || ""} onChange={(e) => update(x.id, { storyDue: e.target.value })} className="rounded-lg px-2 py-1" style={{ ...inputStyle, fontSize: 12 }} aria-label="Story deadline" />
-          {x.storyDue && <DueChip due={x.storyDue} />}
+          {x.storyDue && <DueChip due={x.storyDue} />}{done ? <span style={{ fontSize: 11, color: MUT }}>Posted ✓ <button onClick={() => setStage("script")} style={{ ...iconBtn, fontSize: 11 }}>reopen</button></span> : <button onClick={() => setStage("done")} className="rounded-full px-2.5 py-1" style={{ fontSize: 10.5, cursor: "pointer", fontFamily: "inherit", background: `${tint}1a`, border: `1px solid ${tint}55`, color: tint }}>✓ Mark posted</button>}
         </div>
       )}
 
@@ -2698,7 +2698,7 @@ function ClientCard({ c, updateClient, removeClient }) {
   const [expanded, setExpanded] = useState(false);
   return (
     <div onClick={() => { if (hasTextSelection()) return; setExpanded((v) => !v); }} className="rounded-2xl p-4" style={{ cursor: "pointer", ...card, borderRadius: 16, borderLeft: `3px solid ${CLIENT_TINT[c.status]}` }}>
-      <div className="flex items-center gap-2"><div className="flex-1 min-w-0"><InlineEdit value={c.name} onChange={(v) => updateClient(c.id, { name: v })} strong /></div><button onClick={(e) => { e.stopPropagation(); removeClient(c.id); }} style={iconBtn} aria-label="Delete"><Trash2 size={13} /></button></div>
+      <div className="flex items-center gap-2"><div className="flex-1 min-w-0"><InlineEdit value={c.name} onChange={(v) => updateClient(c.id, { name: v })} strong bubbleClicks /></div><button onClick={(e) => { e.stopPropagation(); removeClient(c.id); }} style={iconBtn} aria-label="Delete"><Trash2 size={13} /></button></div>
       <InlineEdit value={c.service} onChange={(v) => updateClient(c.id, { service: v })} placeholder="Service / retainer" dim />
       <div className="flex gap-1 mt-2">{CLIENT_STATUSES.map((s) => (
         <button key={s} onClick={(e) => { e.stopPropagation(); updateClient(c.id, { status: s }); }} className="rounded-full px-3 py-1 flex-1" style={{ fontSize: 11, cursor: "pointer", fontFamily: "inherit", background: c.status === s ? `${CLIENT_TINT[s]}22` : FILL, border: `1px solid ${c.status === s ? CLIENT_TINT[s] : LINE}`, color: c.status === s ? CLIENT_TINT[s] : MUT }}>{s}</button>
@@ -2991,7 +2991,7 @@ function CreatorCard({ c, open, onToggle, onUpdate, onRemove, openTaskCount }) {
     <div onClick={() => { if (hasTextSelection()) return; onToggle(); }} className="rounded-2xl p-4" style={{ cursor: "pointer", ...card, borderRadius: 18, boxShadow: open ? `0 0 0 1px ${aura}44, ${card.boxShadow}` : card.boxShadow }}>
       <div className="flex items-start gap-3">
         <div style={{ width: 42, height: 42, borderRadius: 14, flexShrink: 0, background: aura, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 600, fontSize: 15, color: "#fff" }}>{c.name.split(" ").map((w) => w[0]).slice(0, 2).join("")}</div>
-        <div className="flex-1 min-w-0"><InlineEdit value={c.name} onChange={(v) => onUpdate({ name: v })} strong /><InlineEdit value={c.niche} onChange={(v) => onUpdate({ niche: v })} placeholder="Niche / platform" dim /></div>
+        <div className="flex-1 min-w-0"><InlineEdit value={c.name} onChange={(v) => onUpdate({ name: v })} strong bubbleClicks /><InlineEdit value={c.niche} onChange={(v) => onUpdate({ niche: v })} placeholder="Niche / platform" dim bubbleClicks /></div>
         <button onClick={(e) => { e.stopPropagation(); onToggle(); }} style={iconBtn} aria-label="Expand">{open ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</button>
       </div>
       {c.links.length > 0 && (
@@ -3109,7 +3109,7 @@ function TaskCard({ t, col, onUpdate, onAdvance, onBack, onRemove }) {
     <div data-nav-id={t.id} onClick={() => { if (hasTextSelection()) return; setDescOpen((v) => !v); }} className="rounded-xl p-3" style={{ cursor: "pointer", ...card, borderRadius: 12, borderLeft: `2px solid ${tint}` }}>
       <div className="flex items-center gap-2">
         <button onClick={(e) => { e.stopPropagation(); toggleDone(); }} aria-label="Toggle done" title={done ? "Mark not done" : "Mark done"} style={{ width: 18, height: 18, borderRadius: 6, cursor: "pointer", flexShrink: 0, background: done ? C.mint : C.card, border: `1px solid ${done ? C.mint : LINE}`, display: "flex", alignItems: "center", justifyContent: "center" }}>{done && <Check size={11} color="#fff" strokeWidth={3} />}</button>
-        <div className="flex-1 min-w-0" style={{ fontSize: 13.5, textDecoration: done ? "line-through" : "none", opacity: done ? 0.55 : 1 }}><InlineEdit value={t.title} onChange={(v) => onUpdate({ title: v })} /></div>
+        <div className="flex-1 min-w-0" style={{ fontSize: 13.5, textDecoration: done ? "line-through" : "none", opacity: done ? 0.55 : 1 }}><InlineEdit value={t.title} onChange={(v) => onUpdate({ title: v })} bubbleClicks /></div>
       </div>
       <div style={{ fontSize: 11.5, color: MUT, marginTop: 2 }}><InlineEditArea value={t.description || ""} onChange={(v) => onUpdate({ description: v })} placeholder="Add a description…" open={descOpen} onToggle={() => setDescOpen((v) => !v)} /></div>
       {!editing ? (
@@ -3174,7 +3174,7 @@ function ToolCard({ t, update, remove, ST }) {
   const tasks = t.tasks || [];
   return (
     <div onClick={() => { if (hasTextSelection()) return; setExpanded((v) => !v); }} className="rounded-2xl p-4 flex flex-col gap-3" style={{ cursor: "pointer", ...card, borderRadius: 16 }}>
-      <div onClick={(e) => e.stopPropagation()} className="flex items-start justify-between gap-2"><InlineEdit value={t.name} onChange={(v) => update(t.id, { name: v })} strong /><button onClick={(e) => { e.stopPropagation(); remove(t.id); }} style={iconBtn} aria-label="Delete"><Trash2 size={13} /></button></div>
+      <div className="flex items-start justify-between gap-2"><InlineEdit value={t.name} onChange={(v) => update(t.id, { name: v })} strong bubbleClicks /><button onClick={(e) => { e.stopPropagation(); remove(t.id); }} style={iconBtn} aria-label="Delete"><Trash2 size={13} /></button></div>
       <div onClick={(e) => e.stopPropagation()} className="flex gap-1">{TOOL_STAGES.map((s) => (<button key={s} onClick={() => update(t.id, { status: s })} className="rounded-full px-3 py-1 flex-1" style={{ fontSize: 11, cursor: "pointer", fontFamily: "inherit", background: t.status === s ? `${ST[s]}22` : FILL, border: `1px solid ${t.status === s ? ST[s] : LINE}`, color: t.status === s ? ST[s] : MUT }}>{s}</button>))}</div>
       {expanded ? (
         <>
@@ -3306,13 +3306,13 @@ function InlineEditArea({ value, onChange, placeholder, dim, open, onToggle }) {
     );
   }
   return (
-    <div onClick={(e) => e.stopPropagation()}>
-      <div onDoubleClick={(e) => { e.stopPropagation(); setEditing(true); }} title="Double-click to edit" className="w-full"
-        style={{ ...sharedFont, color: value ? sharedFont.color : FAINT, border: "1px solid transparent", borderRadius: 6, padding: "2px 4px", margin: "-2px -4px", cursor: "text", minHeight: "1.3em", maxHeight: collapsed ? 40 : "none", overflow: collapsed ? "hidden" : "visible", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+    <div>
+      <div onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => { e.stopPropagation(); setEditing(true); }} title="Double-click to edit"
+        style={{ ...sharedFont, color: value ? sharedFont.color : FAINT, border: "1px solid transparent", borderRadius: 6, padding: "2px 4px", margin: "-2px -4px", cursor: "text", minHeight: "1.3em", maxHeight: collapsed ? 40 : "none", overflow: collapsed ? "hidden" : "visible", whiteSpace: "pre-wrap", wordBreak: "break-word", display: "inline-block", maxWidth: "100%" }}>
         {value || placeholder || ""}
       </div>
       {long && (
-        <button onClick={toggle} className="flex items-center gap-1 mt-0.5" style={{ ...iconBtn, padding: 0, fontSize: 10, color: FAINT }}>
+        <button onClick={(e) => { e.stopPropagation(); toggle(); }} className="flex items-center gap-1 mt-0.5" style={{ ...iconBtn, padding: 0, fontSize: 10, color: FAINT }}>
           {collapsed ? <ChevronDown size={10} /> : <ChevronUp size={10} />}
           <span>{collapsed ? "Expand" : "Collapse"}</span>
         </button>
@@ -3351,12 +3351,12 @@ function AutoTextarea({ value, onChange, placeholder, open, onToggle }) {
   useLayoutEffect(resize, [value, collapsed]);
   const long = (value || "").length > 120 || (value || "").includes("\n");
   return (
-    <div onClick={(e) => e.stopPropagation()}>
-      <textarea ref={ref} value={value} onChange={(e) => onChange(e.target.value)} onInput={resize} placeholder={placeholder}
+    <div>
+      <textarea ref={ref} value={value} onClick={(e) => e.stopPropagation()} onChange={(e) => onChange(e.target.value)} onInput={resize} placeholder={placeholder}
         rows={2} className="w-full rounded-lg px-3 py-2"
         style={{ ...inputStyle, lineHeight: 1.45, resize: "vertical", overflow: collapsed ? "hidden" : "auto", maxHeight: collapsed ? 52 : "none", boxSizing: "border-box", whiteSpace: "pre-wrap", overflowWrap: "break-word" }} />
       {long && (
-        <button onClick={toggle} className="flex items-center gap-1 mt-1" style={{ ...iconBtn, padding: 0, fontSize: 10, color: FAINT }}>
+        <button onClick={(e) => { e.stopPropagation(); toggle(); }} className="flex items-center gap-1 mt-1" style={{ ...iconBtn, padding: 0, fontSize: 10, color: FAINT }}>
           {collapsed ? <ChevronDown size={10} /> : <ChevronUp size={10} />}
           <span>{collapsed ? "Expand" : "Collapse"}</span>
         </button>
