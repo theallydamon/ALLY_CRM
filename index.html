@@ -1931,7 +1931,7 @@ function scriptEscapeToHtml(text) {
    this existed) from new ones, so nothing already saved gets misread as markup.
    shortcuts (act on a text selection only): Cmd/Ctrl+B bold, Cmd/Ctrl+I italic,
    Cmd/Ctrl+Shift+. bump the selection up a size, Cmd/Ctrl+Shift+, bump it down. */
-function ScriptBox({ value, isHtml, open, onFocus, onChange, onToggle }) {
+function ScriptBox({ value, isHtml, open, onFocus, onChange, onToggle, big }) {
   const ref = useRef(null);
   const lastSeededRef = useRef(null);
   const savedRangeRef = useRef(null);
@@ -2006,7 +2006,7 @@ function ScriptBox({ value, isHtml, open, onFocus, onChange, onToggle }) {
 
   return (
     <div onClick={(e) => e.stopPropagation()} className="mt-1.5">
-      <button onClick={onToggle} className="flex items-center gap-1" style={{ ...iconBtn, padding: 0, fontSize: 10, color: FAINT }}>
+      <button onClick={onToggle} className="flex items-center gap-1" style={{ ...iconBtn, padding: 0, fontSize: 10, color: FAINT, display: big ? "none" : "flex" }}>
         {open ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
         <span>{open ? "Collapse script" : value ? "Expand script" : "Add script"}</span>
       </button>
@@ -2032,7 +2032,7 @@ function ScriptBox({ value, isHtml, open, onFocus, onChange, onToggle }) {
       <div ref={ref} contentEditable suppressContentEditableWarning
         onFocus={onFocus} onInput={commit} onPaste={handlePaste} onKeyDown={handleKeyDown}
         data-placeholder="Paste the skit script here…" className="w-full rounded-lg px-2.5 py-1.5 mt-1 script-editable"
-        style={{ ...inputStyle, fontSize: 12.5, lineHeight: 1.5, overflow: open ? "visible" : "hidden", height: open ? "auto" : 28, minHeight: 28 }} />
+        style={{ ...inputStyle, fontSize: big ? 15 : 12.5, lineHeight: 1.5, overflow: open ? "visible" : "hidden", height: open ? "auto" : 28, minHeight: big ? 260 : 28 }} />
     </div>
   );
 }
@@ -2043,7 +2043,7 @@ function ContentModule({ data, setData, q }) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [openDesc, setOpenDesc] = useState({});
-  const [showArchive, setShowArchive] = useState(false);
+  const [showArchive, setShowArchive] = useState(false); const [expandedId, setExpandedId] = useState(null);
   const openIfNot = (id) => setOpenDesc((o) => (o[id] ? o : { ...o, [id]: true }));
   const patch = (p) => setData((d) => ({ ...d, content: { ...d.content, ...p } }));
   const ql = (q || "").toLowerCase();
@@ -2076,7 +2076,7 @@ function ContentModule({ data, setData, q }) {
 
   return (
     <section>
-      <SectionHead title="Content engine" />
+      <SectionHead title="Content engine" />{expandedId && (() => { const item = content.items.find((z) => z.id === expandedId); if (!item) return null; return (<div onClick={() => setExpandedId(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}><div onClick={(e) => e.stopPropagation()} style={{ ...card, borderRadius: 16, padding: 20, width: "100%", maxWidth: 640, maxHeight: "85vh", display: "flex", flexDirection: "column", gap: 10, overflow: "auto" }}><div className="flex items-center gap-2"><div className="flex-1 min-w-0"><InlineEdit value={item.title} onChange={(v) => updateItem(item.id, { title: v })} strong /></div><button onClick={() => setExpandedId(null)} style={{ ...iconBtn, padding: 4 }} aria-label="Close"><X size={14} /></button></div><ScriptBox value={item.desc || ""} isHtml={!!item.descHtml} open big onFocus={() => openIfNot(item.id)} onChange={(v) => updateItem(item.id, { desc: v, descHtml: true })} onToggle={() => {}} /></div></div>); })()}
 
       {/* compact stat bar: since-post ring + message + inline legend, no separate donut card */}
       <div className="flex items-center gap-5 flex-wrap mb-4" style={{ ...card, borderRadius: 16, padding: "18px 22px" }}>
@@ -2129,7 +2129,7 @@ function ContentModule({ data, setData, q }) {
                   const toggleDesc = () => { if (hasTextSelection()) return; setOpenDesc((o) => ({ ...o, [i.id]: !descOpen })); };
                   return (
                   <div key={i.id} data-nav-id={i.id} onClick={toggleDesc} className="rounded-lg" style={{ cursor: "pointer", background: "rgba(255,255,255,0.035)", border: `1px solid ${LINE}`, borderLeft: `2px solid ${CONTENT_TINT[col]}`, borderRadius: 10, padding: "11px 13px" }}>
-                    <InlineEdit value={i.title} onChange={(v) => updateItem(i.id, { title: v })} strong bubbleClicks />
+                    <InlineEdit value={i.title} onChange={(v) => updateItem(i.id, { title: v })} strong bubbleClicks /><button onClick={(e) => { e.stopPropagation(); setExpandedId(i.id); }} style={{ ...iconBtn, padding: 2, marginLeft: 6 }} aria-label="Expand description" title="Expand description to full screen">⤢</button>
                     <ScriptBox value={i.desc || ""} isHtml={!!i.descHtml} open={descOpen} onFocus={() => openIfNot(i.id)} onChange={(v) => updateItem(i.id, { desc: v, descHtml: true })} onToggle={toggleDesc} />
                     <div className="flex items-center gap-2 mt-1.5 flex-wrap" style={{ fontSize: 10.5 }}>
                       <input type="date" value={i.due || ""} onClick={(e) => e.stopPropagation()} onChange={(e) => updateItem(i.id, { due: e.target.value || null })} className="rounded-md" style={{ ...darkInput, fontSize: 10.5, padding: "3px 5px", opacity: i.dueOff ? 0.5 : 1 }} aria-label="Deadline (optional)" title="Deadline (optional) — auto-sets priority, pulls this idea's title onto the main hub's To Film or To Edit deadline list depending on which column it's sitting in right now" />
