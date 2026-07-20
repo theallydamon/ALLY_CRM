@@ -457,16 +457,17 @@ function migrateAlly(a) {
      map its old stage onto the nearest new Reel stage, carry its single `due` onto that stage's
      deadline, and default everything else. Idempotent: a deal that already has a valid new stage
      and a piece is returned untouched. */
-  if (out.deals && Array.isArray(out.deals.deals)) {
-    const OLD_STAGE_MAP = { "Brief": "script", "Script": "script", "Script approval": "approval", "Film": "film", "Edit": "film", "Final approval": "feedback", "Posted": "done" };
-    const validStages = REEL_STAGE_KEYS.concat("done");
-    const migrated = out.deals.deals.map((d) => {
-      if (d.piece !== undefined && validStages.includes(d.stage || "script")) return d;
-      const newStage = OLD_STAGE_MAP[d.stage] || (REEL_STAGE_KEYS.includes(d.stage) ? d.stage : "script");
-      const stageDue = (d.stageDue && typeof d.stageDue === "object") ? d.stageDue : (d.due && newStage !== "done" ? { [newStage]: d.due } : {});
-      return { ...d, piece: d.piece || "Reel", stage: newStage, stageDue, storyDue: d.storyDue || "", script: d.script || "", caption: d.caption || "" };
-    });
-    out = { ...out, deals: { ...out.deals, deals: migrated } };
+    if (out.deals && Array.isArray(out.deals.deals)) {
+  const OLD_STAGE_MAP = { "Brief": "script", "Script": "script", "Script approval": "approval", "Film": "film", "Edit": "film", "Final approval": "feedback", "Posted": "done" };
+  const validStages = REEL_STAGE_KEYS.concat("done");
+  const migrated = out.deals.deals.map((d) => {
+    const withTasks = (d.tasks !== undefined && d.notes !== undefined) ? d : { ...d, tasks: d.tasks || [], notes: d.notes || "" };
+    if (withTasks.piece !== undefined && validStages.includes(withTasks.stage || "script")) return withTasks;
+    const newStage = OLD_STAGE_MAP[withTasks.stage] || (REEL_STAGE_KEYS.includes(withTasks.stage) ? withTasks.stage : "script");
+    const stageDue = (withTasks.stageDue && typeof withTasks.stageDue === "object") ? withTasks.stageDue : (withTasks.due && newStage !== "done" ? { [newStage]: withTasks.due } : {});
+    return { ...withTasks, piece: withTasks.piece || "Reel", stage: newStage, stageDue, storyDue: withTasks.storyDue || "", script: withTasks.script || "", caption: withTasks.caption || "" };
+  });
+  out = { ...out, deals: { ...out.deals, deals: migrated } };
   }
   return out;
 }
@@ -2678,17 +2679,23 @@ function DealCard({ x, open, onToggleOpen, update, remove, isProspect }) {
         </div>
       )}
 
-      {!done && <PriorityControls item={x} onChange={(p) => update(x.id, p)} hideDue />}
+        {!done && <PriorityControls item={x} onChange={(p) => update(x.id, p)} hideDue />}
 
-      {/* expanded: Script (Reel only) + Caption */}
-      {open && (
-        <div className="mt-4 flex flex-col gap-3" onClick={(e) => e.stopPropagation()}>
-          {piece === "Reel" && <div><Label text="Script" /><AutoTextarea value={x.script} onChange={(v) => update(x.id, { script: v })} placeholder="Write the script…" /></div>}
-          <div><Label text="Caption" /><AutoTextarea value={x.caption} onChange={(v) => update(x.id, { caption: v })} placeholder="Caption, hashtags, promo code…" /></div>
-          <button onClick={(e) => { e.stopPropagation(); remove(x.id); }} className="self-end flex items-center gap-1" style={{ ...iconBtn, fontSize: 12, color: C.rose }}><Trash2 size={12} /> Remove deal</button>
-        </div>
-      )}
-    </div>
+  <div className="mt-3" onClick={(e) => e.stopPropagation()}>
+  <Label text="Tasks" />
+  {open ? <MiniTaskList tasks={x.tasks} onChange={(tasks) => update(x.id, { tasks })} composerAtBottom /> : <TaskPreviewList tasks={x.tasks} />}
+  </div>
+
+  {/* expanded: Script (Reel only) + Caption + Notes */}
+  {open && (
+  <div className="mt-4 flex flex-col gap-3" onClick={(e) => e.stopPropagation()}>
+  {piece === "Reel" && <div><Label text="Script" /><AutoTextarea value={x.script} onChange={(v) => update(x.id, { script: v })} placeholder="Write the script…" /></div>}
+  <div><Label text="Caption" /><AutoTextarea value={x.caption} onChange={(v) => update(x.id, { caption: v })} placeholder="Caption, hashtags, promo code…" /></div>
+  <div><Label text="Notes" /><AutoTextarea value={x.notes || ""} onChange={(v) => update(x.id, { notes: v })} placeholder="Notes…" /></div>
+  <button onClick={(e) => { e.stopPropagation(); remove(x.id); }} className="self-end flex items-center gap-1" style={{ ...iconBtn, fontSize: 12, color: C.rose }}><Trash2 size={12} /> Remove deal</button>
+  </div>
+  )}
+</div>
   );
 }
 
@@ -2725,7 +2732,7 @@ function DealsModule({ data, setData, q, navRequest }) {
   const patch = (p) => setData((d) => ({ ...d, deals: { ...d.deals, ...p } }));
   const update = (id, p) => patch({ deals: deals.map((x) => (x.id === id ? { ...x, ...p } : x)) });
   const remove = (id) => patch({ deals: deals.filter((x) => x.id !== id) });
-  const add = () => { const x = { id: uid(), brand: "New brand", piece: "Reel", stage: "script", stageDue: {}, storyDue: "", script: "", caption: "", priority: "Medium", lastProgress: null, created: todayISO(), type: "Prospect" }; patch({ deals: [x, ...deals] }); setOpenId(x.id); setSub("brandDeals"); };
+  const add = () => { const x = { id: uid(), brand: "New brand", piece: "Reel", stage: "script", stageDue: {}, storyDue: "", script: "", caption: "", tasks: [], notes: "", priority: "Medium", lastProgress: null, created: todayISO(), type: "Prospect" }; patch({ deals: [x, ...deals] }); setOpenId(x.id); setSub("brandDeals"); };
   const updateClient = (id, p) => patch({ clients: clients.map((c) => (c.id === id ? { ...c, ...p } : c)) });
   const addClient = () => { patch({ clients: [{ id: uid(), name: "New client", service: "", status: "Lead", notes: "", tasks: [] }, ...clients] }); setSub("socialClients"); };
   const removeClient = (id) => patch({ clients: clients.filter((c) => c.id !== id) });
