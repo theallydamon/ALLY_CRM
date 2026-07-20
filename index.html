@@ -870,6 +870,7 @@ function AllyCRM() {
       if (!a.lifeAdmin) a.lifeAdmin = ALLY_SEED.lifeAdmin;
       a = migrateAlly(a);
       m = { ...m, creators: (m.creators || []).map((c) => c.goals ? c : { ...c, goals: c.goal ? [{ id: uid(), text: c.goal }] : [] }) };
+      m = { ...m, creators: (m.creators || []).map((c) => (c.bio !== undefined && c.nextSteps !== undefined) ? c : { ...c, bio: c.bio || "", nextSteps: c.nextSteps || "" }) };
       m = { ...m, tasks: (m.tasks || []).map((t) => t.description !== undefined ? t : { ...t, description: "" }) };
       /* admin tasks used to carry one single `link` string, only editable via the pencil-toggle —
          now they carry a `links` array (add new ones any time, none overwriting the last, same
@@ -2692,17 +2693,13 @@ function DealCard({ x, open, onToggleOpen, update, remove, isProspect }) {
 }
 
 function ClientCard({ c, updateClient, removeClient }) {
-  /* collapsed by default — name + status only, plus a read-only glance at outstanding tasks.
+  /* collapsed by default — name + a read-only glance at outstanding tasks.
      Clicking the card expands it to the full interactive task list (capture row at the bottom)
      and Notes, same convention as DealCard. */
   const [expanded, setExpanded] = useState(false);
   return (
-    <div onClick={() => { if (hasTextSelection()) return; setExpanded((v) => !v); }} className="rounded-2xl p-4" style={{ cursor: "pointer", ...card, borderRadius: 16, borderLeft: `3px solid ${CLIENT_TINT[c.status]}` }}>
+    <div onClick={() => { if (hasTextSelection()) return; setExpanded((v) => !v); }} className="rounded-2xl p-4" style={{ cursor: "pointer", ...card, borderRadius: 16, borderLeft: `3px solid ${C.pink}` }}>
       <div className="flex items-center gap-2"><div className="flex-1 min-w-0"><InlineEdit value={c.name} onChange={(v) => updateClient(c.id, { name: v })} strong bubbleClicks /></div><button onClick={(e) => { e.stopPropagation(); removeClient(c.id); }} style={iconBtn} aria-label="Delete"><Trash2 size={13} /></button></div>
-      <InlineEdit value={c.service} onChange={(v) => updateClient(c.id, { service: v })} placeholder="Service / retainer" dim />
-      <div className="flex gap-1 mt-2">{CLIENT_STATUSES.map((s) => (
-        <button key={s} onClick={(e) => { e.stopPropagation(); updateClient(c.id, { status: s }); }} className="rounded-full px-3 py-1 flex-1" style={{ fontSize: 11, cursor: "pointer", fontFamily: "inherit", background: c.status === s ? `${CLIENT_TINT[s]}22` : FILL, border: `1px solid ${c.status === s ? CLIENT_TINT[s] : LINE}`, color: c.status === s ? CLIENT_TINT[s] : MUT }}>{s}</button>
-      ))}</div>
       <div className="mt-3">
         <Label text="Tasks" />
         {expanded ? <MiniTaskList tasks={c.tasks} onChange={(tasks) => updateClient(c.id, { tasks })} composerAtBottom /> : <TaskPreviewList tasks={c.tasks} />}
@@ -2714,49 +2711,44 @@ function ClientCard({ c, updateClient, removeClient }) {
 
 function DealsModule({ data, setData, q, navRequest }) {
   const [openId, setOpenId] = useState(null);
-  const [sub, setSub] = useState("activeDeals");
+  const [sub, setSub] = useState("brandDeals");
   const deals = data.deals.deals, clients = data.deals.clients;
-  /* a dashboard task pointing at a deal (navOpenId) needs to land on whichever of the two deal
-     subtabs that deal actually lives on, now that they're split apart, then opens its card same
-     as before. */
+  /* a dashboard task pointing at a deal (navOpenId) always lands on the single Brand Deals tab
+  now, then opens its card same as before. */
   useEffect(() => {
     if (navRequest && navRequest.navTab === "deals" && navRequest.navOpenId) {
       setOpenId(navRequest.navOpenId);
-      const target = deals.find((x) => x.id === navRequest.navOpenId);
-      if (target) setSub((target.type || "Active") === "Prospect" ? "prospectDeals" : "activeDeals");
+      setSub("brandDeals");
     }
   }, [navRequest]);
   const ql = (q || "").toLowerCase();
   const patch = (p) => setData((d) => ({ ...d, deals: { ...d.deals, ...p } }));
   const update = (id, p) => patch({ deals: deals.map((x) => (x.id === id ? { ...x, ...p } : x)) });
   const remove = (id) => patch({ deals: deals.filter((x) => x.id !== id) });
-  const add = (type) => { const x = { id: uid(), brand: "New brand", piece: "Reel", stage: "script", stageDue: {}, storyDue: "", script: "", caption: "", priority: "Medium", lastProgress: null, created: todayISO(), type: type || "Prospect" }; patch({ deals: [x, ...deals] }); setOpenId(x.id); setSub(type === "Active" ? "activeDeals" : "prospectDeals"); };
+  const add = () => { const x = { id: uid(), brand: "New brand", piece: "Reel", stage: "script", stageDue: {}, storyDue: "", script: "", caption: "", priority: "Medium", lastProgress: null, created: todayISO(), type: "Prospect" }; patch({ deals: [x, ...deals] }); setOpenId(x.id); setSub("brandDeals"); };
   const updateClient = (id, p) => patch({ clients: clients.map((c) => (c.id === id ? { ...c, ...p } : c)) });
-  const addClient = () => { patch({ clients: [{ id: uid(), name: "New client", service: "", status: "Lead", notes: "", tasks: [] }, ...clients] }); setSub("prospectClients"); };
+  const addClient = () => { patch({ clients: [{ id: uid(), name: "New client", service: "", status: "Lead", notes: "", tasks: [] }, ...clients] }); setSub("socialClients"); };
   const removeClient = (id) => patch({ clients: clients.filter((c) => c.id !== id) });
 
   const matchDeal = (x) => !ql || x.brand.toLowerCase().includes(ql);
-  const matchClient = (c) => !ql || c.name.toLowerCase().includes(ql) || (c.service || "").toLowerCase().includes(ql);
+  const matchClient = (c) => !ql || c.name.toLowerCase().includes(ql);
 
-  const activeDeals = deals.filter((x) => (x.type || "Active") === "Active" && matchDeal(x))
+  const allDeals = deals.filter(matchDeal)
     .sort((a, b) => { const ap = (a.stage || "script") === "done", bp = (b.stage || "script") === "done"; if (ap !== bp) return ap ? 1 : -1; const ad = dealHeadlineDue(a), bd = dealHeadlineDue(b); if (ad && bd) return ad.localeCompare(bd); return ad ? -1 : bd ? 1 : 0; });
-  const prospectDeals = deals.filter((x) => (x.type || "Active") === "Prospect" && matchDeal(x));
-  const activeClients = clients.filter((c) => c.status !== "Lead" && matchClient(c));
-  const prospectClients = clients.filter((c) => c.status === "Lead" && matchClient(c));
+  const allClients = clients.filter(matchClient);
+  const activeReels = deals.filter((d) => (d.type || "Active") === "Active" && (d.piece || "Reel") === "Reel");
 
   /* distribution of active Reels across the production line (Stories have no stages) */
-  const stageBars = REEL_STAGES.map((s, i) => ({ label: s.label.split(" ")[0], value: activeDeals.filter((d) => (d.piece || "Reel") === "Reel" && (d.stage || "script") === s.key).length, color: AURAS[i % AURAS.length] }));
+  const stageBars = REEL_STAGES.map((s, i) => ({ label: s.label.split(" ")[0], value: activeReels.filter((d) => (d.stage || "script") === s.key).length, color: AURAS[i % AURAS.length] }));
 
   const subs = [
-    { id: "activeDeals", emoji: "🤝", label: "Active brand deals", count: activeDeals.length },
-    { id: "prospectDeals", emoji: "🔎", label: "Prospective brand deals", count: prospectDeals.length },
-    { id: "activeClients", emoji: "🧑‍💼", label: "Active clients", count: activeClients.length },
-    { id: "prospectClients", emoji: "📇", label: "Prospective clients", count: prospectClients.length },
+    { id: "brandDeals", emoji: "🤝", label: "Brand Deals", count: allDeals.length },
+    { id: "socialClients", emoji: "🧑‍💼", label: "Social Media Clients", count: allClients.length },
   ];
 
   return (
     <section>
-      <SectionHead title="Brand deals & clients" sub="Every deal and client, split into its own tab. Every deal, client, and task here still feeds the Priorities dashboard." />
+      <SectionHead title="Brand deals & clients" sub="Brand deals and social media clients, each in their own tab. Every deal, client, and task here still feeds the Priorities dashboard." />
       <nav className="flex gap-2 mb-6 flex-wrap">
         {subs.map(({ id, emoji, label, count }) => {
           const on = sub === id;
@@ -2768,51 +2760,31 @@ function DealsModule({ data, setData, q, navRequest }) {
         })}
       </nav>
 
-      {sub === "activeDeals" && (
+      {sub === "brandDeals" && (
         <>
-          {activeDeals.length > 0 && (
+          <div className="flex justify-end mb-3"><AddBtn onClick={add} label="Add deal" /></div>
+          {activeReels.length > 0 && (
             <div className="rounded-2xl p-4 mb-5" style={{ ...card, borderRadius: 18 }}>
               <div style={{ fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase", color: MUT, marginBottom: 6 }}>Where active deals sit 📊</div>
               <Bars data={stageBars} height={120} />
             </div>
           )}
           <div className="flex flex-col gap-3">
-            {activeDeals.map((x) => (
-              <DealCard key={x.id} x={x} open={openId === x.id} onToggleOpen={() => setOpenId(openId === x.id ? null : x.id)} update={update} remove={remove} isProspect={false} />
+            {allDeals.map((x) => (
+              <DealCard key={x.id} x={x} open={openId === x.id} onToggleOpen={() => setOpenId(openId === x.id ? null : x.id)} update={update} remove={remove} isProspect={(x.type || "Active") === "Prospect"} />
             ))}
-            {activeDeals.length === 0 && <Empty text={ql ? "No active deal matches your search." : "No active deals yet. Promote a prospect once it's confirmed."} />}
+            {allDeals.length === 0 && <Empty text={ql ? "No deal matches your search." : "No deals yet. Add one the moment a brand reaches out."} />}
           </div>
         </>
       )}
 
-      {sub === "prospectDeals" && (
-        <>
-          <div className="flex justify-end mb-3"><AddBtn onClick={() => add("Prospect")} label="Add prospect" /></div>
-          <div className="flex flex-col gap-3">
-            {prospectDeals.map((x) => (
-              <DealCard key={x.id} x={x} open={openId === x.id} onToggleOpen={() => setOpenId(openId === x.id ? null : x.id)} update={update} remove={remove} isProspect={true} />
-            ))}
-            {prospectDeals.length === 0 && <Empty text={ql ? "No prospect matches your search." : "No prospects right now. Add one the moment a brand reaches out."} />}
-          </div>
-        </>
-      )}
-
-      {sub === "activeClients" && (
-        <>
-          <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
-            {activeClients.map((c) => <ClientCard key={c.id} c={c} updateClient={updateClient} removeClient={removeClient} />)}
-          </div>
-          {activeClients.length === 0 && <Empty text={ql ? "No client matches your search." : "No active clients right now. This wakes up when a lead converts."} />}
-        </>
-      )}
-
-      {sub === "prospectClients" && (
+      {sub === "socialClients" && (
         <>
           <div className="flex justify-end mb-3"><AddBtn onClick={addClient} label="Add client" /></div>
           <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
-            {prospectClients.map((c) => <ClientCard key={c.id} c={c} updateClient={updateClient} removeClient={removeClient} />)}
+            {allClients.map((c) => <ClientCard key={c.id} c={c} updateClient={updateClient} removeClient={removeClient} />)}
           </div>
-          {prospectClients.length === 0 && <Empty text={ql ? "No lead matches your search." : "No leads in the pipeline yet."} />}
+          {allClients.length === 0 && <Empty text={ql ? "No client matches your search." : "No clients yet. Add one to get started."} />}
         </>
       )}
     </section>
@@ -2959,66 +2931,87 @@ function MamaTaskRing({ label, emoji, accent, tasks, rank, pct, onNavigate, onDr
 }
 
 function Creators({ data, setData, q, navRequest }) {
-  const [openId, setOpenId] = useState(null);
-  /* a task-navigation request targeting a specific creator (navOpenId) expands that creator's
-     card — the Tasks list itself is always visible either way, this is just "show me the rest of
-     the context too" per the dashboard's expand-parent-card behavior. */
+  const [selectedId, setSelectedId] = useState(data.creators[0] ? data.creators[0].id : null);
+  /* a task-navigation request targeting a specific creator (navOpenId) switches straight to
+  that creator's own subtab. */
   useEffect(() => {
-    if (navRequest && navRequest.navTab === "mama" && navRequest.navSub === "creators" && navRequest.navOpenId) setOpenId(navRequest.navOpenId);
+    if (navRequest && navRequest.navTab === "mama" && navRequest.navSub === "creators" && navRequest.navOpenId) setSelectedId(navRequest.navOpenId);
   }, [navRequest]);
   const ql = (q || "").toLowerCase();
   const update = (id, patch) => setData((d) => ({ ...d, creators: d.creators.map((c) => (c.id === id ? { ...c, ...patch } : c)) }));
   const remove = (id) => setData((d) => ({ ...d, creators: d.creators.filter((c) => c.id !== id) }));
-  const add = () => { const c = { id: uid(), name: "New creator", niche: "", goals: [], aura: Math.floor(Math.random() * AURAS.length), links: [], notes: [], tasks: [] }; setData((d) => ({ ...d, creators: [c, ...d.creators] })); setOpenId(c.id); };
+  const add = () => { const c = { id: uid(), name: "New creator", niche: "", bio: "", nextSteps: "", goals: [], aura: Math.floor(Math.random() * AURAS.length), links: [], notes: [], tasks: [] }; setData((d) => ({ ...d, creators: [c, ...d.creators] })); setSelectedId(c.id); };
+  const onRemove = (id) => {
+    remove(id);
+    if (selectedId === id) { const rest = data.creators.filter((c) => c.id !== id); setSelectedId(rest[0] ? rest[0].id : null); }
+  };
   let list = data.creators;
   if (ql) list = list.filter((c) => c.name.toLowerCase().includes(ql) || (c.niche || "").toLowerCase().includes(ql));
+  const selected = data.creators.find((c) => c.id === selectedId) || list[0] || null;
   return (
     <section>
-      <SectionHead title="Creator roster" sub="Everything you know per creator: their goal, your research, the links that matter." action={<AddBtn onClick={add} label="Add creator" />} />
-      <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))" }}>
-        {list.map((c) => <CreatorCard key={c.id} c={c} open={openId === c.id} onToggle={() => setOpenId(openId === c.id ? null : c.id)} onUpdate={(p) => update(c.id, p)} onRemove={() => remove(c.id)} openTaskCount={(c.tasks || []).filter((t) => !t.done).length} />)}
-      </div>
-      {list.length === 0 && <Empty text={ql ? "No creator matches your search." : "No creators yet."} />}
+      <SectionHead title="Creator roster" sub="Each creator gets their own page: bio, goals, links, tasks, and what to do next." action={<AddBtn onClick={add} label="Add creator" />} />
+      <nav className="flex gap-2 mb-6 flex-wrap">
+        {list.map((c) => {
+          const on = selected && c.id === selected.id;
+          const aura = AURAS[c.aura % AURAS.length];
+          return (
+            <button key={c.id} onClick={() => setSelectedId(c.id)} className="flex items-center gap-2 rounded-full px-4 py-2" style={{ background: on ? aura : C.card, border: `1px solid ${on ? aura : LINE}`, color: on ? "#fff" : C.ink, cursor: "pointer", fontSize: 14, fontWeight: on ? 600 : 400, fontFamily: "inherit" }}>
+              <span style={{ width: 18, height: 18, borderRadius: 99, background: on ? "rgba(255,255,255,0.25)" : aura, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 700, color: "#fff" }}>{c.name.split(" ").map((w) => w[0]).slice(0, 2).join("")}</span>
+              <span>{c.name}</span>
+            </button>
+          );
+        })}
+      </nav>
+      {selected ? <CreatorDetailPage key={selected.id} c={selected} onUpdate={(p) => update(selected.id, p)} onRemove={() => onRemove(selected.id)} /> : <Empty text={ql ? "No creator matches your search." : "No creators yet."} />}
     </section>
   );
 }
 
-function CreatorCard({ c, open, onToggle, onUpdate, onRemove, openTaskCount }) {
+function CreatorDetailPage({ c, onUpdate, onRemove }) {
   const aura = AURAS[c.aura % AURAS.length];
   const [linkLabel, setLinkLabel] = useState(""); const [linkUrl, setLinkUrl] = useState("");
   const addLink = () => { if (!linkUrl.trim()) return; const url = linkUrl.trim().startsWith("http") ? linkUrl.trim() : `https://${linkUrl.trim()}`; onUpdate({ links: [...c.links, { id: uid(), label: linkLabel.trim() || url.replace(/^https?:\/\//, "").slice(0, 30), url }] }); setLinkLabel(""); setLinkUrl(""); };
   return (
-    <div onClick={() => { if (hasTextSelection()) return; onToggle(); }} className="rounded-2xl p-4" style={{ cursor: "pointer", ...card, borderRadius: 18, boxShadow: open ? `0 0 0 1px ${aura}44, ${card.boxShadow}` : card.boxShadow }}>
-      <div className="flex items-start gap-3">
-        <div style={{ width: 42, height: 42, borderRadius: 14, flexShrink: 0, background: aura, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 600, fontSize: 15, color: "#fff" }}>{c.name.split(" ").map((w) => w[0]).slice(0, 2).join("")}</div>
-        <div className="flex-1 min-w-0"><InlineEdit value={c.name} onChange={(v) => onUpdate({ name: v })} strong bubbleClicks /><InlineEdit value={c.niche} onChange={(v) => onUpdate({ niche: v })} placeholder="Niche / platform" dim bubbleClicks /></div>
-        <button onClick={(e) => { e.stopPropagation(); onToggle(); }} style={iconBtn} aria-label="Expand">{open ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</button>
-      </div>
-      {c.links.length > 0 && (
-        <div className="flex gap-2 flex-wrap mt-2">{c.links.map((l) => (<a key={l.id} href={l.url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="rounded-full px-3 py-1 flex items-center gap-1.5" style={{ ...cardSoft, borderRadius: 99, fontSize: 12, color: C.sky, textDecoration: "none" }}><ExternalLink size={11} />{l.label}</a>))}</div>
-      )}
-      <div className="mt-3 rounded-xl px-3 py-2" style={{ ...cardSoft, borderRadius: 12, borderLeft: `2px solid ${aura}` }}>
-        <div className="flex items-center justify-between"><div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: MUT }}>Goal{c.goals.length > 1 ? "s" : ""}</div><button onClick={(e) => { e.stopPropagation(); onUpdate({ goals: [...c.goals, { id: uid(), text: "" }] }); }} style={{ ...iconBtn, color: aura, fontSize: 11, display: "flex", alignItems: "center", gap: 3 }}><Plus size={11} /> Add goal</button></div>
-        {c.goals.length === 0 && <div style={{ fontSize: 13, color: FAINT }}>What are they trying to achieve?</div>}
-        {c.goals.map((g, i) => (
-          <div key={g.id} className="flex items-center gap-1"><span style={{ color: aura, fontSize: 13, flexShrink: 0 }}>{c.goals.length > 1 ? `${i + 1}.` : "◆"}</span><InlineEdit value={g.text} onChange={(v) => onUpdate({ goals: c.goals.map((x) => x.id === g.id ? { ...x, text: v } : x) })} placeholder="What are they trying to achieve?" /><button onClick={(e) => { e.stopPropagation(); onUpdate({ goals: c.goals.filter((x) => x.id !== g.id) }); }} style={iconBtn} aria-label="Remove goal"><X size={11} /></button></div>
-        ))}
-      </div>
-      <div className="flex items-center gap-3 mt-3" style={{ fontSize: 12, color: MUT }}><span><LinkIcon size={11} style={{ display: "inline", marginRight: 4 }} />{c.links.length} links</span>{openTaskCount > 0 && <span style={{ color: aura }}>{openTaskCount} open task{openTaskCount > 1 ? "s" : ""}</span>}</div>
-      {open && (
-        <div className="mt-4 flex flex-col gap-4">
-          <div>
-            <Label text="Tasks" />
-            <MiniTaskList tasks={c.tasks} onChange={(tasks) => onUpdate({ tasks })} />
-          </div>
-          <div>
-            <Label text="Links" />
-            <div className="flex gap-2 flex-wrap mb-2">{c.links.map((l) => (<span key={l.id} className="rounded-full px-3 py-1 flex items-center gap-1.5" style={{ ...cardSoft, borderRadius: 99, fontSize: 12 }}><a href={l.url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} style={{ color: C.sky, textDecoration: "none", display: "flex", alignItems: "center", gap: 4 }}><ExternalLink size={11} />{l.label}</a><button onClick={(e) => { e.stopPropagation(); onUpdate({ links: c.links.filter((x) => x.id !== l.id) }); }} style={{ ...iconBtn, padding: 0 }} aria-label="Remove link"><X size={11} /></button></span>))}</div>
-            <div className="flex gap-2 flex-wrap"><input value={linkLabel} onChange={(e) => setLinkLabel(e.target.value)} onClick={(e) => e.stopPropagation()} placeholder="Label" className="rounded-lg px-3 py-2" style={{ ...inputStyle, width: 110 }} /><input value={linkUrl} onChange={(e) => setLinkUrl(e.target.value)} onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.key === "Enter" && addLink()} placeholder="URL (Basecamp, doc, Creator IQ…)" className="flex-1 rounded-lg px-3 py-2" style={{ ...inputStyle, minWidth: 160 }} /><button onClick={(e) => { e.stopPropagation(); addLink(); }} style={pillAccent(aura)}>Add</button></div>
-          </div>
-          <button onClick={(e) => { e.stopPropagation(); onRemove(); }} className="self-end flex items-center gap-1" style={{ ...iconBtn, fontSize: 12, color: C.rose }}><Trash2 size={12} /> Remove creator</button>
+    <div className="flex flex-col gap-4">
+      <div className="rounded-2xl p-4 flex items-start gap-3" style={{ ...card, borderRadius: 18, borderTop: `2px solid ${aura}` }}>
+        <div style={{ width: 48, height: 48, borderRadius: 16, flexShrink: 0, background: aura, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 600, fontSize: 17, color: "#fff" }}>{c.name.split(" ").map((w) => w[0]).slice(0, 2).join("")}</div>
+        <div className="flex-1 min-w-0">
+          <InlineEdit value={c.name} onChange={(v) => onUpdate({ name: v })} strong />
+          <InlineEdit value={c.niche} onChange={(v) => onUpdate({ niche: v })} placeholder="Niche / platform" dim />
         </div>
-      )}
+        <button onClick={onRemove} className="flex items-center gap-1" style={{ ...iconBtn, fontSize: 12, color: C.rose }}><Trash2 size={13} /> Remove</button>
+      </div>
+
+      <div className="rounded-2xl p-4" style={{ ...card, borderRadius: 18, background: `${aura}14`, border: `1px solid ${aura}44` }}>
+        <div className="flex items-center gap-1.5 mb-2"><Sparkles size={13} color={aura} /><span style={{ fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", color: aura, fontWeight: 700 }}>What to do next</span></div>
+        <AutoTextarea value={c.nextSteps || ""} onChange={(v) => onUpdate({ nextSteps: v })} placeholder="What should happen in the next session with this creator?" />
+      </div>
+
+      <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))" }}>
+        <div className="rounded-2xl p-4" style={{ ...card, borderRadius: 18 }}>
+          <Label text="Bio" />
+          <AutoTextarea value={c.bio || ""} onChange={(v) => onUpdate({ bio: v })} placeholder="Who they are, what they're about…" />
+        </div>
+        <div className="rounded-2xl p-4" style={{ ...card, borderRadius: 18 }}>
+          <div className="flex items-center justify-between"><Label text={`Goal${c.goals.length > 1 ? "s" : ""}`} /><button onClick={() => onUpdate({ goals: [...c.goals, { id: uid(), text: "" }] })} style={{ ...iconBtn, color: aura, fontSize: 11, display: "flex", alignItems: "center", gap: 3 }}><Plus size={11} /> Add goal</button></div>
+          {c.goals.length === 0 && <div style={{ fontSize: 13, color: FAINT }}>What are they trying to achieve?</div>}
+          {c.goals.map((g, i) => (
+            <div key={g.id} className="flex items-center gap-1"><span style={{ color: aura, fontSize: 13, flexShrink: 0 }}>{c.goals.length > 1 ? `${i + 1}.` : "◆"}</span><InlineEdit value={g.text} onChange={(v) => onUpdate({ goals: c.goals.map((x) => x.id === g.id ? { ...x, text: v } : x) })} placeholder="What are they trying to achieve?" /><button onClick={() => onUpdate({ goals: c.goals.filter((x) => x.id !== g.id) })} style={iconBtn} aria-label="Remove goal"><X size={11} /></button></div>
+          ))}
+        </div>
+      </div>
+
+      <div className="rounded-2xl p-4" style={{ ...card, borderRadius: 18 }}>
+        <Label text="Links" />
+        <div className="flex gap-2 flex-wrap mb-2">{c.links.map((l) => (<span key={l.id} className="rounded-full px-3 py-1 flex items-center gap-1.5" style={{ ...cardSoft, borderRadius: 99, fontSize: 12 }}><a href={l.url} target="_blank" rel="noreferrer" style={{ color: C.sky, textDecoration: "none", display: "flex", alignItems: "center", gap: 4 }}><ExternalLink size={11} />{l.label}</a><button onClick={() => onUpdate({ links: c.links.filter((x) => x.id !== l.id) })} style={{ ...iconBtn, padding: 0 }} aria-label="Remove link"><X size={11} /></button></span>))}</div>
+        <div className="flex gap-2 flex-wrap"><input value={linkLabel} onChange={(e) => setLinkLabel(e.target.value)} placeholder="Label" className="rounded-lg px-3 py-2" style={{ ...inputStyle, width: 110 }} /><input value={linkUrl} onChange={(e) => setLinkUrl(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addLink()} placeholder="URL (Basecamp, doc, Creator IQ…)" className="flex-1 rounded-lg px-3 py-2" style={{ ...inputStyle, minWidth: 160 }} /><button onClick={addLink} style={pillAccent(aura)}>Add</button></div>
+      </div>
+
+      <div className="rounded-2xl p-4" style={{ ...card, borderRadius: 18 }}>
+        <Label text="Tasks" />
+        <MiniTaskList tasks={c.tasks} onChange={(tasks) => onUpdate({ tasks })} />
+      </div>
     </div>
   );
 }
