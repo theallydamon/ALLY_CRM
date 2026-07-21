@@ -20,7 +20,7 @@
 <script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore-compat.js"></script>
 <style>
-html,body,#root{height:100%;margin:0;background:#0B0B0D;}
+html,body,#root{height:100%;margin:0;background:#0B0B0D;font-family:"Bricolage Grotesque",sans-serif;}
 /* dashboard task navigation: brief flash on whatever element scrollAndHighlight() scrolls to,
    so a click on a Priorities/Mama dashboard task chip reads clearly as "here it is" once the
    page lands on the source item. Pure CSS animation on a transient class toggled from JS —
@@ -832,26 +832,34 @@ const MAMA_KEY = "creator-strategy-hq-v1";
 /* ================= APP SHELL ================= */
 function AnchorModule({ data, setData }) {
   const idea = (data.anchor && data.anchor.idea) || "";
+  const anchorInputRef = useRef(null);
   const updateIdea = (value) => setData((current) => ({
     ...current,
     anchor: { ...(current.anchor || {}), idea: value },
   }));
+  const resizeAnchor = () => {
+    const el = anchorInputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = Math.max(150, el.scrollHeight) + "px";
+  };
+  useLayoutEffect(resizeAnchor, [idea]);
 
   return (
     <div className="w-full flex items-center justify-center" style={{ minHeight: "calc(100vh - 190px)", padding: "20px 0" }}>
-      <div style={{ width: "min(760px, 100%)", minHeight: 400, position: "relative", overflow: "hidden", borderRadius: 28, border: `1px solid ${LINE}`, background: "linear-gradient(135deg, rgba(123,103,224,0.16), rgba(19,19,22,0.98) 48%, rgba(47,163,124,0.10))", boxShadow: "0 28px 80px rgba(0,0,0,0.32)", padding: "clamp(34px, 7vw, 76px)" }}>
+      <div style={{ width: "min(760px, 100%)", minHeight: 430, position: "relative", overflow: "hidden", borderRadius: 28, border: `1px solid ${LINE}`, background: "linear-gradient(135deg, rgba(123,103,224,0.16), rgba(19,19,22,0.98) 48%, rgba(47,163,124,0.10))", boxShadow: "0 28px 80px rgba(0,0,0,0.32)", padding: "clamp(34px, 7vw, 76px)" }}>
         <div style={{ position: "absolute", width: 260, height: 260, borderRadius: 999, background: "rgba(123,103,224,0.16)", filter: "blur(56px)", top: -110, right: -90, pointerEvents: "none" }} />
         <div style={{ position: "absolute", width: 210, height: 210, borderRadius: 999, background: "rgba(47,163,124,0.10)", filter: "blur(56px)", bottom: -110, left: -70, pointerEvents: "none" }} />
+        <div style={{ position: "absolute", top: 34, right: 38, opacity: 0.5, pointerEvents: "none", transform: "rotate(12deg)" }}><Sparkles size={44} color={C.lilac} strokeWidth={1.2} /></div>
+        <div style={{ position: "absolute", bottom: 38, right: 48, width: 54, height: 54, borderRadius: 18, border: "1px solid rgba(242,242,244,0.18)", transform: "rotate(18deg)", pointerEvents: "none" }} />
+        <div style={{ position: "absolute", top: 126, left: 34, width: 8, height: 8, borderRadius: 999, background: C.mint, boxShadow: "0 0 24px rgba(47,163,124,0.9)", pointerEvents: "none" }} />
         <div style={{ position: "relative", zIndex: 1, height: "100%", display: "flex", flexDirection: "column" }}>
-          <div style={{ fontSize: 11, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(242,242,244,0.56)", fontWeight: 600 }}>Your anchor</div>
-          <div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontSize: "clamp(27px, 4vw, 42px)", lineHeight: 1.08, letterSpacing: "-0.035em", fontWeight: 600, maxWidth: 520, marginTop: 16 }}>One sentence to come back to.</div>
-          <div style={{ flex: 1, display: "flex", alignItems: "center", padding: "42px 0 28px" }}>
-            <textarea aria-label="Your anchor" value={idea} onChange={(e) => updateIdea(e.target.value)}
+          <div style={{ flex: 1, display: "flex", alignItems: "center", padding: "44px 0 30px" }}>
+            <textarea ref={anchorInputRef} aria-label="Your anchor" value={idea} onChange={(e) => updateIdea(e.target.value)} onInput={resizeAnchor}
               placeholder="Write the idea, slogan, or feeling you want to embody."
-              rows={4}
-              style={{ width: "100%", background: "transparent", border: "none", outline: "none", resize: "none", color: C.ink, fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 500, fontSize: "clamp(25px, 3.6vw, 39px)", lineHeight: 1.22, letterSpacing: "-0.03em", padding: 0, minHeight: 150 }} />
+              rows={1}
+              style={{ width: "100%", background: "transparent", border: "none", outline: "none", resize: "none", overflow: "hidden", color: C.ink, fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 500, fontSize: "clamp(25px, 3.6vw, 39px)", lineHeight: 1.22, letterSpacing: "-0.03em", padding: 0, minHeight: 150, boxSizing: "border-box" }} />
           </div>
-          <div style={{ fontSize: 12, color: "rgba(242,242,244,0.48)" }}>Change it whenever your direction changes.</div>
         </div>
       </div>
     </div>
@@ -1199,14 +1207,14 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
   };
 
   if (!ally || !mama) {
-    return <div style={{ background: C.canvas, minHeight: "100vh" }} className="flex items-center justify-center"><div style={{ color: MUT, fontFamily: "Outfit, sans-serif" }}>Opening ALLY CRM…</div></div>;
+    return <div style={{ background: C.canvas, minHeight: "100vh" }} className="flex items-center justify-center"><div style={{ color: MUT, fontFamily: "'Bricolage Grotesque', sans-serif" }}>Opening ALLY CRM…</div></div>;
   }
 
   /* auth gate: if cloud sync is available (fbAuth loaded), don't render the app — or any locally
      cached data — until we actually know the sign-in state. Signed out (or still checking) shows a
      dedicated screen instead of ever flashing whatever's sitting in this browser's localStorage. */
   if (fbAuth && !authReady) {
-    return <div style={{ background: C.canvas, minHeight: "100vh" }} className="flex items-center justify-center"><div style={{ color: MUT, fontFamily: "Outfit, sans-serif" }}>Checking sign-in…</div></div>;
+    return <div style={{ background: C.canvas, minHeight: "100vh" }} className="flex items-center justify-center"><div style={{ color: MUT, fontFamily: "'Bricolage Grotesque', sans-serif" }}>Checking sign-in…</div></div>;
   }
   if (fbAuth && authReady && !user) {
     return (
@@ -1306,7 +1314,7 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
         }
       `}</style>
 
-      <div className="flex" style={{ height: "100%", fontFamily: "'Outfit', sans-serif", color: C.ink }}>
+      <div className="flex" style={{ height: "100%", fontFamily: "'Bricolage Grotesque', sans-serif", color: C.ink }}>
 
         {/* mobile-only backdrop behind the drawer; only ever mountable via the hamburger button,
             which itself only renders (via CSS) below the 768px breakpoint */}
@@ -2006,8 +2014,8 @@ function ScriptBox({ value, isHtml, open, onFocus, onChange, onToggle, big }) {
     document.execCommand("insertHTML", false, insert);
     commit();
   };
-  const miniBtn = { background: "rgba(255,255,255,0.06)", border: `1px solid ${LINE}`, color: C.ink, width: 22, height: 22, borderRadius: 6, cursor: "pointer", fontSize: 11, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Outfit', sans-serif" };
-  const miniSelect = { background: "rgba(255,255,255,0.06)", border: `1px solid ${LINE}`, color: C.ink, borderRadius: 6, fontSize: 10.5, fontFamily: "'Outfit', sans-serif", padding: "2px 4px" };
+  const miniBtn = { background: "rgba(255,255,255,0.06)", border: `1px solid ${LINE}`, color: C.ink, width: 22, height: 22, borderRadius: 6, cursor: "pointer", fontSize: 11, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Bricolage Grotesque', sans-serif" };
+  const miniSelect = { background: "rgba(255,255,255,0.06)", border: `1px solid ${LINE}`, color: C.ink, borderRadius: 6, fontSize: 10.5, fontFamily: "'Bricolage Grotesque', sans-serif", padding: "2px 4px" };
 
   return (
     <div onClick={(e) => e.stopPropagation()} className="mt-1.5">
@@ -2864,6 +2872,7 @@ function MamaModule({ data, setData, q, navRequest, navigateToTask, completeTask
                     computePillarFillPercent score them exactly like every other pillar. */
 function MamaTaskDashboard({ data, setData, setSub, navigateToTask, completeTask }) {
   const creatorTasks = data.creators.flatMap((cr) => (cr.tasks || []).filter((t) => !t.done && !t.paused).map((t) => ({ ...t, ...computeUrgency(t), title: `${t.title} (${cr.name})`, sourceType: "mamaCreator", navTab: "mama", navSub: "creators", navOpenId: cr.id })));
+  const adminTasksList = (data.tasks || []).filter((t) => !t.done && !t.paused).map((t) => ({ ...t, ...computeUrgency(t), sourceType: "mamaAdmin", navTab: "mama", navSub: "adminTasks" }));
 
   const BUCKETS = [
     { key: "creatorTasks", label: "Creator Tasks", emoji: "🧑‍🎤", accent: C.pink, tasks: creatorTasks, sub: "creators" },
@@ -3166,12 +3175,12 @@ function TaskCard({ t, col, onUpdate, onAdvance, onBack, onRemove }) {
 }
 
 /* ================= shared ================= */
-const inputStyle = { background: "rgba(255,255,255,0.05)", border: `1px solid ${LINE}`, color: C.ink, fontSize: 13.5, fontFamily: "'Outfit', sans-serif" };
-const darkInput = { background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.14)", color: "#fff", fontSize: 13.5, fontFamily: "'Outfit', sans-serif" };
-const iconBtn = { background: "transparent", border: "none", color: MUT, cursor: "pointer", padding: 4, borderRadius: 6, fontFamily: "'Outfit', sans-serif" };
-const pillDark = { background: "#F2F2F4", color: "#0B0B0D", border: "none", fontWeight: 600, fontSize: 13, borderRadius: 99, padding: "8px 16px", cursor: "pointer", fontFamily: "'Outfit', sans-serif" };
-const pillGhost = { background: "transparent", color: C.ink, border: `1px solid ${LINE}`, fontWeight: 500, fontSize: 13, borderRadius: 99, padding: "8px 16px", cursor: "pointer", fontFamily: "'Outfit', sans-serif" };
-const pillAccent = (tint) => ({ background: tint, color: onTint(tint), border: "none", fontWeight: 600, fontSize: 13, borderRadius: 10, padding: "8px 16px", cursor: "pointer", fontFamily: "'Outfit', sans-serif" });
+const inputStyle = { background: "rgba(255,255,255,0.05)", border: `1px solid ${LINE}`, color: C.ink, fontSize: 13.5, fontFamily: "'Bricolage Grotesque', sans-serif" };
+const darkInput = { background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.14)", color: "#fff", fontSize: 13.5, fontFamily: "'Bricolage Grotesque', sans-serif" };
+const iconBtn = { background: "transparent", border: "none", color: MUT, cursor: "pointer", padding: 4, borderRadius: 6, fontFamily: "'Bricolage Grotesque', sans-serif" };
+const pillDark = { background: "#F2F2F4", color: "#0B0B0D", border: "none", fontWeight: 600, fontSize: 13, borderRadius: 99, padding: "8px 16px", cursor: "pointer", fontFamily: "'Bricolage Grotesque', sans-serif" };
+const pillGhost = { background: "transparent", color: C.ink, border: `1px solid ${LINE}`, fontWeight: 500, fontSize: 13, borderRadius: 99, padding: "8px 16px", cursor: "pointer", fontFamily: "'Bricolage Grotesque', sans-serif" };
+const pillAccent = (tint) => ({ background: tint, color: onTint(tint), border: "none", fontWeight: 600, fontSize: 13, borderRadius: 10, padding: "8px 16px", cursor: "pointer", fontFamily: "'Bricolage Grotesque', sans-serif" });
 
 function SectionHead({ title, sub, action }) {
   return (
@@ -3202,7 +3211,7 @@ function InlineEdit({ value, onChange, placeholder, strong, dim, bubbleClicks })
   useEffect(() => { if (editing && ref.current) { ref.current.focus(); ref.current.select(); } }, [editing]);
   const commit = () => { setEditing(false); if (draft !== (value || "")) onChange(draft); };
   const cancel = () => { setDraft(value || ""); setEditing(false); };
-  const sharedFont = { color: dim ? MUT : C.ink, fontSize: strong ? 15 : 13, fontWeight: strong ? 600 : 400, fontFamily: "'Outfit', sans-serif" };
+  const sharedFont = { color: dim ? MUT : C.ink, fontSize: strong ? 15 : 13, fontWeight: strong ? 600 : 400, fontFamily: "'Bricolage Grotesque', sans-serif" };
   if (editing) {
     return (
       <input ref={ref} value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={commit}
@@ -3263,7 +3272,7 @@ function InlineEditArea({ value, onChange, placeholder, dim, open, onToggle }) {
   useLayoutEffect(() => { if (editing) resize(); }, [draft, editing]);
   const commit = () => { setEditing(false); if (draft !== (value || "")) onChange(draft); };
   const cancel = () => { setDraft(value || ""); setEditing(false); };
-  const sharedFont = { color: dim ? MUT : C.ink, fontSize: 13, fontWeight: 400, fontFamily: "'Outfit', sans-serif" };
+  const sharedFont = { color: dim ? MUT : C.ink, fontSize: 13, fontWeight: 400, fontFamily: "'Bricolage Grotesque', sans-serif" };
   const long = (value || "").length > 120 || (value || "").includes("\n");
   if (editing) {
     return (
