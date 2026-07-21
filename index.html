@@ -2179,6 +2179,12 @@ function ContentModule({ data, setData, q }) {
                     <InlineEdit value={i.title} onChange={(v) => updateItem(i.id, { title: v })} strong bubbleClicks /><button onClick={(e) => { e.stopPropagation(); setExpandedId(i.id); }} style={{ ...iconBtn, padding: 2, marginLeft: 6 }} aria-label="Expand description" title="Expand description to full screen">⤢</button>
                     <ScriptBox value={i.desc || ""} isHtml={!!i.descHtml} open={descOpen} onFocus={() => openIfNot(i.id)} onChange={(v) => updateItem(i.id, { desc: v, descHtml: true })} onToggle={toggleDesc} />
                     <div className="flex items-center gap-2 mt-1.5 flex-wrap" style={{ fontSize: 10.5 }}>
+                      {col === "Ready to Post"
+                        ? <input type="date" value={i.due || ""} onClick={(e) => e.stopPropagation()} onChange={(e) => scheduleItem(i.id, e.target.value)} className="rounded-md" style={{ ...darkInput, fontSize: 10.5, padding: "3px 5px" }} aria-label="Schedule for calendar" title="Schedule this post in the content calendar" />
+                        : <><input type="date" value={i.due || ""} onClick={(e) => e.stopPropagation()} onChange={(e) => updateItem(i.id, { due: e.target.value || null })} className="rounded-md" style={{ ...darkInput, fontSize: 10.5, padding: "3px 5px", opacity: i.dueOff ? 0.5 : 1 }} aria-label="Deadline (optional)" title="Deadline (optional)" /><DueChip due={i.due} off={i.dueOff} onToggle={() => updateItem(i.id, { dueOff: !i.dueOff })} /></>}
+                    </div>
+                    <div className="flex items-center gap-1 mt-1.5"><span className="ml-auto flex gap-1">
+                      {col !== "Idea" && <button onClick={(e) => { e.stopPropagation(); move(i.id, -1); }} style={{ ...iconBtn, padding: 2 }} aria-label="Back">←</button>}
                       {col !== "Ready to Post" && <button onClick={(e) => { e.stopPropagation(); move(i.id, 1); }} style={{ ...iconBtn, padding: 2, color: C.mint }} aria-label="Forward">→</button>}
                       <button onClick={(e) => { e.stopPropagation(); remove(i.id); }} style={{ ...iconBtn, padding: 2 }} aria-label="Delete"><X size={11} /></button>
                     </span></div>
