@@ -2261,7 +2261,7 @@ function SongModule({ data, setData }) {
               <div style={{ fontSize: 12.5, color: MUT, margin: "4px 0 6px" }}>{s.desc}</div>
               {s.kind === "gear" && (
                 <div className="rounded-xl p-3 my-2" style={{ ...cardSoft, borderRadius: 12 }}>
-                  {song.gear.map((g) => (
+                  {song.gear.filter((g) => !g.bought).map((g) => (
                     <div key={g.id} className="flex items-center gap-2 py-1 flex-wrap">
                       <button onClick={() => updateGear(g.id, { bought: !g.bought })} aria-label="Toggle bought" style={{ width: 22, height: 22, borderRadius: 7, cursor: "pointer", flexShrink: 0, background: g.bought ? C.mint : C.card, border: `1px solid ${g.bought ? C.mint : LINE}`, display: "flex", alignItems: "center", justifyContent: "center" }}>{g.bought && <Check size={13} color="#fff" strokeWidth={3} />}</button>
                       <div className="flex-1" style={{ minWidth: 130, textDecoration: g.bought ? "line-through" : "none", opacity: g.bought ? 0.55 : 1 }}><InlineEdit value={g.name} onChange={(v) => updateGear(g.id, { name: v })} /></div>
@@ -2506,7 +2506,7 @@ function LifeAdminModule({ data, setData, q }) {
   const remove = (id) => setData((d) => ({ ...d, lifeAdmin: { ...d.lifeAdmin, items: d.lifeAdmin.items.filter((t) => t.id !== id) } }));
   const clearDone = () => setData((d) => ({ ...d, lifeAdmin: { ...d.lifeAdmin, items: d.lifeAdmin.items.filter((t) => t.status !== "Done") } }));
   const matched = ql ? items.filter((t) => t.title.toLowerCase().includes(ql) || (t.description || "").toLowerCase().includes(ql)) : items;
-  const visible = matched.slice().sort((a, b) => (a.status === "Done" ? 1 : 0) - (b.status === "Done" ? 1 : 0));
+  const visible = matched.filter((t) => t.status !== "Done");
   return (
     <section>
       <SectionHead title="Life admin" sub="Your own stuff: paperwork, errands, calls to make. Same due date and priority logic as everywhere else." />
@@ -2566,6 +2566,7 @@ const DEAL_TYPE_TINT = { Active: C.mint, Prospect: C.sky };
 function MiniTaskList({ tasks, onChange, withLink, composerAtBottom }) {
   const [title, setTitle] = useState(""); const [description, setDescription] = useState(""); const [due, setDue] = useState(""); const [link, setLink] = useState("");
   const list = tasks || [];
+  const visibleList = list.filter((t) => !t.done);
   const add = () => {
     const t = title.trim(); if (!t) return;
     onChange([{ id: uid(), title: t, description: description.trim(), link: link.trim(), due: due || null, priority: priorityForNewTask(due || null), lastProgress: null, done: false, created: todayISO() }, ...list]);
@@ -2590,8 +2591,8 @@ function MiniTaskList({ tasks, onChange, withLink, composerAtBottom }) {
     <div onClick={(e) => e.stopPropagation()} className="flex flex-col gap-1.5">
       {!composerAtBottom && composer}
       {!composerAtBottom && <div style={{ borderTop: `1px solid ${LINE}`, margin: "2px 0" }} />}
-      {list.length === 0 && <div style={{ fontSize: 11.5, color: FAINT }}>No tasks yet.</div>}
-      {list.map((t) => <MiniTaskRow key={t.id} t={t} onUpdate={(p) => update(t.id, p)} onRemove={() => remove(t.id)} withLink={withLink} />)}
+      {visibleList.length === 0 && <div style={{ fontSize: 11.5, color: FAINT }}>No tasks yet.</div>}
+      {visibleList.map((t) => <MiniTaskRow key={t.id} t={t} onUpdate={(p) => update(t.id, p)} onRemove={() => remove(t.id)} withLink={withLink} />)}
       {composerAtBottom && <div style={{ borderTop: `1px solid ${LINE}`, margin: "2px 0" }} />}
       {composerAtBottom && composer}
     </div>
@@ -2624,7 +2625,7 @@ function MiniTaskRow({ t, onUpdate, onRemove, withLink }) {
 /* read-only glance list used when a Deal/Client card is collapsed — title + description only, no
    controls, so the card still tells you what's outstanding without needing to expand it. */
 function TaskPreviewList({ tasks }) {
-  const list = tasks || [];
+  const list = (tasks || []).filter((t) => !t.done);
   if (list.length === 0) return <div style={{ fontSize: 12, color: FAINT }}>No tasks yet.</div>;
   return (
     <div className="flex flex-col gap-1.5">
@@ -3080,7 +3081,7 @@ function AdminTasks({ data, setData }) {
       <div style={{ borderTop: `1px solid ${LINE}`, margin: "-2px 0 20px" }} />
       <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))" }}>
         {TASK_COLS.map((col) => {
-          const items = data.tasks.filter((t) => t.status === col);
+          const items = col === "Done" ? [] : data.tasks.filter((t) => t.status === col);
           return (
             <div key={col} className="rounded-2xl p-3" style={{ ...cardSoft, borderRadius: 16 }}>
               <div className="flex items-center justify-between mb-3 px-1"><span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 600, fontSize: 12, letterSpacing: "0.04em", textTransform: "uppercase" }}>{col}</span><span style={{ fontSize: 12, color: MUT }}>{items.length}</span></div>
