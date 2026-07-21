@@ -360,14 +360,14 @@ const cardSoft = { background: C.soft, border: `1px solid ${LINE}` };
 const MODULES = {
   overview:  { emoji: "🎯", label: "Priorities",  accent: C.mint,  bg: C.mintBg },
   content:   { emoji: "🎬", label: "Content",   accent: C.sky,   bg: C.skyBg },
-  song:      { emoji: "🎵", label: "Music Production", accent: C.lilac, bg: C.lilacBg },
+  anchor:    { emoji: "✦", label: "Anchor", accent: C.lilac, bg: C.lilacBg },
   unlocks:   { emoji: "🔓", label: "Unlocks",   accent: C.yellow, bg: C.yellowBg },
   apartment: { emoji: "🛋️", label: "Apartment", accent: C.peach, bg: C.peachBg },
   lifeAdmin: { emoji: "📋", label: "Life Admin", accent: C.rose,  bg: C.roseBg },
   mama:      { emoji: "💼", label: "Mama",      accent: C.brown, bg: C.brownBg },
   deals:     { emoji: "🤝", label: "Deals",     accent: C.pink,  bg: C.pinkBg },
 };
-const TAB_ORDER = ["overview", "content", "song", "lifeAdmin", "mama", "deals"];
+const TAB_ORDER = ["overview", "content", "lifeAdmin", "mama", "deals", "anchor"];
 
 /* ---------- storage shim: window.storage in the app, localStorage in the repo ---------- */
 const store = {
@@ -492,8 +492,7 @@ const MIX_ROUTES = ["Fiverr", "Crighton", "Cassidy's boyfriend", "DIY"];
 const SOURCES = ["Discord", "Basecamp", "Email", "Sheets", "Meeting", "Self"];
 const SOURCE_TINT = { Discord: C.lilac, Basecamp: C.amber, Email: C.sky, Sheets: C.mint, Meeting: C.pink, Self: C.peach };
 const TASK_COLS = ["To do", "Doing", "Done"];
-const TOOL_STAGES = ["Idea", "Building", "Shipped"];
-const PRIORITY_PILLARS = ["mama", "song", "content", "deals", "lifeAdmin"];
+const PRIORITY_PILLARS = ["mama", "content", "deals", "lifeAdmin"];
 
 /* ---------- priority engine: shared urgency scoring across all 6 pillars ---------- */
 const PRIORITY_LEVELS = ["Low", "Medium", "High"];
@@ -598,17 +597,6 @@ function collectPriorityTasks(ally, mama) {
       }
     });
   }
-  {
-    const songCurrentIdx = ally.song.stages.findIndex((s) => s.status !== "done");
-    if (songCurrentIdx !== -1) {
-      const s = ally.song.stages[songCurrentIdx];
-      if (!s.paused) out.push({
-        id: s.id, pillar: "song", title: s.name, due: s.due || null,
-        priority: s.priority || "Medium", lastProgress: s.lastProgress || null, created: s.created || null,
-        sourceType: "song", navTab: "song", navSub: null, navOpenId: null,
-      });
-    }
-  }
   /* each active deal surfaces its CURRENT stage as the hub task: a Reel shows the current
      production stage ("Write script (Brand)", "Film + edit (Brand)"...) with that stage's own
      deadline; a Story shows "Post story (Brand)" with its single deadline. Done deals drop out. */
@@ -643,12 +631,7 @@ function collectPriorityTasks(ally, mama) {
     priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
     sourceType: "mamaCreator", navTab: "mama", navSub: "creators", navOpenId: cr.id,
   })));
-  (mama.tools || []).forEach((tl) => (tl.tasks || []).filter((t) => !t.done && !t.paused).forEach((t) => out.push({
-    id: t.id, pillar: "mama", title: `${t.title} (${tl.name})`, due: t.due || null,
-    priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
-    sourceType: "mamaTool", navTab: "mama", navSub: "tools", navOpenId: null,
-  })));
-  (ally.lifeAdmin.items || []).filter((t) => t.status !== "Done" && !t.paused).forEach((t) => out.push({
+(ally.lifeAdmin.items || []).filter((t) => t.status !== "Done" && !t.paused).forEach((t) => out.push({
     id: t.id, pillar: "lifeAdmin", title: t.title, due: t.due || null,
     priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
     sourceType: "lifeAdmin", navTab: "lifeAdmin", navSub: null, navOpenId: null,
@@ -755,6 +738,7 @@ function Bar({ pct, tint }) {
 /* ---------- seed ---------- */
 const ALLY_SEED = {
   content: { lastPosted: null, cadence: 3, items: [] },
+  anchor: { idea: "" },
   song: {
     stages: [
       { id: uid(), kind: "plain", name: "Sing test", desc: "Fully sing one of your own songs. Honest call: is the voice release-ready right now?", status: "active", note: "" },
@@ -841,12 +825,39 @@ const MAMA_SEED = {
     { id: uid(), name: "Joshua Washington", niche: "", goals: [], aura: 0, links: [], notes: [], tasks: [] },
   ],
   tasks: [],
-  tools: [{ id: uid(), name: "Small HTML tools", problem: "Single-file tools for small Amplified problems. Kickoff scheduled.", status: "Idea", next: "Scope the first tool with the AI team", tasks: [] }],
 };
 const ALLY_KEY = "ally-crm-v1";
 const MAMA_KEY = "creator-strategy-hq-v1";
 
 /* ================= APP SHELL ================= */
+function AnchorModule({ data, setData }) {
+  const idea = (data.anchor && data.anchor.idea) || "";
+  const updateIdea = (value) => setData((current) => ({
+    ...current,
+    anchor: { ...(current.anchor || {}), idea: value },
+  }));
+
+  return (
+    <div className="w-full flex items-center justify-center" style={{ minHeight: "calc(100vh - 190px)", padding: "20px 0" }}>
+      <div style={{ width: "min(760px, 100%)", minHeight: 400, position: "relative", overflow: "hidden", borderRadius: 28, border: `1px solid ${LINE}`, background: "linear-gradient(135deg, rgba(123,103,224,0.16), rgba(19,19,22,0.98) 48%, rgba(47,163,124,0.10))", boxShadow: "0 28px 80px rgba(0,0,0,0.32)", padding: "clamp(34px, 7vw, 76px)" }}>
+        <div style={{ position: "absolute", width: 260, height: 260, borderRadius: 999, background: "rgba(123,103,224,0.16)", filter: "blur(56px)", top: -110, right: -90, pointerEvents: "none" }} />
+        <div style={{ position: "absolute", width: 210, height: 210, borderRadius: 999, background: "rgba(47,163,124,0.10)", filter: "blur(56px)", bottom: -110, left: -70, pointerEvents: "none" }} />
+        <div style={{ position: "relative", zIndex: 1, height: "100%", display: "flex", flexDirection: "column" }}>
+          <div style={{ fontSize: 11, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(242,242,244,0.56)", fontWeight: 600 }}>Your anchor</div>
+          <div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontSize: "clamp(27px, 4vw, 42px)", lineHeight: 1.08, letterSpacing: "-0.035em", fontWeight: 600, maxWidth: 520, marginTop: 16 }}>One sentence to come back to.</div>
+          <div style={{ flex: 1, display: "flex", alignItems: "center", padding: "42px 0 28px" }}>
+            <textarea aria-label="Your anchor" value={idea} onChange={(e) => updateIdea(e.target.value)}
+              placeholder="Write the idea, slogan, or feeling you want to embody."
+              rows={4}
+              style={{ width: "100%", background: "transparent", border: "none", outline: "none", resize: "none", color: C.ink, fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 500, fontSize: "clamp(25px, 3.6vw, 39px)", lineHeight: 1.22, letterSpacing: "-0.03em", padding: 0, minHeight: 150 }} />
+          </div>
+          <div style={{ fontSize: 12, color: "rgba(242,242,244,0.48)" }}>Change it whenever your direction changes.</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AllyCRM() {
   const [ally, setAlly] = useState(null);
   const [mama, setMama] = useState(null);
@@ -869,6 +880,7 @@ function AllyCRM() {
       if (!a.unlocks.ecosystem) a.unlocks.ecosystem = ALLY_SEED.unlocks.ecosystem;
       if (!a.unlocks.chains) a.unlocks.chains = ALLY_SEED.unlocks.chains;
       if (!a.lifeAdmin) a.lifeAdmin = ALLY_SEED.lifeAdmin;
+      if (!a.anchor) a.anchor = ALLY_SEED.anchor;
       a = migrateAlly(a);
       m = { ...m, creators: (m.creators || []).map((c) => c.goals ? c : { ...c, goals: c.goal ? [{ id: uid(), text: c.goal }] : [] }) };
       m = { ...m, creators: (m.creators || []).map((c) => (c.bio !== undefined && c.nextSteps !== undefined) ? c : { ...c, bio: c.bio || "", nextSteps: c.nextSteps || "" }) };
@@ -1060,17 +1072,17 @@ function AllyCRM() {
   }, []);
 
 
-  /* auto-clean: anything marked Done (Admin Tasks / Life Admin's kanban) or checked off (the
-     MiniTaskList "done" toggle used under Creators/AI Tools/Deals/Clients) gets removed
+/* auto-clean: anything marked Done (Admin Tasks / Life Admin's kanban) or checked off (the
+MiniTaskList "done" toggle used under Creators/Deals/Clients) gets removed
      12 hours after it was completed, using the doneAt timestamp stamped on it the moment it was
-     marked done. Runs once shortly after load (catching data that was already stale when you
-     opened the app) and then rechecks periodically while the tab stays open — no need to be
-     precise to the minute, this is just tidying, not anything the priority engine depends on
-     (completed items are already excluded from collectPriorityTasks regardless of how long they
-     linger). Items with no doneAt (older data from before this existed) are left alone rather
-     than guessed at.
-     Scope: this only touches actual disposable to-do lists (Admin Tasks, Life Admin, and the
-     MiniTaskList sub-tasks under Creators/AI Tools/Deals/Clients). It does NOT touch
+          marked done. Runs once shortly after load (catching data that was already stale when you
+               opened the app) and then rechecks periodically while the tab stays open — no need to be
+                    precise to the minute, this is just tidying, not anything the priority engine depends on
+                         (completed items are already excluded from collectPriorityTasks regardless of how long they
+                              linger). Items with no doneAt (older data from before this existed) are left alone rather
+                                   than guessed at.
+                                        Scope: this only touches actual disposable to-do lists (Admin Tasks, Life Admin, and the
+                                             MiniTaskList sub-tasks under Creators/Deals/Clients). It does NOT touch
      Content (Posted ideas stay until you hit "Clear posted archive"), Song stages, the Deals
      pipeline itself (a deal reaching "Posted" is a history record, not deleted), Apartment
      ("Bought" items), or Unlocks — those are milestones/records, not disposable tasks, and keep
@@ -1106,12 +1118,7 @@ function AllyCRM() {
         if (tasks.length !== (cr.tasks || []).length) mChanged = true;
         return tasks.length !== (cr.tasks || []).length ? { ...cr, tasks } : cr;
       });
-      const tools = m.tools.map((tl) => {
-        const tasks = (tl.tasks || []).filter((t) => !(t.done && stale(t)));
-        if (tasks.length !== (tl.tasks || []).length) mChanged = true;
-        return tasks.length !== (tl.tasks || []).length ? { ...tl, tasks } : tl;
-      });
-      if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators, tools }));
+if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
     };
     const kickoff = setTimeout(sweep, 4000);
     const id = setInterval(sweep, 15 * 60 * 1000);
@@ -1138,7 +1145,7 @@ function AllyCRM() {
   };
   const completeTask = (task) => completePriorityTask(setAlly, setMama, task);
   /* the Mama rail icon always lands on Mama's own Task Dashboard, even if you're already sitting
-     on the Mama tab on some other subtab (Creators, Tools...) — go() alone can't do this since it
+           on the Mama tab on some other subtab (Creators...) — go() alone can't do this since it
      no-ops when you're already on that tab, and MamaModule's subtab is its own local state that
      only resets on a fresh mount. Routing this through the same navRequest channel forces
      MamaModule's subtab-switch effect to fire regardless of whether the tab itself changed. */
@@ -1220,7 +1227,7 @@ function AllyCRM() {
   /* sidebar badge counts: for the 4 pillars that feed the Priorities dashboard (song, unlocks,
      deals, mama), pull the count from the exact same collectPriorityTasks pool the dashboard uses —
      that's every open task from every source for that pillar (e.g. Mama's badge used to only count
-     the top-level captured-tasks board and miss anything logged under Creators/AI Tools;
+           the top-level captured-tasks board and miss anything logged under Creators;
      Deals only counted open deal records and missed deal/client sub-task checklists). Now every
      tab's badge means the same thing: how much open, non-paused work is sitting in that pillar. */
   const priorityTaskCounts = (() => {
@@ -1229,7 +1236,7 @@ function AllyCRM() {
   })();
   const badges = {
     content: priorityTaskCounts.content,
-    song: ally.song.stages.filter((s) => s.status !== "done" && !s.paused).length,
+    anchor: null,
     unlocks: priorityTaskCounts.unlocks,
     apartment: aptUnlocked ? ally.apartment.items.filter((i) => i.status === "Bought").length : null,
     lifeAdmin: priorityTaskCounts.lifeAdmin,
@@ -1394,7 +1401,7 @@ function AllyCRM() {
             <div style={{ width: "100%", maxWidth: 1360, margin: (tab === "mama" || tab === "deals") ? "0" : "auto 0", paddingBottom: 44 }}>
               {tab === "overview" && <PriorityDashboard ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} navigateToTask={navigateToTask} completeTask={completeTask} />}
               {tab === "content" && <ContentModule data={ally} setData={setAlly} q={q} />}
-              {tab === "song" && <SongModule data={ally} setData={setAlly} />}
+              {tab === "anchor" && <AnchorModule data={ally} setData={setAlly} />}
               {tab === "lifeAdmin" && <LifeAdminModule data={ally} setData={setAlly} q={q} />}
               {tab === "deals" && <DealsModule data={ally} setData={setAlly} q={q} navRequest={navRequest} />}
               {tab === "mama" && <MamaModule data={mama} setData={setMama} q={q} navRequest={navRequest} navigateToTask={navigateToTask} completeTask={completeTask} />}
@@ -1454,7 +1461,6 @@ function setPillarItemPriority(setAlly, setMama, pillar, id, priority) {
       ...d,
       tasks: d.tasks.map((t) => (t.id === id ? { ...t, priority } : t)),
       creators: d.creators.map((cr) => ((cr.tasks || []).some((t) => t.id === id) ? { ...cr, tasks: cr.tasks.map((t) => (t.id === id ? { ...t, priority } : t)) } : cr)),
-      tools: d.tools.map((tl) => ((tl.tasks || []).some((t) => t.id === id) ? { ...tl, tasks: tl.tasks.map((t) => (t.id === id ? { ...t, priority } : t)) } : tl)),
     }));
     return;
   }
@@ -1502,10 +1508,7 @@ function completePriorityTask(setAlly, setMama, task) {
     case "mamaCreator":
       setMama((d) => ({ ...d, creators: d.creators.map((cr) => ((cr.tasks || []).some((t) => t.id === task.id) ? { ...cr, tasks: cr.tasks.map((t) => (t.id === task.id ? { ...t, done: true, doneAt: now } : t)) } : cr)) }));
       return;
-    case "mamaTool":
-      setMama((d) => ({ ...d, tools: d.tools.map((tl) => ((tl.tasks || []).some((t) => t.id === task.id) ? { ...tl, tasks: tl.tasks.map((t) => (t.id === task.id ? { ...t, done: true, doneAt: now } : t)) } : tl)) }));
-      return;
-    /* content's two hub lists ("To Film" deadlines, "To Edit" deadlines) each have their own
+/* content's two hub lists ("To Film" deadlines, "To Edit" deadlines) each have their own
        "done" mechanism on the Content tab itself: ticking a "To Film" item advances it straight
        to "To Edit" (same as the → arrow on its card) and resets the due date, since there's no
        separate "filmed" flag anymore — the column alone decides whether a deadline is a filming
@@ -2557,7 +2560,7 @@ const DEAL_TYPE_TINT = { Active: C.mint, Prospect: C.sky };
 /* shared mini task tracker: used under each brand deal and each client so granular
    action items ("reply to email", "send rate card"...) get their own due date + priority
    and feed straight into the Priorities dashboard via collectPriorityTasks. */
-/* `withLink` is opt-in (Tools' AI Team task lists only, per Ally's call — Deals/Clients/Creators
+  /* `withLink` is opt-in (currently unused, kept for parity — Deals/Clients/Creators)
    keep the plain version) and adds a URL field to the composer and to each row, same "turns into a
    button once you type something in" pattern Admin Tasks already has for its link field.
    `composerAtBottom` is opt-in too (Deals/Clients only, per Ally's call) — puts the "add a task"
@@ -2826,7 +2829,6 @@ function MamaModule({ data, setData, q, navRequest, navigateToTask, completeTask
   const subs = [
     { id: "dashboard", emoji: "🎯", label: "Task Dashboard" },
     { id: "creators", emoji: "🧑‍🎤", label: "Creators", count: data.creators.length },
-    { id: "tools", emoji: "🛠️", label: "AI Tools", count: data.tools.filter((t) => t.status !== "Shipped").length },
     { id: "adminTasks", emoji: "✅", label: "Admin Tasks", count: openAdminTasks },
   ];
   /* a dashboard task (this tab's own mini one, or the main Priorities hub) targets a specific
@@ -2850,35 +2852,30 @@ function MamaModule({ data, setData, q, navRequest, navigateToTask, completeTask
       </nav>
       {sub === "dashboard" && <MamaTaskDashboard data={data} setData={setData} setSub={setSub} navigateToTask={navigateToTask} completeTask={completeTask} />}
       {sub === "creators" && <Creators data={data} setData={setData} q={q} navRequest={navRequest} />}
-      {sub === "tools" && <Tools data={data} setData={setData} />}
       {sub === "adminTasks" && <AdminTasks data={data} setData={setData} />}
     </section>
   );
 }
 
 /* Mama's own mini priority dashboard: same ring + Urgent/Medium/Low column pattern as the main
-   Hub (PriorityPillarCard), scoped to three buckets instead of the whole app. Creator Tasks pulls
-   from every creator's own MiniTaskList, AI Tools Tasks from every tool's, Admin Tasks from the
-   generic capture stream — all three already carry due/priority via the shared PriorityControls,
-   so computeUrgency + computePillarFillPercent score them exactly like every other pillar. */
+     Hub (PriorityPillarCard), scoped to two buckets instead of the whole app. Creator Tasks pulls
+          from every creator's own MiniTaskList, Admin Tasks from the generic capture stream — both
+               already carry due/priority via the shared PriorityControls, so computeUrgency +
+                    computePillarFillPercent score them exactly like every other pillar. */
 function MamaTaskDashboard({ data, setData, setSub, navigateToTask, completeTask }) {
   const creatorTasks = data.creators.flatMap((cr) => (cr.tasks || []).filter((t) => !t.done && !t.paused).map((t) => ({ ...t, ...computeUrgency(t), title: `${t.title} (${cr.name})`, sourceType: "mamaCreator", navTab: "mama", navSub: "creators", navOpenId: cr.id })));
-  const toolTasks = data.tools.flatMap((tl) => (tl.tasks || []).filter((t) => !t.done && !t.paused).map((t) => ({ ...t, ...computeUrgency(t), title: `${t.title} (${tl.name})`, sourceType: "mamaTool", navTab: "mama", navSub: "tools", navOpenId: null })));
-  const adminTasksList = data.tasks.filter((t) => t.status !== "Done" && !t.paused).map((t) => ({ ...t, ...computeUrgency(t), sourceType: "mamaAdmin", navTab: "mama", navSub: "adminTasks", navOpenId: null }));
 
   const BUCKETS = [
     { key: "creatorTasks", label: "Creator Tasks", emoji: "🧑‍🎤", accent: C.pink, tasks: creatorTasks, sub: "creators" },
-    { key: "toolTasks", label: "AI Tools Tasks", emoji: "🛠️", accent: C.lilac, tasks: toolTasks, sub: "tools" },
     { key: "adminTasksBucket", label: "Admin Tasks", emoji: "✅", accent: C.sky, tasks: adminTasksList, sub: "adminTasks" },
   ];
   const fillPct = Object.fromEntries(BUCKETS.map((b) => [b.key, computePillarFillPercent(b.tasks)]));
   const ranked = [...BUCKETS].sort((a, b) => fillPct[b.key] - fillPct[a.key]);
   const rankOf = Object.fromEntries(ranked.map((b, i) => [b.key, i + 1]));
-  const total = creatorTasks.length + toolTasks.length + adminTasksList.length;
+  const total = creatorTasks.length + adminTasksList.length;
 
   const updateByBucket = {
     creatorTasks: (id, patch) => setData((d) => ({ ...d, creators: d.creators.map((cr) => ({ ...cr, tasks: (cr.tasks || []).map((t) => (t.id === id ? { ...t, ...patch } : t)) })) })),
-    toolTasks: (id, patch) => setData((d) => ({ ...d, tools: d.tools.map((tl) => ({ ...tl, tasks: (tl.tasks || []).map((t) => (t.id === id ? { ...t, ...patch } : t)) })) })),
     adminTasksBucket: (id, patch) => setData((d) => ({ ...d, tasks: d.tasks.map((t) => (t.id === id ? { ...t, ...patch } : t)) })),
   };
 
@@ -2886,7 +2883,7 @@ function MamaTaskDashboard({ data, setData, setSub, navigateToTask, completeTask
     <section>
       <div style={{ marginBottom: 20 }}>
         <h1 style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: "clamp(24px,4vw,32px)", margin: 0, letterSpacing: "-0.02em" }}>Mama task dashboard 🎯</h1>
-        <p style={{ fontSize: 14, color: MUT, margin: "6px 0 0" }}>{total} open item{total === 1 ? "" : "s"} across Creator, AI Tools, and Admin work. Same ring logic as the main Priorities dashboard — tap a ring to open that list.</p>
+        <p style={{ fontSize: 14, color: MUT, margin: "6px 0 0" }}>{total} open item{total === 1 ? "" : "s"} across Creator and Admin work. Same ring logic as the main Priorities dashboard — tap a ring to open that list.</p>
       </div>
       <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))" }}>
         {ranked.map((b) => (
@@ -3062,7 +3059,7 @@ function AdminTasks({ data, setData }) {
   const bars = SOURCES.map((s) => ({ label: s.slice(0, 4), value: data.tasks.filter((t) => t.source === s && t.status !== "Done").length, color: SOURCE_TINT[s] }));
   return (
     <section>
-      <SectionHead title="Admin task capture" sub="One place for the strays: Discord pings, Basecamp tags, email asks. Tap a card to move it forward. Tasks tied to a specific creator or AI tool live on their own subtab instead." />
+      <SectionHead title="Admin task capture" sub="One place for the strays: Discord pings, Basecamp tags, email asks. Tap a card to move it forward. Tasks tied to a specific creator live on their own subtab instead." />
       {data.tasks.some((t) => t.status !== "Done") && (
         <div className="rounded-2xl p-4 mb-5" style={{ ...card, borderRadius: 18 }}><div style={{ fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase", color: MUT, marginBottom: 6 }}>Open tasks by source 📥</div><Bars data={bars} height={110} /></div>
       )}
@@ -3102,8 +3099,8 @@ function AdminTasks({ data, setData }) {
    corrected after the fact without retyping the whole card. Links are separate — a persistent,
    always-addable list (same pattern as Creators' Links section) rather than a single field, so you
    can keep attaching new URLs to a task well after it was first captured, none overwriting the
-   last. No creator tagging here anymore — a task tied to a specific creator or AI tool belongs on
-   that creator's/tool's own card instead. Description used to always stay fully visible here (the
+     last. No creator tagging here anymore — a task tied to a specific creator belongs on
+       that creator's own card instead. Description used to always stay fully visible here (the
    one place in the CRM where it never collapsed) — now it expands/collapses on card click same as
    everywhere else, via its own lifted open state. */
 function TaskCard({ t, col, onUpdate, onAdvance, onBack, onRemove }) {
@@ -3167,55 +3164,6 @@ function TaskCard({ t, col, onUpdate, onAdvance, onBack, onRemove }) {
     </div>
   );
 }
-
-function Tools({ data, setData }) {
-  const add = () => setData((d) => ({ ...d, tools: [{ id: uid(), name: "New tool", problem: "", status: "Idea", next: "", tasks: [] }, ...d.tools] }));
-  const update = (id, patch) => setData((d) => ({ ...d, tools: d.tools.map((t) => (t.id === id ? { ...t, ...patch } : t)) }));
-  const remove = (id) => setData((d) => ({ ...d, tools: d.tools.filter((t) => t.id !== id) }));
-  const ST = { Idea: C.amber, Building: C.lilac, Shipped: C.mint };
-  return (
-    <section>
-      <SectionHead title="AI Team tools" sub="Small single-file tools solving small Amplified problems. One card per tool." action={<AddBtn onClick={add} label="Add tool" />} />
-      {/* min-width 360 (same trick the Priorities dashboard uses) caps this at 3 per row on a
-          full-width screen instead of 4, since these cards now carry a full task list. */}
-      <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))" }}>
-        {data.tools.map((t) => <ToolCard key={t.id} t={t} update={update} remove={remove} ST={ST} />)}
-      </div>
-      {data.tools.length === 0 && <Empty text="No tools yet." />}
-    </section>
-  );
-}
-/* click anywhere on the card (other than a control or the title/name text) expands/collapses
-   everything below the stage pills — tasks, description, and next step — same convention as every
-   other card. Collapsed, it's just the name plus a bare list of task titles for a quick glance;
-   expanded shows the full task list (add-composer, checkboxes, due dates, URL field per task) with
-   Description and Next step moved below all of it, at the very bottom of the card. */
-function ToolCard({ t, update, remove, ST }) {
-  const [expanded, setExpanded] = useState(true);
-  const tasks = t.tasks || [];
-  return (
-    <div onClick={() => { if (hasTextSelection()) return; setExpanded((v) => !v); }} className="rounded-2xl p-4 flex flex-col gap-3" style={{ cursor: "pointer", ...card, borderRadius: 16 }}>
-      <div className="flex items-start justify-between gap-2"><InlineEdit value={t.name} onChange={(v) => update(t.id, { name: v })} strong bubbleClicks /><button onClick={(e) => { e.stopPropagation(); remove(t.id); }} style={iconBtn} aria-label="Delete"><Trash2 size={13} /></button></div>
-      <div onClick={(e) => e.stopPropagation()} className="flex gap-1">{TOOL_STAGES.map((s) => (<button key={s} onClick={() => update(t.id, { status: s })} className="rounded-full px-3 py-1 flex-1" style={{ fontSize: 11, cursor: "pointer", fontFamily: "inherit", background: t.status === s ? `${ST[s]}22` : FILL, border: `1px solid ${t.status === s ? ST[s] : LINE}`, color: t.status === s ? ST[s] : MUT }}>{s}</button>))}</div>
-      {expanded ? (
-        <>
-          <div><Label text="Tasks" /><MiniTaskList tasks={t.tasks} onChange={(newTasks) => update(t.id, { tasks: newTasks })} withLink /></div>
-          <div><Label text="Description" /><AutoTextarea value={t.problem} onChange={(v) => update(t.id, { problem: v })} placeholder="What does this tool do?" /></div>
-          <div><Label text="Next step" /><InlineEdit value={t.next} onChange={(v) => update(t.id, { next: v })} placeholder="The very next action" /></div>
-        </>
-      ) : (
-        <div className="flex flex-col gap-1">
-          <Label text="Tasks" />
-          {tasks.length === 0 && <div style={{ fontSize: 12, color: FAINT }}>No tasks yet.</div>}
-          {tasks.map((task) => (
-            <div key={task.id} style={{ fontSize: 12.5, color: task.done ? MUT : C.ink, textDecoration: task.done ? "line-through" : "none", opacity: task.done ? 0.6 : 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{task.title}</div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 
 /* ================= shared ================= */
 const inputStyle = { background: "rgba(255,255,255,0.05)", border: `1px solid ${LINE}`, color: C.ink, fontSize: 13.5, fontFamily: "'Outfit', sans-serif" };
@@ -3341,8 +3289,8 @@ function InlineEditArea({ value, onChange, placeholder, dim, open, onToggle }) {
     </div>
   );
 }
-/* free-text description box used across Deals (caption/instructions/notes), Clients, AI Tools
-   (description), and Life Admin item descriptions — auto-grows to fit whatever is typed or pasted
+  /* free-text description box used across Deals (caption/instructions/notes), Clients,
+       and Life Admin item descriptions — auto-grows to fit whatever is typed or pasted
    in, including a big pasted paragraph, instead of staying pinned to a tiny fixed height. A manual
    collapse/expand toggle appears once there's enough text to be worth tucking away, so a long note
    doesn't have to dominate the card once you're done editing it.
@@ -3388,7 +3336,7 @@ function AutoTextarea({ value, onChange, placeholder, open, onToggle }) {
 
 /* lightweight auto-growing textarea for one-off capture composers — the "Description (optional)"
    fields on Life Admin, Admin Tasks, and every MiniTaskList "add a task" row (Deals, Clients,
-   Creators, AI Tools all share MiniTaskList). These were plain fixed-height, resize-none
+       Creators all share MiniTaskList). These were plain fixed-height, resize-none
    textareas, so pasting anything longer than the box just sat there needing a scroll instead of
    the box growing to show it — this fixes that the same way AutoTextarea does for the bigger
    Caption/Instructions/Notes boxes, minus the collapse toggle (not useful here: these composers
