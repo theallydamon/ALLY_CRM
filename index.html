@@ -2050,6 +2050,18 @@ function ScriptBox({ value, isHtml, open, onFocus, onChange, onToggle, big }) {
   );
 }
 
+function ContentCalendar({ scheduled, onOpen }) {
+  const [cursor, setCursor] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
+  const changeMonth = (amount) => setCursor((d) => new Date(d.getFullYear(), d.getMonth() + amount, 1));
+  const start = new Date(cursor.getFullYear(), cursor.getMonth(), 1 - ((cursor.getDay() + 6) % 7));
+  const days = Array.from({ length: 28 }, (_, i) => { const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i); return { d, key: d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0") }; });
+  const slots = scheduled.reduce((all, item) => { (all[item.due] || (all[item.due] = [])).push(item); return all; }, {});
+  return <div style={{ minHeight: "calc(100vh - 190px)", display: "flex", flexDirection: "column", gap: 16 }}>
+    <div className="flex items-center justify-between"><button aria-label="Previous month" onClick={() => changeMonth(-1)} style={{ ...iconBtn, fontSize: 22 }}>←</button><div style={{ textAlign: "center" }}><div style={{ fontSize: 30, fontWeight: 700 }}>{cursor.toLocaleDateString("en-ZA", { month: "long", year: "numeric" })}</div><div style={{ fontSize: 11, color: MUT }}>Four week content calendar</div></div><button aria-label="Next month" onClick={() => changeMonth(1)} style={{ ...iconBtn, fontSize: 22 }}>→</button></div>
+    <div style={{ flex: 1, display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gridTemplateRows: "auto repeat(4, minmax(138px, 1fr))", gap: 1, background: LINE, border: "1px solid " + LINE, borderRadius: 18, overflow: "hidden" }}>{["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((n) => <div key={n} style={{ padding: 10, background: C.canvas, color: MUT, fontSize: 10, fontWeight: 700 }}>{n}</div>)}{days.map(({ d, key }) => <div key={key} style={{ padding: 10, background: C.canvas, opacity: d.getMonth() === cursor.getMonth() ? 1 : .4 }}><div style={{ textAlign: "right", color: MUT, fontSize: 12, marginBottom: 8 }}>{d.getDate()}</div>{(slots[key] || []).map((item) => <button key={item.id} onClick={() => onOpen(item.id)} title={item.title} style={{ width: "100%", textAlign: "left", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", padding: "6px 7px", marginBottom: 5, borderRadius: 8, border: "1px solid " + CONTENT_TINT["Ready to Post"] + "55", background: CONTENT_TINT["Ready to Post"] + "19", color: C.ink, cursor: "pointer", fontFamily: "inherit", fontSize: 11 }}>{item.title}</button>)}</div>)}</div>
+  </div>;
+}
+
 function ContentModule({ data, setData, q }) {
   const content = data.content;
   const h = contentHealth(content);
@@ -2057,6 +2069,8 @@ function ContentModule({ data, setData, q }) {
   const [description, setDescription] = useState("");
   const [openDesc, setOpenDesc] = useState({});
   const [showArchive, setShowArchive] = useState(false); const [expandedId, setExpandedId] = useState(null);
+  const [contentView, setContentView] = useState("board");
+  const openFromCalendar = (id) => { setContentView("board"); setOpenDesc((o) => ({ ...o, [id]: true })); setTimeout(() => scrollAndHighlight(id), 90); };
   const openIfNot = (id) => setOpenDesc((o) => (o[id] ? o : { ...o, [id]: true }));
   const patch = (p) => setData((d) => ({ ...d, content: { ...d.content, ...p } }));
   const ql = (q || "").toLowerCase();
@@ -2090,8 +2104,9 @@ function ContentModule({ data, setData, q }) {
 
   return (
     <section>
-      <SectionHead title="Content engine" />{expandedId && (() => { const item = content.items.find((z) => z.id === expandedId); if (!item) return null; return (<div onClick={() => { if (hasTextSelection()) return; setExpandedId(null); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}><div onClick={(e) => e.stopPropagation()} style={{ ...card, borderRadius: 16, padding: 20, width: "100%", maxWidth: 640, maxHeight: "85vh", display: "flex", flexDirection: "column", gap: 10, overflow: "auto" }}><div className="flex items-center gap-2"><div className="flex-1 min-w-0"><InlineEdit value={item.title} onChange={(v) => updateItem(item.id, { title: v })} strong /></div><button onClick={() => setExpandedId(null)} style={{ ...iconBtn, padding: 4 }} aria-label="Close"><X size={14} /></button></div><ScriptBox value={item.desc || ""} isHtml={!!item.descHtml} open big onFocus={() => openIfNot(item.id)} onChange={(v) => updateItem(item.id, { desc: v, descHtml: true })} onToggle={() => {}} /></div></div>); })()}
+      <SectionHead title="Content engine" action={<div className="flex gap-1"><button onClick={() => setContentView("board")} style={{ ...iconBtn, padding: "6px 10px", border: "1px solid " + LINE, borderRadius: 8, color: contentView === "board" ? C.ink : MUT }}>Board</button><button onClick={() => setContentView("calendar")} style={{ ...iconBtn, padding: "6px 10px", border: "1px solid " + LINE, borderRadius: 8, color: contentView === "calendar" ? C.ink : MUT }}>Calendar</button></div>} />{expandedId && (() => { const item = content.items.find((z) => z.id === expandedId); if (!item) return null; return (<div onClick={() => { if (hasTextSelection()) return; setExpandedId(null); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}><div onClick={(e) => e.stopPropagation()} style={{ ...card, borderRadius: 16, padding: 20, width: "100%", maxWidth: 640, maxHeight: "85vh", display: "flex", flexDirection: "column", gap: 10, overflow: "auto" }}><div className="flex items-center gap-2"><div className="flex-1 min-w-0"><InlineEdit value={item.title} onChange={(v) => updateItem(item.id, { title: v })} strong /></div><button onClick={() => setExpandedId(null)} style={{ ...iconBtn, padding: 4 }} aria-label="Close"><X size={14} /></button></div><ScriptBox value={item.desc || ""} isHtml={!!item.descHtml} open big onFocus={() => openIfNot(item.id)} onChange={(v) => updateItem(item.id, { desc: v, descHtml: true })} onToggle={() => {}} /></div></div>); })()}
 
+      {contentView === "calendar" ? <ContentCalendar scheduled={scheduled} onOpen={openFromCalendar} /> : <>
       {/* compact stat bar: since-post ring + message + inline legend, no separate donut card */}
       <div className="flex items-center gap-5 flex-wrap mb-4" style={{ ...card, borderRadius: 16, padding: "18px 22px" }}>
         <RingDark value={h.since === null ? 0 : Math.min(h.since, content.cadence)} max={content.cadence} label={h.since === null ? "—" : `${h.since}d`} tint={h.tint} size={74} />
@@ -2147,11 +2162,12 @@ function ContentModule({ data, setData, q }) {
         {CONTENT_COLS.map((col) => {
           let cItems = content.items.filter((i) => i.status === col);
           if (ql) cItems = cItems.filter((i) => i.title.toLowerCase().includes(ql));
+          const setColumnCards = (open) => setOpenDesc((o) => ({ ...o, ...Object.fromEntries(cItems.map((i) => [i.id, open])) }));
           return (
             <div key={col} style={{ background: C.canvas, padding: 16, display: "flex", flexDirection: "column", gap: 9 }}>
               <div className="flex items-center justify-between px-0.5" style={{ paddingBottom: 9, borderBottom: `1px solid ${LINE}`, marginBottom: 2 }}>
                 <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 12.5, letterSpacing: "0.05em", textTransform: "uppercase", color: CONTENT_TINT[col] }}>{col}</span>
-                <span style={{ fontSize: 12.5, color: MUT }}>{cItems.length}</span>
+                <span className="flex items-center gap-1"><span style={{ fontSize: 12.5, color: MUT }}>{cItems.length}</span><button onClick={() => setColumnCards(true)} style={{ ...iconBtn, padding: "2px 4px", fontSize: 10 }} title="Expand all cards">Expand all</button><button onClick={() => setColumnCards(false)} style={{ ...iconBtn, padding: "2px 4px", fontSize: 10 }} title="Collapse all cards">Collapse all</button></span>
               </div>
               <div className="flex flex-col gap-2.5">
                 {cItems.map((i) => {
@@ -2204,7 +2220,7 @@ function ContentModule({ data, setData, q }) {
             </div>
           )}
         </div>
-      )}
+      )}      </>}
     </section>
   );
 }
