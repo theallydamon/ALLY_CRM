@@ -2136,9 +2136,9 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, view = "board
       {view === "calendar" ? <ContentCalendar scheduled={scheduled} onOpen={openFromCalendar} /> : <>
       {/* compact stat bar: since-post ring + message + inline legend, no separate donut card */}
       <div className="flex items-center gap-5 flex-wrap mb-4" style={{ ...card, borderRadius: 16, padding: "18px 22px" }}>
-        <RingDark value={h.since === null ? 0 : Math.min(h.since, content.cadence)} max={content.cadence} label={h.since === null ? "—" : `${h.since}d`} tint={h.tint} size={74} />
+        <RingDark value={h.since === null ? 0 : Math.min(h.since, content.cadence)} max={content.cadence} label={h.since === null ? (isBrand ? "0d" : "—") : `${h.since}d`} tint={h.tint} size={74} />
         <div className="flex-1" style={{ minWidth: 220 }}>
-          <div style={{ fontSize: 15, fontWeight: 500, color: h.tint }}>{h.msg}</div>
+          <div style={{ fontSize: 15, fontWeight: 500, color: h.tint }}>{isBrand && h.since === null ? "No brand posts logged yet. Your runway starts at zero days." : h.msg}</div>
           <div className="flex items-center gap-2 mt-2 flex-wrap" style={{ fontSize: 12, color: MUT }}>
             last posted
             <input type="date" value={content.lastPosted || ""} onChange={(e) => patch({ lastPosted: e.target.value || null })} className="rounded-md" style={{ ...darkInput, fontSize: 12, padding: "4px 7px" }} />
