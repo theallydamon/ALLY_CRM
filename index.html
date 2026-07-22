@@ -367,7 +367,7 @@ const MODULES = {
   mama:      { emoji: "💼", label: "Mama",      accent: C.brown, bg: C.brownBg },
   deals:     { emoji: "🤝", label: "Deals",     accent: C.pink,  bg: C.pinkBg },
 };
-const TAB_ORDER = ["overview", "content", "lifeAdmin", "mama", "deals", "anchor"];
+const TAB_ORDER = ["overview", "content", "lifeAdmin", "mama", "anchor"]; // "deals" pulled for now — re-add here to bring the tab back
 
 /* ---------- storage shim: window.storage in the app, localStorage in the repo ---------- */
 const store = {
@@ -411,6 +411,8 @@ try {
 const uid = () => Math.random().toString(36).slice(2, 9);
 const hasTextSelection = () => { const sel = window.getSelection(); return !!(sel && sel.toString().length > 0); };
 const todayISO = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+const isoDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const shiftISO = (iso, days) => { const d = new Date(iso + "T00:00:00"); d.setDate(d.getDate() + days); return isoDate(d); };
 const daysSince = (iso) => { if (!iso) return null; const n = new Date(); n.setHours(0, 0, 0, 0); return Math.max(0, Math.round((n - new Date(iso + "T00:00:00")) / 86400000)); };
 const daysUntil = (iso) => { if (!iso) return null; const n = new Date(); n.setHours(0, 0, 0, 0); return Math.round((new Date(iso + "T00:00:00") - n) / 86400000); };
 const fmtR = (n) => "R" + (Number(n) || 0).toLocaleString("en-ZA");
@@ -431,6 +433,13 @@ function migrateAlly(a) {
   let out = a;
   if (out.content && Array.isArray(out.content.items)) {
     out = { ...out, content: { ...out.content, items: out.content.items.map((i) => CONTENT_STATUS_MIGRATE[i.status] ? { ...i, status: CONTENT_STATUS_MIGRATE[i.status] } : i) } };
+  }
+  /* Anchor moved from one running text box to a per-day diary (entries keyed by ISO date, one
+     string each). Fold any old single `idea` string in once, landing it on today's date so nothing
+     already written gets lost — idempotent since it only runs while `entries` doesn't exist yet. */
+  if (out.anchor && !out.anchor.entries) {
+    const legacy = (out.anchor.idea || "").trim();
+    out = { ...out, anchor: { entries: legacy ? { [todayISO()]: legacy } : {} } };
   }
   if (!out.brandContent || !Array.isArray(out.brandContent.items)) {
     out = { ...out, brandContent: { items: [] } };
@@ -497,7 +506,7 @@ const MIX_ROUTES = ["Fiverr", "Crighton", "Cassidy's boyfriend", "DIY"];
 const SOURCES = ["Discord", "Basecamp", "Email", "Sheets", "Meeting", "Self"];
 const SOURCE_TINT = { Discord: C.lilac, Basecamp: C.amber, Email: C.sky, Sheets: C.mint, Meeting: C.pink, Self: C.peach };
 const TASK_COLS = ["To do", "Doing", "Done"];
-const PRIORITY_PILLARS = ["mama", "content", "deals", "lifeAdmin"];
+const PRIORITY_PILLARS = ["mama", "content", "lifeAdmin"]; // "deals" pulled for now — re-add here to bring its priority card back
 
 /* ---------- priority engine: shared urgency scoring across all 6 pillars ---------- */
 const PRIORITY_LEVELS = ["Low", "Medium", "High"];
@@ -744,7 +753,7 @@ function Bar({ pct, tint }) {
 const ALLY_SEED = {
   content: { lastPosted: null, cadence: 3, items: [] },
   brandContent: { items: [] },
-  anchor: { idea: "" },
+  anchor: { entries: {} },
   song: {
     stages: [
       { id: uid(), kind: "plain", name: "Sing test", desc: "Fully sing one of your own songs. Honest call: is the voice release-ready right now?", status: "active", note: "" },
@@ -837,19 +846,47 @@ const MAMA_KEY = "creator-strategy-hq-v1";
 
 /* ================= APP SHELL ================= */
 function AnchorModule({ data, setData }) {
-  const idea = (data.anchor && data.anchor.idea) || "";
+  const entries = (data.anchor && data.anchor.entries) || {};
+  const [selectedDate, setSelectedDate] = useState(todayISO());
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [cursor, setCursor] = useState(() => { const d = new Date(selectedDate + "T00:00:00"); return new Date(d.getFullYear(), d.getMonth(), 1); });
   const anchorInputRef = useRef(null);
-  const updateIdea = (value) => setData((current) => ({
+  const dateBtnRef = useRef(null);
+  const [popoverPos, setPopoverPos] = useState({ top: 0, left: 0 });
+  const text = entries[selectedDate] || "";
+  const today = todayISO();
+  const isToday = selectedDate === today;
+
+  const updateEntry = (value) => setData((current) => ({
     ...current,
-    anchor: { ...(current.anchor || {}), idea: value },
+    anchor: { ...(current.anchor || {}), entries: { ...(((current.anchor || {}).entries) || {}), [selectedDate]: value } },
   }));
+  const goDay = (delta) => setSelectedDate((d) => { const next = shiftISO(d, delta); return next > today ? d : next; });
+  /* popover is fixed-positioned (viewport coords via the trigger's own rect) rather than absolute,
+     so it can render outside this card's overflow:hidden — needed to keep the decorative blurred
+     glow circles clipped to the rounded corners without also clipping the calendar popup. */
+  const openPicker = () => {
+    const d = new Date(selectedDate + "T00:00:00"); setCursor(new Date(d.getFullYear(), d.getMonth(), 1));
+    const rect = dateBtnRef.current && dateBtnRef.current.getBoundingClientRect();
+    if (rect) setPopoverPos({ top: rect.bottom + 8, left: rect.left });
+    setPickerOpen(true);
+  };
+  const pickDate = (iso) => { setSelectedDate(iso); setPickerOpen(false); };
+  const changeMonth = (amount) => setCursor((d) => new Date(d.getFullYear(), d.getMonth() + amount, 1));
+
   const resizeAnchor = () => {
     const el = anchorInputRef.current;
     if (!el) return;
     el.style.height = "auto";
     el.style.height = Math.max(150, el.scrollHeight) + "px";
   };
-  useLayoutEffect(resizeAnchor, [idea]);
+  useLayoutEffect(resizeAnchor, [text, selectedDate]);
+
+  /* 6-week grid (42 cells) guarantees full month coverage regardless of month length/start day —
+     same slotting approach as the Content Calendar, just for a date-picker popover instead of a
+     full-page view. */
+  const monthStart = new Date(cursor.getFullYear(), cursor.getMonth(), 1 - ((cursor.getDay() + 6) % 7));
+  const monthDays = Array.from({ length: 42 }, (_, i) => { const d = new Date(monthStart.getFullYear(), monthStart.getMonth(), monthStart.getDate() + i); return { d, key: isoDate(d) }; });
 
   return (
     <div className="w-full flex items-center justify-center" style={{ minHeight: "calc(100vh - 190px)", padding: "20px 0" }}>
@@ -860,9 +897,54 @@ function AnchorModule({ data, setData }) {
         <div style={{ position: "absolute", bottom: 38, right: 48, width: 54, height: 54, borderRadius: 18, border: "1px solid rgba(242,242,244,0.18)", transform: "rotate(18deg)", pointerEvents: "none" }} />
         <div style={{ position: "absolute", top: 126, left: 34, width: 8, height: 8, borderRadius: 999, background: C.mint, boxShadow: "0 0 24px rgba(47,163,124,0.9)", pointerEvents: "none" }} />
         <div style={{ position: "relative", zIndex: 1, height: "100%", display: "flex", flexDirection: "column" }}>
-          <div style={{ flex: 1, display: "flex", alignItems: "center", padding: "44px 0 30px" }}>
-            <textarea ref={anchorInputRef} aria-label="Your anchor" value={idea} onChange={(e) => updateIdea(e.target.value)} onInput={resizeAnchor}
-              placeholder="Write the idea, slogan, or feeling you want to embody."
+
+          <div className="flex items-center gap-2 flex-wrap" style={{ position: "relative" }}>
+            <button onClick={() => goDay(-1)} aria-label="Previous day" style={{ ...iconBtn, width: 30, height: 30, borderRadius: 9, border: `1px solid ${LINE}`, background: "rgba(255,255,255,0.04)" }}>←</button>
+            <button ref={dateBtnRef} onClick={openPicker} style={{ ...iconBtn, fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 14.5, letterSpacing: "-0.01em", color: C.ink, padding: "6px 12px", borderRadius: 10, border: `1px solid ${LINE}`, background: "rgba(255,255,255,0.04)", cursor: "pointer" }} title="Open a date">
+              {new Date(selectedDate + "T00:00:00").toLocaleDateString("en-ZA", { weekday: "short", day: "numeric", month: "long", year: "numeric" })}
+              {isToday && <span style={{ marginLeft: 8, fontSize: 10, fontWeight: 700, color: C.mint, letterSpacing: "0.05em", textTransform: "uppercase" }}>Today</span>}
+            </button>
+            <button onClick={() => goDay(1)} disabled={isToday} aria-label="Next day" style={{ ...iconBtn, width: 30, height: 30, borderRadius: 9, border: `1px solid ${LINE}`, background: "rgba(255,255,255,0.04)", opacity: isToday ? 0.35 : 1, cursor: isToday ? "default" : "pointer" }}>→</button>
+            {!text.trim() && <span style={{ fontSize: 11, color: MUT }}>No entry yet</span>}
+
+            {pickerOpen && (
+              <>
+                <div onClick={() => setPickerOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 15 }} />
+                <div style={{ position: "fixed", top: popoverPos.top, left: popoverPos.left, zIndex: 20, width: 296, borderRadius: 16, border: `1px solid ${LINE}`, background: C.card, boxShadow: "0 20px 50px rgba(0,0,0,0.45)", padding: 14 }}>
+                  <div className="flex items-center justify-between mb-2">
+                    <button onClick={() => changeMonth(-1)} aria-label="Previous month" style={{ ...iconBtn, fontSize: 15 }}>←</button>
+                    <div style={{ fontSize: 12.5, fontWeight: 700 }}>{cursor.toLocaleDateString("en-ZA", { month: "long", year: "numeric" })}</div>
+                    <button onClick={() => changeMonth(1)} aria-label="Next month" style={{ ...iconBtn, fontSize: 15 }}>→</button>
+                  </div>
+                  <div className="grid" style={{ gridTemplateColumns: "repeat(7, 1fr)", gap: 2, fontSize: 9.5, color: MUT, textAlign: "center", marginBottom: 4 }}>
+                    {["M", "T", "W", "T", "F", "S", "S"].map((n, i) => <span key={i}>{n}</span>)}
+                  </div>
+                  <div className="grid" style={{ gridTemplateColumns: "repeat(7, 1fr)", gap: 3 }}>
+                    {monthDays.map(({ d, key }) => {
+                      const has = !!(entries[key] && entries[key].trim());
+                      const isFuture = key > today;
+                      const isSel = key === selectedDate;
+                      const inMonth = d.getMonth() === cursor.getMonth();
+                      return (
+                        <button key={key} disabled={isFuture} onClick={() => pickDate(key)} title={has ? "Has an entry" : "No entry"}
+                          style={{ ...iconBtn, aspectRatio: "1", borderRadius: 8, fontSize: 11, opacity: isFuture ? 0.25 : inMonth ? 1 : 0.4, cursor: isFuture ? "default" : "pointer", background: isSel ? C.lilac : has ? `${C.mint}22` : "transparent", color: isSel ? "#fff" : C.ink, border: key === today ? `1px solid ${C.lilac}` : "1px solid transparent", fontWeight: isSel ? 700 : 400 }}>
+                          {d.getDate()}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="flex items-center gap-3 mt-2.5" style={{ fontSize: 10, color: MUT }}>
+                    <span className="flex items-center gap-1"><span style={{ width: 7, height: 7, borderRadius: 2, background: `${C.mint}55` }} /> has entry</span>
+                    <span className="flex items-center gap-1"><span style={{ width: 7, height: 7, borderRadius: 2, border: `1px solid ${LINE}` }} /> empty</span>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+
+          <div style={{ flex: 1, display: "flex", alignItems: "center", padding: "24px 0 30px" }}>
+            <textarea ref={anchorInputRef} aria-label="Diary entry" value={text} onChange={(e) => updateEntry(e.target.value)} onInput={resizeAnchor}
+              placeholder="Write the idea, slogan, or feeling you want to embody today."
               rows={1}
               style={{ width: "100%", background: "transparent", border: "none", outline: "none", resize: "none", overflow: "hidden", color: C.ink, fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 500, fontSize: "clamp(25px, 3.6vw, 39px)", lineHeight: 1.22, letterSpacing: "-0.03em", padding: 0, minHeight: 150, boxSizing: "border-box" }} />
           </div>
@@ -2065,7 +2147,7 @@ function ContentCalendar({ scheduled, readyToPost, onOpen }) {
   return <div style={{ minHeight: "calc(100vh - 190px)", display: "flex", flexDirection: "column", gap: 16 }}>
     <div className="flex items-center justify-between"><button aria-label="Previous month" onClick={() => changeMonth(-1)} style={{ ...iconBtn, fontSize: 22 }}>←</button><div style={{ textAlign: "center" }}><div style={{ fontSize: 30, fontWeight: 700 }}>{cursor.toLocaleDateString("en-ZA", { month: "long", year: "numeric" })}</div><div style={{ fontSize: 11, color: MUT }}>Four week content calendar</div></div><button aria-label="Next month" onClick={() => changeMonth(1)} style={{ ...iconBtn, fontSize: 22 }}>→</button></div>
     {readyToPost.length > 0 && <div style={{ ...card, borderRadius: 14, padding: 14 }}><div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: CONTENT_TINT["Ready to Post"], marginBottom: 10 }}>Ready to schedule</div><div className="flex gap-2 flex-wrap">{readyToPost.map((item) => <button key={item.pipelineKey + item.id} onClick={() => onOpen(item)} title={item.title} style={{ ...iconBtn, padding: "7px 10px", border: "1px solid " + CONTENT_TINT["Ready to Post"] + "55", background: CONTENT_TINT["Ready to Post"] + "19", color: C.ink, fontSize: 12 }}>{item.title}</button>)}</div></div>}
-    <div style={{ flex: 1, display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gridTemplateRows: "auto repeat(4, minmax(138px, 1fr))", gap: 1, background: LINE, border: "1px solid " + LINE, borderRadius: 18, overflow: "hidden" }}>{["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((n) => <div key={n} style={{ padding: 10, background: C.canvas, color: MUT, fontSize: 10, fontWeight: 700 }}>{n}</div>)}{days.map(({ d, key }) => <div key={key} style={{ padding: 10, background: key === today ? C.lilac + "18" : C.canvas, boxShadow: key === today ? "inset 0 0 0 2px " + C.lilac : "none", opacity: d.getMonth() === cursor.getMonth() ? 1 : .4 }}><div style={{ textAlign: "right", color: key === today ? C.lilac : MUT, fontSize: 12, fontWeight: key === today ? 800 : 500, marginBottom: 8 }}>{d.toLocaleDateString("en-ZA", { weekday: "short", day: "numeric" })}</div>{(slots[key] || []).map((item) => <button key={item.pipelineKey + item.id} onClick={() => onOpen(item)} title={item.title} style={{ width: "100%", textAlign: "left", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", padding: "6px 7px", marginBottom: 5, borderRadius: 8, border: "1px solid " + CONTENT_TINT["Ready to Post"] + "55", background: CONTENT_TINT["Ready to Post"] + "19", color: C.ink, cursor: "pointer", fontFamily: "inherit", fontSize: 11 }}>{item.title}</button>)}</div>)}</div>
+    <div style={{ flex: 1, display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gridTemplateRows: "auto repeat(4, minmax(138px, 1fr))", gap: 1, background: LINE, border: "1px solid " + LINE, borderRadius: 18, overflow: "hidden" }}>{["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((n) => <div key={n} style={{ padding: 10, background: C.canvas, color: MUT, fontSize: 10, fontWeight: 700 }}>{n}</div>)}{days.map(({ d, key }) => <div key={key} style={{ padding: 10, background: key === today ? C.lilac + "18" : C.canvas, boxShadow: key === today ? "inset 0 0 0 2px " + C.lilac : "none", opacity: d.getMonth() === cursor.getMonth() ? 1 : .4 }}><div style={{ textAlign: "right", color: key === today ? C.lilac : MUT, fontSize: 12, fontWeight: key === today ? 800 : 500, marginBottom: 8 }}>{d.toLocaleDateString("en-ZA", { weekday: "short", day: "numeric" })}</div>{(slots[key] || []).map((item) => { const tint = item.status === "Posted" ? CONTENT_TINT.Posted : CONTENT_TINT["Ready to Post"]; return <button key={item.pipelineKey + item.id} onClick={() => onOpen(item)} title={item.title} style={{ width: "100%", textAlign: "left", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", padding: "6px 7px", marginBottom: 5, borderRadius: 8, border: "1px solid " + tint + "55", background: tint + "19", color: C.ink, cursor: "pointer", fontFamily: "inherit", fontSize: 11 }}>{item.status === "Posted" ? "✓ " : ""}{item.title}</button>; })}</div>)}</div>
   </div>;
 }
 
@@ -2079,7 +2161,9 @@ function ContentModule({ data, setData, q }) {
   ];
   const calendarItems = ["content", "brandContent"].flatMap((pipelineKey) => (data[pipelineKey]?.items || []).map((item) => ({ ...item, pipelineKey })));
   const readyToPost = calendarItems.filter((item) => item.status === "Ready to Post" && !item.dueOff);
-  const scheduled = calendarItems.filter((item) => item.status === "Scheduled" && item.due && !item.dueOff).sort((a, b) => a.due.localeCompare(b.due));
+  /* Scheduled AND Posted both keep their calendar slot — Posted items never drop off the Content
+     Calendar tab once logged, only off each pipeline's own in-board "Upcoming content" mini list. */
+  const scheduled = calendarItems.filter((item) => (item.status === "Scheduled" || item.status === "Posted") && item.due && !item.dueOff).sort((a, b) => a.due.localeCompare(b.due));
   const openCalendarItem = (item) => { setCalendarFocus(item); setSubtab(item.pipelineKey === "brandContent" ? "brandDeals" : "content"); };
   return (
     <section style={{ width: "100%", margin: 0, textAlign: "left" }}>
@@ -2128,6 +2212,15 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
      (see the dead "Clear posted archive" button below, which checked for status === "Posted" that
      could never actually occur). */
   const scheduleItem = (id, due) => updateItem(id, { status: "Scheduled", due: due || null, scheduledAt: todayISO(), dueOff: false });
+  /* logs the post: archives the item (status: "Posted") so it drops off this board's own upcoming
+     list immediately, but keeps its due date intact so the dedicated Content Calendar tab — which
+     shows Scheduled and Posted items alike — keeps displaying it there forever. Also resets the
+     since-post runway clock (content.lastPosted) for the personal pipeline; Brand Deals has no such
+     clock, so it's skipped there. */
+  const markPosted = (id) => patch({
+    items: content.items.map((i) => (i.id === id ? { ...i, status: "Posted", postedAt: todayISO() } : i)),
+    ...(pipelineKey !== "brandContent" ? { lastPosted: todayISO() } : {}),
+  });
 
   const donutSegs = CONTENT_COLS.map((s) => ({ value: h.counts[s], color: CONTENT_TINT[s], label: s }));
   const donutTotal = donutSegs.reduce((s, x) => s + x.value, 0);
@@ -2177,10 +2270,10 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
         </div>
       </div>
 
-      {pipelineKey !== "brandContent" && scheduled.length > 0 && (
+      {scheduled.length > 0 && (
         <div className="rounded-2xl mb-4" style={{ ...card, borderRadius: 12, padding: 16 }}>
           <div className="flex items-center gap-2 mb-2.5">
-            <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 12.5, letterSpacing: "0.05em", textTransform: "uppercase", color: C.sky }}>Content calendar</span>
+            <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 12.5, letterSpacing: "0.05em", textTransform: "uppercase", color: C.sky }}>Upcoming content</span>
           </div>
           <div className="flex flex-col gap-2">
             {scheduled.map((i) => (
