@@ -1412,7 +1412,7 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
               (e.g. Deals' four tabs) would jump the nav pills to mid-screen every time a shorter
               subtab's content doesn't fill the viewport. */}
           <div className="scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "28px 36px", display: "flex", flexDirection: "column", alignItems: "center" }}>
-            <div style={{ width: "100%", maxWidth: 1360, margin: (tab === "mama" || tab === "deals") ? "0" : "auto 0", paddingBottom: 44 }}>
+            <div style={{ width: "100%", maxWidth: 1360, margin: 0, paddingBottom: 44 }}>
               {tab === "overview" && <PriorityDashboard ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} navigateToTask={navigateToTask} completeTask={completeTask} />}
               {tab === "content" && <ContentModule data={ally} setData={setAlly} q={q} />}
               {tab === "anchor" && <AnchorModule data={ally} setData={setAlly} />}
