@@ -2134,9 +2134,8 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, view = "board
       <SectionHead title={heading} sub={isBrand ? "A separate brand content pipeline." : "Your personal content pipeline."} />{expandedId && (() => { const item = content.items.find((z) => z.id === expandedId); if (!item) return null; return (<div onClick={() => { if (hasTextSelection()) return; setExpandedId(null); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}><div onClick={(e) => e.stopPropagation()} style={{ ...card, borderRadius: 16, padding: 20, width: "100%", maxWidth: 640, maxHeight: "85vh", display: "flex", flexDirection: "column", gap: 10, overflow: "auto" }}><div className="flex items-center gap-2"><div className="flex-1 min-w-0"><InlineEdit value={item.title} onChange={(v) => updateItem(item.id, { title: v })} strong /></div>{item.status === "Scheduled" && <button onClick={() => { updateItem(item.id, { status: "Ready to Post", due: null, scheduledAt: null }); setExpandedId(null); setTimeout(() => scrollAndHighlight(item.id), 90); }} style={{ ...iconBtn, padding: "5px 8px", border: "1px solid " + LINE, borderRadius: 8, fontSize: 10.5, color: C.sky }} title="Move back to Ready to Post">Unschedule and reschedule</button>}<button onClick={() => setExpandedId(null)} style={{ ...iconBtn, padding: 4 }} aria-label="Close"><X size={14} /></button></div><ScriptBox value={item.desc || ""} isHtml={!!item.descHtml} open big onFocus={() => openIfNot(item.id)} onChange={(v) => updateItem(item.id, { desc: v, descHtml: true })} onToggle={() => {}} /></div></div>); })()}
 
       {view === "calendar" ? <ContentCalendar scheduled={scheduled} onOpen={openFromCalendar} /> : <>
-{!isBrand && (<>
       {/* compact stat bar: since-post ring + message + inline legend, no separate donut card */}
-      <div className="flex items-center gap-5 flex-wrap mb-4" style={{ ...card, borderRadius: 16, padding: "18px 22px" }}>
+      <div className="flex items-center gap-5 flex-wrap mb-4" style={{ display: isBrand ? "none" : undefined, ...card, borderRadius: 16, padding: "18px 22px" }}>
         <RingDark value={h.since === null ? 0 : Math.min(h.since, content.cadence)} max={content.cadence} label={h.since === null ? (isBrand ? "0d" : "—") : `${h.since}d`} tint={h.tint} size={74} />
         <div className="flex-1" style={{ minWidth: 220 }}>
           <div style={{ fontSize: 15, fontWeight: 500, color: h.tint }}>{isBrand && h.since === null ? "No brand posts logged yet. Your runway starts at zero days." : h.msg}</div>
@@ -2156,7 +2155,6 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, view = "board
           </div>
         )}
       </div>
-      </>) }
 
       <div className="rounded-2xl mb-4" style={{ ...card, borderRadius: 12, padding: 12 }}>
         <div className="flex gap-2 flex-wrap mb-2">
