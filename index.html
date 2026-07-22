@@ -2056,7 +2056,7 @@ function ScriptBox({ value, isHtml, open, onFocus, onChange, onToggle, big }) {
   );
 }
 
-function ContentCalendar({ scheduled, onOpen }) {
+function ContentCalendar({ scheduled, readyToPost, onOpen }) {
   const [cursor, setCursor] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
   const changeMonth = (amount) => setCursor((d) => new Date(d.getFullYear(), d.getMonth() + amount, 1));
   const start = new Date(cursor.getFullYear(), cursor.getMonth(), 1 - ((cursor.getDay() + 6) % 7));
@@ -2065,31 +2065,37 @@ function ContentCalendar({ scheduled, onOpen }) {
   const today = todayISO();
   return <div style={{ minHeight: "calc(100vh - 190px)", display: "flex", flexDirection: "column", gap: 16 }}>
     <div className="flex items-center justify-between"><button aria-label="Previous month" onClick={() => changeMonth(-1)} style={{ ...iconBtn, fontSize: 22 }}>←</button><div style={{ textAlign: "center" }}><div style={{ fontSize: 30, fontWeight: 700 }}>{cursor.toLocaleDateString("en-ZA", { month: "long", year: "numeric" })}</div><div style={{ fontSize: 11, color: MUT }}>Four week content calendar</div></div><button aria-label="Next month" onClick={() => changeMonth(1)} style={{ ...iconBtn, fontSize: 22 }}>→</button></div>
-    <div style={{ flex: 1, display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gridTemplateRows: "auto repeat(4, minmax(138px, 1fr))", gap: 1, background: LINE, border: "1px solid " + LINE, borderRadius: 18, overflow: "hidden" }}>{["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((n) => <div key={n} style={{ padding: 10, background: C.canvas, color: MUT, fontSize: 10, fontWeight: 700 }}>{n}</div>)}{days.map(({ d, key }) => <div key={key} style={{ padding: 10, background: key === today ? C.lilac + "18" : C.canvas, boxShadow: key === today ? "inset 0 0 0 2px " + C.lilac : "none", opacity: d.getMonth() === cursor.getMonth() ? 1 : .4 }}><div style={{ textAlign: "right", color: key === today ? C.lilac : MUT, fontSize: 12, fontWeight: key === today ? 800 : 500, marginBottom: 8 }}>{d.toLocaleDateString("en-ZA", { weekday: "short", day: "numeric" })}</div>{(slots[key] || []).map((item) => <button key={item.id} onClick={() => onOpen(item.id)} title={item.title} style={{ width: "100%", textAlign: "left", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", padding: "6px 7px", marginBottom: 5, borderRadius: 8, border: "1px solid " + CONTENT_TINT["Ready to Post"] + "55", background: CONTENT_TINT["Ready to Post"] + "19", color: C.ink, cursor: "pointer", fontFamily: "inherit", fontSize: 11 }}>{item.title}</button>)}</div>)}</div>
+    {readyToPost.length > 0 && <div style={{ ...card, borderRadius: 14, padding: 14 }}><div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: CONTENT_TINT["Ready to Post"], marginBottom: 10 }}>Ready to schedule</div><div className="flex gap-2 flex-wrap">{readyToPost.map((item) => <button key={item.pipelineKey + item.id} onClick={() => onOpen(item)} title={item.title} style={{ ...iconBtn, padding: "7px 10px", border: "1px solid " + CONTENT_TINT["Ready to Post"] + "55", background: CONTENT_TINT["Ready to Post"] + "19", color: C.ink, fontSize: 12 }}>{item.title}</button>)}</div></div>}
+    <div style={{ flex: 1, display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gridTemplateRows: "auto repeat(4, minmax(138px, 1fr))", gap: 1, background: LINE, border: "1px solid " + LINE, borderRadius: 18, overflow: "hidden" }}>{["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((n) => <div key={n} style={{ padding: 10, background: C.canvas, color: MUT, fontSize: 10, fontWeight: 700 }}>{n}</div>)}{days.map(({ d, key }) => <div key={key} style={{ padding: 10, background: key === today ? C.lilac + "18" : C.canvas, boxShadow: key === today ? "inset 0 0 0 2px " + C.lilac : "none", opacity: d.getMonth() === cursor.getMonth() ? 1 : .4 }}><div style={{ textAlign: "right", color: key === today ? C.lilac : MUT, fontSize: 12, fontWeight: key === today ? 800 : 500, marginBottom: 8 }}>{d.toLocaleDateString("en-ZA", { weekday: "short", day: "numeric" })}</div>{(slots[key] || []).map((item) => <button key={item.pipelineKey + item.id} onClick={() => onOpen(item)} title={item.title} style={{ width: "100%", textAlign: "left", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", padding: "6px 7px", marginBottom: 5, borderRadius: 8, border: "1px solid " + CONTENT_TINT["Ready to Post"] + "55", background: CONTENT_TINT["Ready to Post"] + "19", color: C.ink, cursor: "pointer", fontFamily: "inherit", fontSize: 11 }}>{item.title}</button>)}</div>)}</div>
   </div>;
 }
 
 function ContentModule({ data, setData, q }) {
   const [subtab, setSubtab] = useState("content");
+  const [calendarFocus, setCalendarFocus] = useState(null);
   const tabs = [
     { id: "content", label: "Content" },
     { id: "brandDeals", label: "Brand Deals" },
     { id: "calendar", label: "Content Calendar" },
   ];
+  const calendarItems = ["content", "brandContent"].flatMap((pipelineKey) => (data[pipelineKey]?.items || []).map((item) => ({ ...item, pipelineKey })));
+  const readyToPost = calendarItems.filter((item) => item.status === "Ready to Post" && !item.dueOff);
+  const scheduled = calendarItems.filter((item) => item.status === "Scheduled" && item.due && !item.dueOff).sort((a, b) => a.due.localeCompare(b.due));
+  const openCalendarItem = (item) => { setCalendarFocus(item); setSubtab(item.pipelineKey === "brandContent" ? "brandDeals" : "content"); };
   return (
-    <section>
-      <SectionHead title="Content" sub="Personal content and brand work, each with its own production pipeline." />
+    <section style={{ width: "100%", margin: 0, textAlign: "left" }}>
+      <SectionHead title="Content" />
       <nav className="flex gap-2 mb-6 flex-wrap w-full" style={{ justifyContent: "flex-start" }}>
         {tabs.map((tab) => <button key={tab.id} onClick={() => setSubtab(tab.id)} className="rounded-full px-4 py-2" style={{ background: subtab === tab.id ? C.dark : C.card, border: `1px solid ${subtab === tab.id ? C.dark : LINE}`, color: subtab === tab.id ? C.canvas : C.ink, cursor: "pointer", fontSize: 14, fontWeight: subtab === tab.id ? 600 : 400, fontFamily: "inherit" }}>{tab.label}</button>)}
       </nav>
-      {subtab === "content" && <ContentPipeline data={data} setData={setData} q={q} pipelineKey="content" heading="Content" />}
-      {subtab === "brandDeals" && <ContentPipeline data={data} setData={setData} q={q} pipelineKey="brandContent" heading="Brand Deals" showRunway={false} />}
-      {subtab === "calendar" && <ContentPipeline data={data} setData={setData} q={q} pipelineKey="content" heading="Content Calendar" view="calendar" />}
+      {subtab === "content" && <ContentPipeline data={data} setData={setData} q={q} pipelineKey="content" heading="Content" focusId={calendarFocus?.pipelineKey === "content" ? calendarFocus.id : null} />}
+      {subtab === "brandDeals" && <ContentPipeline data={data} setData={setData} q={q} pipelineKey="brandContent" heading="Brand Deals" focusId={calendarFocus?.pipelineKey === "brandContent" ? calendarFocus.id : null} />}
+      {subtab === "calendar" && <ContentCalendar scheduled={scheduled} readyToPost={readyToPost} onOpen={openCalendarItem} />}
     </section>
   );
 }
 
-function ContentPipeline({ data, setData, q, pipelineKey, heading, view = "board", showRunway = true }) {
+function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = null }) {
   const content = data[pipelineKey];
   const h = contentHealth(content);
   const [title, setTitle] = useState("");
@@ -2098,7 +2104,7 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, view = "board
   const [showArchive, setShowArchive] = useState(false); const [expandedId, setExpandedId] = useState(null);
   const [dragOverCol, setDragOverCol] = useState(null);
   const dropIntoColumn = (id, status) => setData((d) => ({ ...d, [pipelineKey]: { ...d[pipelineKey], items: d[pipelineKey].items.map((item) => item.id !== id ? item : { ...item, status, due: status === "Ready to Post" ? null : item.due }) } }));
-  const openFromCalendar = (id) => setExpandedId(id);
+  useEffect(() => { if (focusId) setExpandedId(focusId); }, [focusId]);
   const openIfNot = (id) => setOpenDesc((o) => (o[id] ? o : { ...o, [id]: true }));
   const patch = (p) => setData((d) => ({ ...d, [pipelineKey]: { ...d[pipelineKey], ...p } }));
   const ql = (q || "").toLowerCase();
@@ -2126,15 +2132,15 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, view = "board
 
   const donutSegs = CONTENT_COLS.map((s) => ({ value: h.counts[s], color: CONTENT_TINT[s], label: s }));
   const donutTotal = donutSegs.reduce((s, x) => s + x.value, 0);
-  const scheduled = content.items.filter((i) => (i.status === "Scheduled" || (i.status === "Ready to Post" && i.due)) && i.due && !i.dueOff).sort((a, b) => a.due.localeCompare(b.due));
+
 
   return (
     <section style={{ width: "100%", margin: 0, textAlign: "left" }}>
       <SectionHead title={heading} sub="Your personal content pipeline." />{expandedId && (() => { const item = content.items.find((z) => z.id === expandedId); if (!item) return null; return (<div onClick={() => { if (hasTextSelection()) return; setExpandedId(null); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}><div onClick={(e) => e.stopPropagation()} style={{ ...card, borderRadius: 16, padding: 20, width: "100%", maxWidth: 640, maxHeight: "85vh", display: "flex", flexDirection: "column", gap: 10, overflow: "auto" }}><div className="flex items-center gap-2"><div className="flex-1 min-w-0"><InlineEdit value={item.title} onChange={(v) => updateItem(item.id, { title: v })} strong /></div>{item.status === "Scheduled" && <button onClick={() => { updateItem(item.id, { status: "Ready to Post", due: null, scheduledAt: null }); setExpandedId(null); setTimeout(() => scrollAndHighlight(item.id), 90); }} style={{ ...iconBtn, padding: "5px 8px", border: "1px solid " + LINE, borderRadius: 8, fontSize: 10.5, color: C.sky }} title="Move back to Ready to Post">Unschedule and reschedule</button>}<button onClick={() => setExpandedId(null)} style={{ ...iconBtn, padding: 4 }} aria-label="Close"><X size={14} /></button></div><ScriptBox value={item.desc || ""} isHtml={!!item.descHtml} open big onFocus={() => openIfNot(item.id)} onChange={(v) => updateItem(item.id, { desc: v, descHtml: true })} onToggle={() => {}} /></div></div>); })()}
 
-      {view === "calendar" ? <ContentCalendar scheduled={scheduled} onOpen={openFromCalendar} /> : <>
+      <>
       {/* compact stat bar: since-post ring + message + inline legend, no separate donut card */}
-      <div className="flex items-center gap-5 flex-wrap mb-4" style={{ display: showRunway ? undefined : "none", ...card, borderRadius: 16, padding: "18px 22px" }}>
+      <div className="flex items-center gap-5 flex-wrap mb-4" style={{ ...card, borderRadius: 16, padding: "18px 22px" }}>
         <RingDark value={h.since === null ? 0 : Math.min(h.since, content.cadence)} max={content.cadence} label={h.since === null ? "—" : `${h.since}d`} tint={h.tint} size={74} />
         <div className="flex-1" style={{ minWidth: 220 }}>
           <div style={{ fontSize: 15, fontWeight: 500, color: h.tint }}>{h.msg}</div>
@@ -3205,7 +3211,7 @@ const pillAccent = (tint) => ({ background: tint, color: onTint(tint), border: "
 function SectionHead({ title, sub, action }) {
   return (
     <div className="flex items-end justify-between gap-3 mb-4 flex-wrap">
-      <div><h2 style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 27, margin: 0, letterSpacing: "-0.01em" }}>{title}</h2><p style={{ fontSize: 13.5, color: MUT, margin: "5px 0 0", maxWidth: 620 }}>{sub}</p></div>
+      <div><h2 style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 27, margin: 0, letterSpacing: "-0.01em" }}>{title}</h2></div>
       {action}
     </div>
   );
