@@ -358,16 +358,18 @@ const cardSoft = { background: C.soft, border: `1px solid ${LINE}` };
 
 /* module identity: emoji + accent + tile bg */
 const MODULES = {
-  overview:  { emoji: "🎯", label: "Priorities",  accent: C.mint,  bg: C.mintBg },
-  content:   { emoji: "🎬", label: "Content",   accent: C.sky,   bg: C.skyBg },
-  anchor:    { emoji: "✦", label: "Anchor", accent: C.lilac, bg: C.lilacBg },
+  overview:  { emoji: "🎯", label: "PERSONAL",  accent: C.mint,  bg: C.mintBg },
+  content:   { emoji: "🎬", label: "CONTENT",   accent: C.sky,   bg: C.skyBg },
+  music:     { emoji: "🎵", label: "MUSIC",     accent: C.coral, bg: C.peachBg },
+  series:    { emoji: "📖", label: "SERIES",    accent: C.pink,  bg: C.pinkBg },
+  anchor:    { emoji: "✦", label: "ANCHOR", accent: C.lilac, bg: C.lilacBg },
   unlocks:   { emoji: "🔓", label: "Unlocks",   accent: C.yellow, bg: C.yellowBg },
   apartment: { emoji: "🛋️", label: "Apartment", accent: C.peach, bg: C.peachBg },
   lifeAdmin: { emoji: "📋", label: "Life Admin", accent: C.rose,  bg: C.roseBg },
-  mama:      { emoji: "💼", label: "Mama",      accent: C.brown, bg: C.brownBg },
+  mama:      { emoji: "💼", label: "MAMA",      accent: C.brown, bg: C.brownBg },
   deals:     { emoji: "🤝", label: "Deals",     accent: C.pink,  bg: C.pinkBg },
 };
-const TAB_ORDER = ["overview", "content", "lifeAdmin", "mama", "anchor"]; // "deals" pulled for now — re-add here to bring the tab back
+const TAB_ORDER = ["overview", "content", "mama", "music", "series", "anchor"]; // "deals" pulled for now — re-add here to bring the tab back
 
 /* ---------- storage shim: window.storage in the app, localStorage in the repo ---------- */
 const store = {
@@ -419,7 +421,7 @@ const fmtR = (n) => "R" + (Number(n) || 0).toLocaleString("en-ZA");
 const isApartmentUnlocked = (ally) => !!ally.apartment.unlockedOverride || ally.unlocks.chains.some((ch) => ch.nodes.some((n) => /move\s*in/i.test(n.label) && n.status === "done"));
 
 /* ---------- pipeline constants ---------- */
-const CONTENT_COLS = ["Ideas", "To Film", "To Edit", "Ready to Post"];
+const CONTENT_COLS = ["Ideas", "To Film", "To Edit"];
 const CONTENT_TINT = { Ideas: C.lilac, "To Film": C.amber, "To Edit": C.mint, "Ready to Post": C.sky, Posted: FAINT };
 
 /* one-time migration: content items saved under the old Scripted/Filmed/Edited/In Edit status names
@@ -482,6 +484,14 @@ function migrateAlly(a) {
     return { ...withTasks, piece: withTasks.piece || "Reel", stage: newStage, stageDue, storyDue: withTasks.storyDue || "", script: withTasks.script || "", caption: withTasks.caption || "" };
   });
   out = { ...out, deals: { ...out.deals, deals: migrated } };
+  }
+  /* MUSIC + SERIES are newer than some saved data — back them in on every load (local and the
+     Firestore reconcile path alike) so an older account never lands on an undefined chain list. */
+  if (!out.music || !Array.isArray(out.music.chains) || !out.music.chains.length) {
+    out = { ...out, music: ALLY_SEED.music };
+  }
+  if (!out.series || typeof out.series !== "object") {
+    out = { ...out, series: ALLY_SEED.series };
   }
   return out;
 }
@@ -619,38 +629,46 @@ function collectPriorityTasks(ally, mama) {
       out.push({
         id: d.id, pillar: "deals", title: `Post story (${d.brand})`, due: d.storyDue || null,
         priority: d.priority || "Medium", lastProgress: d.lastProgress || null, created: d.created || null,
-        sourceType: "deal", navTab: "deals", navSub: null, navOpenId: d.id,
+        sourceType: "deal", navTab: "deals", navSub: null, navOpenId: d.id, chaseOn: d.chaseOn || null,
       });
     } else {
       const st = REEL_STAGES.find((s) => s.key === (d.stage || "script"));
       if (st) out.push({
         id: d.id, pillar: "deals", title: `${st.hub} (${d.brand})`, due: (d.stageDue || {})[st.key] || null,
         priority: d.priority || "Medium", lastProgress: d.lastProgress || null, created: d.created || null,
-        sourceType: "deal", navTab: "deals", navSub: null, navOpenId: d.id,
+        sourceType: "deal", navTab: "deals", navSub: null, navOpenId: d.id, chaseOn: d.chaseOn || null,
       });
     }
   });
   ally.deals.clients.forEach((c) => (c.tasks || []).filter((t) => !t.done && !t.paused).forEach((t) => out.push({
     id: t.id, pillar: "deals", title: `${t.title} (${c.name})`, due: t.due || null,
     priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
-    sourceType: "clientTask", navTab: "deals", navSub: null, navOpenId: null,
+    sourceType: "clientTask", navTab: "deals", navSub: null, navOpenId: null, chaseOn: t.chaseOn || null,
   })));
   mama.tasks.filter((t) => t.status !== "Done" && !t.paused).forEach((t) => out.push({
     id: t.id, pillar: "mama", title: t.title, due: t.due || null,
     priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
-    sourceType: "mamaAdmin", navTab: "mama", navSub: "adminTasks", navOpenId: null,
+    sourceType: "mamaAdmin", navTab: "mama", navSub: "adminTasks", navOpenId: null, chaseOn: t.chaseOn || null,
   }));
   (mama.creators || []).forEach((cr) => (cr.tasks || []).filter((t) => !t.done && !t.paused).forEach((t) => out.push({
     id: t.id, pillar: "mama", title: `${t.title} (${cr.name})`, due: t.due || null,
     priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
-    sourceType: "mamaCreator", navTab: "mama", navSub: "creators", navOpenId: cr.id,
+    sourceType: "mamaCreator", navTab: "mama", navSub: "creators", navOpenId: cr.id, chaseOn: t.chaseOn || null,
   })));
 (ally.lifeAdmin.items || []).filter((t) => t.status !== "Done" && !t.paused).forEach((t) => out.push({
     id: t.id, pillar: "lifeAdmin", title: t.title, due: t.due || null,
     priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
-    sourceType: "lifeAdmin", navTab: "lifeAdmin", navSub: null, navOpenId: null,
+    sourceType: "lifeAdmin", navTab: "overview", navSub: "lifeAdmin", navOpenId: null, chaseOn: t.chaseOn || null,
   }));
-  return out.map((t) => (t._preScored ? t : { ...t, ...computeUrgency(t) }));
+  /* waiting on someone else: any task can be parked with a chase-by date (the ⏳ waiting button in
+     PriorityControls). Until that date it drops off the dashboard completely — you're not the
+     blocker, so it shouldn't nag. On the date it comes back flagged ⏰ and forced to High, with the
+     chase date standing in as its deadline if it had none, so a dropped ball resurfaces by itself. */
+  const _today = todayISO();
+  return out
+    .filter((t) => !(t.chaseOn && t.chaseOn > _today))
+    .map((t) => (t.chaseOn ? { ...t, title: "⏰ " + t.title, priority: "High", due: t.due || t.chaseOn } : t))
+    .map((t) => (t._preScored ? t : { ...t, ...computeUrgency(t) }));
 }
 
 /* every pillar gets its own independent fill ring now — no more competing for a shared 100%.
@@ -829,6 +847,21 @@ const ALLY_SEED = {
   },
   deals: { deals: [], clients: [] },
   lifeAdmin: { items: [] },
+  /* MUSIC: two independent gated chains. Each step only opens once the one before it is ticked. */
+  music: {
+    chains: [
+      { id: uid(), name: "Original song", sub: "One full song, out of my own head.", steps: [
+        { id: uid(), name: "Write and perform one full song with SUNO AI + record vocals", desc: "Whole song written, built in SUNO, vocals recorded.", status: "todo", note: "" },
+        { id: uid(), name: "Mix it", desc: "Either have a go myself, or hire a freelance mixing engineer.", status: "todo", note: "", kind: "route", options: ["Mix it myself", "Hire a freelance mixing engineer"], route: "" },
+      ] },
+      { id: uid(), name: "Singing on stories", sub: "Covers on my story — the low-lift music content.", steps: [
+        { id: uid(), name: "Find a song I want to sing", desc: "Pick the song.", status: "todo", note: "" },
+        { id: uid(), name: "Record and edit it", desc: "Sing it, cut it.", status: "todo", note: "" },
+        { id: uid(), name: "Post it", desc: "Up on the story.", status: "todo", note: "" },
+      ] },
+    ],
+  },
+  series: { title: "The Adam Thal Project", doc: "", docHtml: false },
 };
 const MAMA_SEED = {
   creators: [
@@ -1388,7 +1421,7 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
             justify-content: flex-start !important;
             gap: 14px;
             padding: 11px 12px !important;
-            font-size: 24px !important;
+            font-size: 15px !important;
           }
           .sidebar-rail .rail-label { display: inline-block; font-size: 14.5px; font-weight: 600; font-family: 'Outfit', sans-serif; }
           .sidebar-rail .rail-logo, .sidebar-rail .rail-avatar { align-self: center; }
@@ -1417,10 +1450,9 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
             const locked = t === "apartment" && !aptUnlocked;
             return (
               <button key={t} className="railbtn" onClick={() => (t === "mama" ? goMamaDashboard() : go(t))} title={info.label} aria-label={info.label}
-                style={{ width: 68, height: 68, borderRadius: 16, border: on ? `1px solid ${LINE}` : "1px solid transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", position: "relative",
-                  background: on ? "rgba(255,255,255,0.1)" : "transparent", fontSize: 32, transition: "background 0.15s" }}>
-                <span style={{ filter: on ? "none" : "saturate(0.85)", opacity: locked ? 0.4 : on ? 1 : 0.7 }}>{info.emoji}</span>
-                <span className="rail-label">{info.label}</span>
+                style={{ width: 88, height: 44, borderRadius: 12, border: on ? `1px solid ${LINE}` : "1px solid transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", position: "relative",
+                  background: on ? "rgba(255,255,255,0.1)" : "transparent", transition: "background 0.15s" }}>
+                <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 11.5, letterSpacing: "0.09em", color: on ? C.ink : MUT, opacity: locked ? 0.4 : 1, whiteSpace: "nowrap" }}>{info.label}</span>
                 {locked && <span style={{ position: "absolute", top: 6, right: 8, fontSize: 11 }}>🔒</span>}
                 {badges[t] ? <span style={{ position: "absolute", top: 5, right: 5, minWidth: 18, height: 18, borderRadius: 99, background: info.accent, color: "#fff", fontSize: 10.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 5px" }}>{badges[t]}</span> : null}
               </button>
@@ -1442,7 +1474,7 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
               style={{ width: 32, height: 32, borderRadius: 9, border: `1px solid ${LINE}`, background: history.length ? C.card : "transparent", cursor: history.length ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", color: history.length ? C.ink : FAINT, flexShrink: 0 }}>
               <ChevronLeft size={16} />
             </button>
-            <div style={{ width: 36, height: 36, borderRadius: 10, background: mod.bg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 17, flexShrink: 0 }}>{mod.emoji}</div>
+            <div style={{ width: 6, height: 30, borderRadius: 3, background: mod.accent, flexShrink: 0 }} />
             <div style={{ minWidth: 0 }}>
               <div className="page-title" style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 21, lineHeight: 1.1, letterSpacing: "-0.01em" }}>{mod.label}</div>
               <div className="page-subtitle" style={{ fontSize: 10.5, color: MUT }}>{new Date().toLocaleDateString("en-ZA", { weekday: "long", day: "numeric", month: "long" })}</div>
@@ -1495,9 +1527,11 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
               subtab's content doesn't fill the viewport. */}
           <div className="scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "28px 36px", display: "flex", flexDirection: "column", alignItems: "center" }}>
             <div style={{ width: "100%", maxWidth: 1360, margin: 0, paddingBottom: 44 }}>
-              {tab === "overview" && <PriorityDashboard ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} navigateToTask={navigateToTask} completeTask={completeTask} />}
+              {tab === "overview" && <PersonalModule ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} q={q} navRequest={navRequest} navigateToTask={navigateToTask} completeTask={completeTask} />}
               {tab === "content" && <ContentModule data={ally} setData={setAlly} q={q} />}
               {tab === "anchor" && <AnchorModule data={ally} setData={setAlly} />}
+              {tab === "music" && <MusicModule data={ally} setData={setAlly} />}
+              {tab === "series" && <SeriesModule data={ally} setData={setAlly} />}
               {tab === "lifeAdmin" && <LifeAdminModule data={ally} setData={setAlly} q={q} />}
               {tab === "deals" && <DealsModule data={ally} setData={setAlly} q={q} navRequest={navRequest} />}
               {tab === "mama" && <MamaModule data={mama} setData={setMama} q={q} navRequest={navRequest} navigateToTask={navigateToTask} completeTask={completeTask} />}
@@ -1513,11 +1547,11 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
 function contentHealth(content) {
   const since = daysSince(content.lastPosted);
   const counts = Object.fromEntries(CONTENT_COLS.map((c) => [c, content.items.filter((i) => i.status === c).length]));
-  const ready = counts["Ready to Post"];
+  const ready = content.items.filter((i) => i.status === "To Edit").length;
   let tint = C.mint, msg = "On track. Keep the machine fed.";
 if (since === null) { tint = C.sky; msg = "Log when you last posted to start the runway clock."; }
   else if (since >= content.cadence && ready === 0) { tint = C.rose; msg = "Post overdue and nothing edited. Film or edit today."; }
-  else if (since >= content.cadence) { tint = C.amber; msg = `Time to post. ${ready} edited and ready to go.`; }
+  else if (since >= content.cadence) { tint = C.amber; msg = `Time to post. ${ready} sitting in To Edit.`; }
   else if (ready === 0 && counts["To Film"] === 0) { tint = C.amber; msg = "Downstream pipeline is empty. Script and film next."; }
   return { since, counts, ready, tint, msg };
 }
@@ -1656,6 +1690,33 @@ function CompleteCheckbox({ onComplete, size = 18, mt = 0, label = "Mark complet
       style={{ width: size, height: size, borderRadius: 6, cursor: "pointer", flexShrink: 0, marginTop: mt, padding: 0, display: "flex", alignItems: "center", justifyContent: "center", background: done ? C.mint : hover ? "rgba(47,163,124,0.15)" : "rgba(255,255,255,0.04)", border: `2px solid ${done ? C.mint : hover ? C.mint : "rgba(242,242,244,0.45)"}`, transition: "background 0.15s, border-color 0.15s" }}>
       {(done || hover) && <Check size={size - 6} color={done ? "#0B0B0D" : C.mint} strokeWidth={3} />}
     </button>
+  );
+}
+
+/* ================= PERSONAL (dashboard + life admin) =================
+   The Priorities dashboard and Life Admin now live side by side as two subtabs of one PERSONAL tab:
+   the summary rings first, your own life admin board second. Life Admin tasks navigate here via
+   navRequest.navSub, and the dashboard's own Life Admin card just flips this subtab rather than
+   trying to jump to a rail tab that no longer exists. */
+function PersonalModule({ ally, mama, setAlly, setMama, go, q, navRequest, navigateToTask, completeTask }) {
+  const [sub, setSub] = useState("summary");
+  const reqSeq = navRequest ? navRequest.seq : null;
+  useEffect(() => {
+    if (navRequest && navRequest.navTab === "overview" && navRequest.navSub) setSub(navRequest.navSub);
+  }, [reqSeq]);
+  const subs = [{ id: "summary", label: "Summary" }, { id: "lifeAdmin", label: "Life Admin" }];
+  const goFrom = (k) => (k === "lifeAdmin" ? setSub("lifeAdmin") : go(k));
+  return (
+    <section style={{ width: "100%", margin: 0, textAlign: "left" }}>
+      <nav className="flex gap-2 mb-6 flex-wrap w-full" style={{ justifyContent: "flex-start" }}>
+        {subs.map((t) => (
+          <button key={t.id} onClick={() => setSub(t.id)} className="rounded-full px-4 py-2"
+            style={{ background: sub === t.id ? C.dark : C.card, border: `1px solid ${sub === t.id ? C.dark : LINE}`, color: sub === t.id ? C.canvas : C.ink, cursor: "pointer", fontSize: 14, fontWeight: sub === t.id ? 600 : 400, fontFamily: "inherit" }}>{t.label}</button>
+        ))}
+      </nav>
+      {sub === "summary" && <PriorityDashboard ally={ally} mama={mama} go={goFrom} setAlly={setAlly} setMama={setMama} navigateToTask={navigateToTask} completeTask={completeTask} />}
+      {sub === "lifeAdmin" && <LifeAdminModule data={ally} setData={setAlly} q={q} />}
+    </section>
   );
 }
 
@@ -1922,6 +1983,17 @@ function PriorityControls({ item, onChange, hideDue }) {
       <button onClick={(e) => { e.stopPropagation(); onChange({ lastProgress: todayISO() }); }} className="flex items-center gap-1 rounded-full px-2 py-0.5"
         style={{ fontSize: 10, cursor: "pointer", fontFamily: "inherit", background: FILL, border: `1px solid ${LINE}`, color: MUT }}
         title="Log progress today"><Zap size={10} /> progress</button>
+      {/* waiting on someone else: parks the task off the Priorities dashboard until the chase date,
+          then brings it back flagged and High so a silent reply can't quietly bury it. */}
+      <button onClick={(e) => { e.stopPropagation(); onChange(item.chaseOn ? { chaseOn: null } : { chaseOn: shiftISO(todayISO(), 3) }); }} className="flex items-center gap-1 rounded-full px-2 py-0.5"
+        style={{ fontSize: 10, cursor: "pointer", fontFamily: "inherit", background: item.chaseOn ? `${C.sky}22` : FILL, border: `1px solid ${item.chaseOn ? C.sky : LINE}`, color: item.chaseOn ? C.sky : MUT, whiteSpace: "nowrap" }}
+        title="Waiting on a reply — hides this from the dashboard until the chase date, then brings it back flagged">waiting on reply</button>
+      {item.chaseOn && (
+        <span className="flex items-center gap-1" style={{ fontSize: 10, color: C.sky, whiteSpace: "nowrap" }}>
+          chase by
+          <input type="date" value={item.chaseOn} onClick={(e) => e.stopPropagation()} onChange={(e) => onChange({ chaseOn: e.target.value || null })} className="rounded-md" style={{ ...darkInput, fontSize: 10.5, padding: "3px 5px" }} aria-label="Chase date" />
+        </span>
+      )}
       {paused ? (
         <span style={{ marginLeft: "auto", color: FAINT, fontWeight: 600, whiteSpace: "nowrap" }}>paused</span>
       ) : u.daysUntilDue !== null ? (
@@ -2031,7 +2103,7 @@ function scriptEscapeToHtml(text) {
    this existed) from new ones, so nothing already saved gets misread as markup.
    shortcuts (act on a text selection only): Cmd/Ctrl+B bold, Cmd/Ctrl+I italic,
    Cmd/Ctrl+Shift+. bump the selection up a size, Cmd/Ctrl+Shift+, bump it down. */
-function ScriptBox({ value, isHtml, open, onFocus, onChange, onToggle, big }) {
+function ScriptBox({ value, isHtml, open, onFocus, onChange, onToggle, big, placeholder }) {
   const ref = useRef(null);
   const lastSeededRef = useRef(null);
   const savedRangeRef = useRef(null);
@@ -2131,13 +2203,13 @@ function ScriptBox({ value, isHtml, open, onFocus, onChange, onToggle, big }) {
       )}
       <div ref={ref} contentEditable suppressContentEditableWarning
         onFocus={onFocus} onInput={commit} onPaste={handlePaste} onKeyDown={handleKeyDown}
-        data-placeholder="Paste the skit script here…" className="w-full rounded-lg px-2.5 py-1.5 mt-1 script-editable"
+        data-placeholder={placeholder || "Paste the skit script here…"} className="w-full rounded-lg px-2.5 py-1.5 mt-1 script-editable"
         style={{ ...inputStyle, fontSize: big ? 15 : 12.5, lineHeight: 1.5, overflow: open ? "visible" : "hidden", height: open ? "auto" : 28, minHeight: big ? 260 : 28 }} />
     </div>
   );
 }
 
-function ContentCalendar({ scheduled, readyToPost, onOpen }) {
+function ContentCalendar({ scheduled, onOpen }) {
   const [cursor, setCursor] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
   const changeMonth = (amount) => setCursor((d) => new Date(d.getFullYear(), d.getMonth() + amount, 1));
   const start = new Date(cursor.getFullYear(), cursor.getMonth(), 1 - ((cursor.getDay() + 6) % 7));
@@ -2146,7 +2218,6 @@ function ContentCalendar({ scheduled, readyToPost, onOpen }) {
   const today = todayISO();
   return <div style={{ minHeight: "calc(100vh - 190px)", display: "flex", flexDirection: "column", gap: 16 }}>
     <div className="flex items-center justify-between"><button aria-label="Previous month" onClick={() => changeMonth(-1)} style={{ ...iconBtn, fontSize: 22 }}>←</button><div style={{ textAlign: "center" }}><div style={{ fontSize: 30, fontWeight: 700 }}>{cursor.toLocaleDateString("en-ZA", { month: "long", year: "numeric" })}</div><div style={{ fontSize: 11, color: MUT }}>Four week content calendar</div></div><button aria-label="Next month" onClick={() => changeMonth(1)} style={{ ...iconBtn, fontSize: 22 }}>→</button></div>
-    {readyToPost.length > 0 && <div style={{ ...card, borderRadius: 14, padding: 14 }}><div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: CONTENT_TINT["Ready to Post"], marginBottom: 10 }}>Ready to schedule</div><div className="flex gap-2 flex-wrap">{readyToPost.map((item) => <button key={item.pipelineKey + item.id} onClick={() => onOpen(item)} title={item.title} style={{ ...iconBtn, padding: "7px 10px", border: "1px solid " + CONTENT_TINT["Ready to Post"] + "55", background: CONTENT_TINT["Ready to Post"] + "19", color: C.ink, fontSize: 12 }}>{item.title}</button>)}</div></div>}
     <div style={{ flex: 1, display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gridTemplateRows: "auto repeat(4, minmax(138px, 1fr))", gap: 1, background: LINE, border: "1px solid " + LINE, borderRadius: 18, overflow: "hidden" }}>{["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((n) => <div key={n} style={{ padding: 10, background: C.canvas, color: MUT, fontSize: 10, fontWeight: 700 }}>{n}</div>)}{days.map(({ d, key }) => <div key={key} style={{ padding: 10, background: key === today ? C.lilac + "18" : C.canvas, boxShadow: key === today ? "inset 0 0 0 2px " + C.lilac : "none", opacity: d.getMonth() === cursor.getMonth() ? 1 : .4 }}><div style={{ textAlign: "right", color: key === today ? C.lilac : MUT, fontSize: 12, fontWeight: key === today ? 800 : 500, marginBottom: 8 }}>{d.toLocaleDateString("en-ZA", { weekday: "short", day: "numeric" })}</div>{(slots[key] || []).map((item) => { const tint = item.status === "Posted" ? CONTENT_TINT.Posted : CONTENT_TINT["Ready to Post"]; return <button key={item.pipelineKey + item.id} onClick={() => onOpen(item)} title={item.title} style={{ width: "100%", textAlign: "left", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", padding: "6px 7px", marginBottom: 5, borderRadius: 8, border: "1px solid " + tint + "55", background: tint + "19", color: C.ink, cursor: "pointer", fontFamily: "inherit", fontSize: 11 }}>{item.status === "Posted" ? "✓ " : ""}{item.title}</button>; })}</div>)}</div>
   </div>;
 }
@@ -2160,20 +2231,42 @@ function ContentModule({ data, setData, q }) {
     { id: "calendar", label: "Content Calendar" },
   ];
   const calendarItems = ["content", "brandContent"].flatMap((pipelineKey) => (data[pipelineKey]?.items || []).map((item) => ({ ...item, pipelineKey })));
-  const readyToPost = calendarItems.filter((item) => item.status === "Ready to Post" && !item.dueOff);
-  /* Scheduled AND Posted both keep their calendar slot — Posted items never drop off the Content
-     Calendar tab once logged, only off each pipeline's own in-board "Upcoming content" mini list. */
-  const scheduled = calendarItems.filter((item) => (item.status === "Scheduled" || item.status === "Posted") && item.due && !item.dueOff).sort((a, b) => a.due.localeCompare(b.due));
-  const openCalendarItem = (item) => { setCalendarFocus(item); setSubtab(item.pipelineKey === "brandContent" ? "brandDeals" : "content"); };
+  /* the To Edit deadline IS the calendar slot: anything in To Edit carrying a live date shows on
+     that date, alongside anything already logged as Posted (which keeps its slot forever). */
+  const scheduled = calendarItems.filter((item) => (item.status === "To Edit" || item.status === "Scheduled" || item.status === "Posted") && item.due && !item.dueOff).sort((a, b) => a.due.localeCompare(b.due));
+  /* opens the video right here on the calendar — it used to switch subtabs and throw you back onto
+     the pipeline board, which lost your place on the calendar every time. */
+  const openCalendarItem = (item) => setCalendarFocus({ pipelineKey: item.pipelineKey, id: item.id });
+  const patchFocused = (p) => setData((d) => ({ ...d, [calendarFocus.pipelineKey]: { ...d[calendarFocus.pipelineKey], items: d[calendarFocus.pipelineKey].items.map((z) => (z.id === calendarFocus.id ? { ...z, ...p } : z)) } }));
   return (
     <section style={{ width: "100%", margin: 0, textAlign: "left" }}>
       <SectionHead title="Content" />
       <nav className="flex gap-2 mb-6 flex-wrap w-full" style={{ justifyContent: "flex-start" }}>
         {tabs.map((tab) => <button key={tab.id} onClick={() => setSubtab(tab.id)} className="rounded-full px-4 py-2" style={{ background: subtab === tab.id ? C.dark : C.card, border: `1px solid ${subtab === tab.id ? C.dark : LINE}`, color: subtab === tab.id ? C.canvas : C.ink, cursor: "pointer", fontSize: 14, fontWeight: subtab === tab.id ? 600 : 400, fontFamily: "inherit" }}>{tab.label}</button>)}
       </nav>
-      {subtab === "content" && <ContentPipeline data={data} setData={setData} q={q} pipelineKey="content" heading="Content" focusId={calendarFocus?.pipelineKey === "content" ? calendarFocus.id : null} />}
-      {subtab === "brandDeals" && <ContentPipeline data={data} setData={setData} q={q} pipelineKey="brandContent" heading="Brand Deals" focusId={calendarFocus?.pipelineKey === "brandContent" ? calendarFocus.id : null} />}
-      {subtab === "calendar" && <ContentCalendar scheduled={scheduled} readyToPost={readyToPost} onOpen={openCalendarItem} />}
+      {subtab === "content" && <ContentPipeline data={data} setData={setData} q={q} pipelineKey="content" heading="Content" />}
+      {subtab === "brandDeals" && <ContentPipeline data={data} setData={setData} q={q} pipelineKey="brandContent" heading="Brand Deals" />}
+      {subtab === "calendar" && <ContentCalendar scheduled={scheduled} onOpen={openCalendarItem} />}
+      {calendarFocus && (() => {
+        const item = ((data[calendarFocus.pipelineKey] || {}).items || []).find((z) => z.id === calendarFocus.id);
+        if (!item) return null;
+        return (
+          <div onClick={() => { if (hasTextSelection()) return; setCalendarFocus(null); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+            <div onClick={(e) => e.stopPropagation()} style={{ ...card, borderRadius: 16, padding: 20, width: "100%", maxWidth: 640, maxHeight: "85vh", display: "flex", flexDirection: "column", gap: 10, overflow: "auto" }}>
+              <div className="flex items-center gap-2">
+                <div className="flex-1 min-w-0"><InlineEdit value={item.title} onChange={(v) => patchFocused({ title: v })} strong /></div>
+                <button onClick={() => setCalendarFocus(null)} style={{ ...iconBtn, padding: 4 }} aria-label="Close"><X size={14} /></button>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap" style={{ fontSize: 11.5, color: MUT }}>
+                <span style={{ color: CONTENT_TINT[item.status] || MUT, fontWeight: 600 }}>{item.status}</span>
+                <input type="date" value={item.due || ""} onChange={(e) => patchFocused({ due: e.target.value || null })} className="rounded-md" style={{ ...darkInput, fontSize: 11.5, padding: "4px 7px" }} aria-label="Date" />
+                {item.status !== "Posted" && <button onClick={() => { patchFocused({ status: "Posted", postedAt: todayISO() }); if (calendarFocus.pipelineKey === "content") setData((d) => ({ ...d, content: { ...d.content, lastPosted: todayISO() } })); }} className="rounded-full px-2.5 py-1" style={{ fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", background: `${C.mint}1a`, border: `1px solid ${C.mint}55`, color: C.mint }}>✓ Posted</button>}
+              </div>
+              <ScriptBox value={item.desc || ""} isHtml={!!item.descHtml} open big onFocus={() => {}} onChange={(v) => patchFocused({ desc: v, descHtml: true })} onToggle={() => {}} />
+            </div>
+          </div>
+        );
+      })()}
     </section>
   );
 }
@@ -2186,7 +2279,7 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
   const [openDesc, setOpenDesc] = useState({});
   const [showArchive, setShowArchive] = useState(false); const [expandedId, setExpandedId] = useState(null);
   const [dragOverCol, setDragOverCol] = useState(null);
-  const dropIntoColumn = (id, status) => setData((d) => ({ ...d, [pipelineKey]: { ...d[pipelineKey], items: d[pipelineKey].items.map((item) => item.id !== id ? item : { ...item, status, due: status === "Ready to Post" ? null : item.due }) } }));
+  const dropIntoColumn = (id, status) => setData((d) => ({ ...d, [pipelineKey]: { ...d[pipelineKey], items: d[pipelineKey].items.map((item) => item.id !== id ? item : { ...item, status }) } }));
   useEffect(() => { if (focusId) setExpandedId(focusId); }, [focusId]);
   const openIfNot = (id) => setOpenDesc((o) => (o[id] ? o : { ...o, [id]: true }));
   const patch = (p) => setData((d) => ({ ...d, [pipelineKey]: { ...d[pipelineKey], ...p } }));
@@ -2200,7 +2293,7 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
          deadline just kept sitting there looking like an editing deadline once the idea moved on —
          reset it the moment it lands on "To Edit" so it's a blank field ready for you to pick a
          fresh edit-by date, instead of a stale filming date parading as one. */
-      return (next === "To Edit" || next === "Ready to Post") && i.status !== next ? { ...i, status: next, due: null } : { ...i, status: next };
+      return next === "To Edit" && i.status !== next ? { ...i, status: next, due: null } : { ...i, status: next };
     });
     return { ...d, [pipelineKey]: { ...d[pipelineKey], items } };
   });
@@ -2227,7 +2320,7 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
   /* in-pipeline "upcoming" list: only future/today scheduled items so passed dates drop off this
      board view automatically. The dedicated Content Calendar tab keeps its own unfiltered list, so
      nothing is actually deleted — it just stops showing here once its date has gone by. */
-  const scheduled = content.items.filter((i) => i.status === "Scheduled" && i.due && !i.dueOff && i.due >= todayISO()).sort((a, b) => a.due.localeCompare(b.due));
+  const scheduled = content.items.filter((i) => (i.status === "To Edit" || i.status === "Scheduled") && i.due && !i.dueOff && i.due >= todayISO()).sort((a, b) => a.due.localeCompare(b.due));
 
 
   return (
@@ -2311,13 +2404,15 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
                     <InlineEdit value={i.title} onChange={(v) => updateItem(i.id, { title: v })} strong bubbleClicks /><button onClick={(e) => { e.stopPropagation(); setExpandedId(i.id); }} style={{ ...iconBtn, padding: 2, marginLeft: 6 }} aria-label="Expand description" title="Expand description to full screen">⤢</button>
                     <ScriptBox value={i.desc || ""} isHtml={!!i.descHtml} open={descOpen} onFocus={() => openIfNot(i.id)} onChange={(v) => updateItem(i.id, { desc: v, descHtml: true })} onToggle={toggleDesc} />
                     <div className="flex items-center gap-2 mt-1.5 flex-wrap" style={{ fontSize: 10.5 }}>
-                      {col === "Ready to Post"
-                        ? <input type="date" value={i.due || ""} onClick={(e) => e.stopPropagation()} onChange={(e) => scheduleItem(i.id, e.target.value)} className="rounded-md" style={{ ...darkInput, fontSize: 10.5, padding: "3px 5px" }} aria-label="Schedule for calendar" title="Schedule this post in the content calendar" />
-                        : <><input type="date" value={i.due || ""} onClick={(e) => e.stopPropagation()} onChange={(e) => updateItem(i.id, { due: e.target.value || null })} className="rounded-md" style={{ ...darkInput, fontSize: 10.5, padding: "3px 5px", opacity: i.dueOff ? 0.5 : 1 }} aria-label="Deadline (optional)" title="Deadline (optional)" /><DueChip due={i.due} off={i.dueOff} onToggle={() => updateItem(i.id, { dueOff: !i.dueOff })} /></>}
+                      {/* on To Edit this date is the post date — it's what puts the video on the
+                          Content Calendar. Everywhere else it's just a working deadline. */}
+                      <input type="date" value={i.due || ""} onClick={(e) => e.stopPropagation()} onChange={(e) => updateItem(i.id, { due: e.target.value || null })} className="rounded-md" style={{ ...darkInput, fontSize: 10.5, padding: "3px 5px", opacity: i.dueOff ? 0.5 : 1, borderColor: col === "To Edit" && i.due && !i.dueOff ? `${C.mint}66` : undefined }} aria-label={col === "To Edit" ? "Post date" : "Deadline (optional)"} title={col === "To Edit" ? "Post date — this is what puts it on the content calendar" : "Deadline (optional)"} />
+                      <DueChip due={i.due} off={i.dueOff} onToggle={() => updateItem(i.id, { dueOff: !i.dueOff })} />
+                      {col === "To Edit" && <button onClick={(e) => { e.stopPropagation(); markPosted(i.id); }} className="rounded-full px-2 py-0.5" style={{ fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", background: `${C.mint}1a`, border: `1px solid ${C.mint}55`, color: C.mint }} title="Log it as posted">✓ Posted</button>}
                     </div>
                     <div className="flex items-center gap-1 mt-1.5"><span className="ml-auto flex gap-1">
                       {col !== "Idea" && <button onClick={(e) => { e.stopPropagation(); move(i.id, -1); }} style={{ ...iconBtn, padding: 2 }} aria-label="Back">←</button>}
-                      {col !== "Ready to Post" && <button onClick={(e) => { e.stopPropagation(); move(i.id, 1); }} style={{ ...iconBtn, padding: 2, color: C.mint }} aria-label="Forward">→</button>}
+                      {CONTENT_COLS.indexOf(col) < CONTENT_COLS.length - 1 && <button onClick={(e) => { e.stopPropagation(); move(i.id, 1); }} style={{ ...iconBtn, padding: 2, color: C.mint }} aria-label="Forward">→</button>}
                       <button onClick={(e) => { e.stopPropagation(); remove(i.id); }} style={{ ...iconBtn, padding: 2 }} aria-label="Delete"><X size={11} /></button>
                     </span></div>
                   </div>
@@ -2421,6 +2516,99 @@ function SongModule({ data, setData }) {
             </div>
           </div>
         ); })}
+      </div>
+    </section>
+  );
+}
+
+/* ================= MUSIC =================
+   Two gated chains, each one a straight line: a step only unlocks once the step before it is
+   ticked. Same derived-current-step trick as the old song roadmap — "current" is simply the first
+   step that isn't done, so nothing can get stuck out of sync. */
+function MusicModule({ data, setData }) {
+  const chains = (data.music && data.music.chains) || [];
+  const updateStep = (cid, sid, p) => setData((d) => ({ ...d, music: { ...d.music, chains: d.music.chains.map((c) => (c.id !== cid ? c : { ...c, steps: c.steps.map((st) => (st.id === sid ? { ...st, ...p } : st)) })) } }));
+  const toggleStep = (cid, i) => setData((d) => ({ ...d, music: { ...d.music, chains: d.music.chains.map((c) => {
+    if (c.id !== cid) return c;
+    const was = c.steps[i].status === "done";
+    return { ...c, steps: c.steps.map((st, j) => (j === i ? { ...st, status: was ? "todo" : "done", lastProgress: was ? st.lastProgress : todayISO() } : st)) };
+  }) } }));
+  return (
+    <section>
+      <SectionHead title="Music" sub="Two chains. Each step unlocks the next one — tick what you're on to open what's next." />
+      <div className="grid gap-5" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(430px, 1fr))" }}>
+        {chains.map((chain) => {
+          const total = chain.steps.length;
+          const done = chain.steps.filter((st) => st.status === "done").length;
+          const currentIdx = chain.steps.findIndex((st) => st.status !== "done");
+          return (
+            <div key={chain.id} className="rounded-2xl" style={{ ...card, borderRadius: 18, padding: 20 }}>
+              <div className="flex items-center gap-4 mb-4">
+                <Ring pct={done / total} tint={C.coral} size={56} thick={7} label={`${done}`} />
+                <div className="flex-1 min-w-0">
+                  <div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 18, letterSpacing: "-0.01em" }}>{chain.name}</div>
+                  <div style={{ fontSize: 12, color: MUT }}>{chain.sub}</div>
+                  <div style={{ fontSize: 11.5, color: currentIdx === -1 ? C.mint : C.coral, marginTop: 3, fontWeight: 600 }}>{currentIdx === -1 ? "Chain complete ✓" : `Now: ${chain.steps[currentIdx].name}`}</div>
+                </div>
+              </div>
+              <div className="flex flex-col">
+                {chain.steps.map((st, i) => {
+                  const isDone = st.status === "done", isCurrent = !isDone && i === currentIdx, isLocked = !isDone && !isCurrent;
+                  const tint = isDone ? C.mint : isCurrent ? C.coral : FAINT;
+                  return (
+                    <div key={st.id} className="flex gap-3" style={{ opacity: isLocked ? 0.6 : 1 }}>
+                      <div className="flex flex-col items-center" style={{ width: 34, flexShrink: 0 }}>
+                        <button onClick={() => toggleStep(chain.id, i)} aria-label={isDone ? "Mark not done" : "Mark done"}
+                          title={isLocked ? "Locked — finish the step above first (click anyway to skip ahead)" : isDone ? "Mark not done" : "Mark done"}
+                          style={{ width: 32, height: 32, borderRadius: 11, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", background: isDone ? C.mint : isCurrent ? `${tint}22` : C.card, border: `1px solid ${isDone ? C.mint : isCurrent ? tint : LINE}`, fontFamily: "'Bricolage Grotesque', sans-serif", fontSize: 13, fontWeight: 600, color: isDone ? "#fff" : isCurrent ? tint : MUT }}>
+                          {isDone ? <Check size={15} strokeWidth={3} /> : isLocked ? <Lock size={13} /> : i + 1}
+                        </button>
+                        {i < total - 1 && <div style={{ width: 2, flex: 1, minHeight: 20, background: isDone ? `${C.mint}66` : LINE }} />}
+                      </div>
+                      <div data-nav-id={st.id} className="rounded-2xl flex-1 mb-3" style={{ ...cardSoft, borderRadius: 14, borderLeft: `3px solid ${tint}`, padding: 13, background: isCurrent ? `${tint}0d` : cardSoft.background }}>
+                        <div className="flex items-start gap-2 flex-wrap">
+                          <div className="flex-1" style={{ minWidth: 150, fontSize: 13.5, textDecoration: isDone ? "line-through" : "none" }}><InlineEdit value={st.name} onChange={(v) => updateStep(chain.id, st.id, { name: v })} strong /></div>
+                          <span className="rounded-full px-2.5 py-0.5" style={{ fontSize: 10, fontWeight: 600, background: `${tint}1e`, border: `1px solid ${tint}55`, color: tint, whiteSpace: "nowrap" }}>{isDone ? "Done" : isCurrent ? "Current" : "Locked"}</span>
+                        </div>
+                        <div style={{ fontSize: 12, color: MUT, margin: "3px 0 6px" }}>{st.desc}</div>
+                        {st.kind === "route" && (
+                          <div className="flex gap-2 mb-2 flex-wrap">
+                            {(st.options || []).map((r) => (
+                              <button key={r} onClick={() => updateStep(chain.id, st.id, { route: st.route === r ? "" : r })} className="rounded-full px-3 py-1"
+                                style={{ fontSize: 11.5, cursor: "pointer", fontFamily: "inherit", background: st.route === r ? `${C.coral}22` : FILL, border: `1px solid ${st.route === r ? C.coral : LINE}`, color: st.route === r ? C.coral : MUT }}>{r}{st.route === r ? " ✓" : ""}</button>
+                            ))}
+                          </div>
+                        )}
+                        <InlineEdit value={st.note} onChange={(v) => updateStep(chain.id, st.id, { note: v })} placeholder="Notes…" dim />
+                        {isCurrent && <PriorityControls item={st} onChange={(p) => updateStep(chain.id, st.id, p)} />}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+/* ================= SERIES (Adam Thal Project) =================
+   A single long writing surface for the screenplay. Same rich-text box as the script fields, so
+   pasted formatting survives, and it saves as you type like everything else here. */
+function SeriesModule({ data, setData }) {
+  const series = data.series || { title: "The Adam Thal Project", doc: "", docHtml: false };
+  const patch = (p) => setData((d) => ({ ...d, series: { ...(d.series || {}), ...p } }));
+  const words = (series.doc || "").replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").trim().split(/\s+/).filter(Boolean).length;
+  return (
+    <section>
+      <SectionHead title="Adam Thal Project" sub="The screenplay. Write straight into the page — it saves as you type." action={<span style={{ fontSize: 11.5, color: MUT, whiteSpace: "nowrap" }}>{words} words</span>} />
+      <div className="rounded-2xl" style={{ ...card, borderRadius: 18, padding: "26px 28px", minHeight: "calc(100vh - 250px)" }}>
+        <div style={{ fontSize: 24, fontWeight: 700, marginBottom: 16, fontFamily: "'Bricolage Grotesque', sans-serif" }}>
+          <InlineEdit value={series.title || ""} onChange={(v) => patch({ title: v })} placeholder="Working title…" strong />
+        </div>
+        <ScriptBox value={series.doc || ""} isHtml={!!series.docHtml} placeholder="Start writing the screenplay…" open big onFocus={() => {}} onChange={(v) => patch({ doc: v, docHtml: true })} onToggle={() => {}} />
       </div>
     </section>
   );
