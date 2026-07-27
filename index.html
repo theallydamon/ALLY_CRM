@@ -2014,10 +2014,10 @@ function PriorityControls({ item, onChange, hideDue }) {
           then brings it back flagged and High so a silent reply can't quietly bury it. */}
       <button onClick={(e) => { e.stopPropagation(); onChange(item.chaseOn ? { chaseOn: null } : { chaseOn: shiftISO(todayISO(), 3) }); }} className="flex items-center gap-1 rounded-full px-2 py-0.5"
         style={{ fontSize: 10, cursor: "pointer", fontFamily: "inherit", background: item.chaseOn ? `${C.sky}22` : FILL, border: `1px solid ${item.chaseOn ? C.sky : LINE}`, color: item.chaseOn ? C.sky : MUT, whiteSpace: "nowrap" }}
-        title="Waiting on a reply — hides this from the dashboard until the chase date, then brings it back flagged">waiting on reply</button>
+        title="Waiting on a reply — pauses priority until the follow up date, then restores it as due">waiting on reply</button>
       {item.chaseOn && (
         <span className="flex items-center gap-1" style={{ fontSize: 10, color: C.sky, whiteSpace: "nowrap" }}>
-          chase by
+          follow up
           <input type="date" value={item.chaseOn} onClick={(e) => e.stopPropagation()} onChange={(e) => onChange({ chaseOn: e.target.value || null })} className="rounded-md" style={{ ...darkInput, fontSize: 10.5, padding: "3px 5px" }} aria-label="Chase date" />
         </span>
       )}
@@ -2253,7 +2253,7 @@ function ContentModule({ data, setData, q }) {
   const [subtab, setSubtab] = useState("content");
   const [calendarFocus, setCalendarFocus] = useState(null);
   const tabs = [
-    { id: "content", label: "Content" },
+    { id: "content", label: "Board" },
     { id: "brandDeals", label: "Brand Deals" },
     { id: "calendar", label: "Content Calendar" },
   ];
@@ -2267,11 +2267,10 @@ function ContentModule({ data, setData, q }) {
   const patchFocused = (p) => setData((d) => ({ ...d, [calendarFocus.pipelineKey]: { ...d[calendarFocus.pipelineKey], items: d[calendarFocus.pipelineKey].items.map((z) => (z.id === calendarFocus.id ? { ...z, ...p } : z)) } }));
   return (
     <section style={{ width: "100%", margin: 0, textAlign: "left" }}>
-      <SectionHead title="Content" />
       <nav className="flex gap-2 mb-6 flex-wrap w-full" style={{ justifyContent: "flex-start" }}>
         {tabs.map((tab) => <button key={tab.id} onClick={() => setSubtab(tab.id)} className="rounded-full px-4 py-2" style={{ background: subtab === tab.id ? C.dark : C.card, border: `1px solid ${subtab === tab.id ? C.dark : LINE}`, color: subtab === tab.id ? C.canvas : C.ink, cursor: "pointer", fontSize: 14, fontWeight: subtab === tab.id ? 600 : 400, fontFamily: "inherit" }}>{tab.label}</button>)}
       </nav>
-      {subtab === "content" && <ContentPipeline data={data} setData={setData} q={q} pipelineKey="content" heading="Content" />}
+      {subtab === "content" && <ContentPipeline data={data} setData={setData} q={q} pipelineKey="content" heading={null} />}
       {subtab === "brandDeals" && <ContentPipeline data={data} setData={setData} q={q} pipelineKey="brandContent" heading="Brand Deals" />}
       {subtab === "calendar" && <ContentCalendar scheduled={scheduled} onOpen={openCalendarItem} />}
       {calendarFocus && (() => {
@@ -2352,7 +2351,7 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
 
   return (
     <section style={{ width: "100%", margin: 0, textAlign: "left" }}>
-      <SectionHead title={heading} />{expandedId && (() => { const item = content.items.find((z) => z.id === expandedId); if (!item) return null; return (<div onClick={() => { if (hasTextSelection()) return; setExpandedId(null); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}><div onClick={(e) => e.stopPropagation()} style={{ ...card, borderRadius: 16, padding: 20, width: "100%", maxWidth: 640, maxHeight: "85vh", display: "flex", flexDirection: "column", gap: 10, overflow: "auto" }}><div className="flex items-center gap-2"><div className="flex-1 min-w-0"><InlineEdit value={item.title} onChange={(v) => updateItem(item.id, { title: v })} strong /></div>{item.status === "Scheduled" && <button onClick={() => { updateItem(item.id, { status: "Ready to Post", due: null, scheduledAt: null }); setExpandedId(null); setTimeout(() => scrollAndHighlight(item.id), 90); }} style={{ ...iconBtn, padding: "5px 8px", border: "1px solid " + LINE, borderRadius: 8, fontSize: 10.5, color: C.sky }} title="Move back to Ready to Post">Unschedule and reschedule</button>}<button onClick={() => setExpandedId(null)} style={{ ...iconBtn, padding: 4 }} aria-label="Close"><X size={14} /></button></div><ScriptBox value={item.desc || ""} isHtml={!!item.descHtml} open big onFocus={() => openIfNot(item.id)} onChange={(v) => updateItem(item.id, { desc: v, descHtml: true })} onToggle={() => {}} /></div></div>); })()}
+      {heading && <SectionHead title={heading} />}{expandedId && (() => { const item = content.items.find((z) => z.id === expandedId); if (!item) return null; return (<div onClick={() => { if (hasTextSelection()) return; setExpandedId(null); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}><div onClick={(e) => e.stopPropagation()} style={{ ...card, borderRadius: 16, padding: 20, width: "100%", maxWidth: 640, maxHeight: "85vh", display: "flex", flexDirection: "column", gap: 10, overflow: "auto" }}><div className="flex items-center gap-2"><div className="flex-1 min-w-0"><InlineEdit value={item.title} onChange={(v) => updateItem(item.id, { title: v })} strong /></div>{item.status === "Scheduled" && <button onClick={() => { updateItem(item.id, { status: "Ready to Post", due: null, scheduledAt: null }); setExpandedId(null); setTimeout(() => scrollAndHighlight(item.id), 90); }} style={{ ...iconBtn, padding: "5px 8px", border: "1px solid " + LINE, borderRadius: 8, fontSize: 10.5, color: C.sky }} title="Move back to Ready to Post">Unschedule and reschedule</button>}<button onClick={() => setExpandedId(null)} style={{ ...iconBtn, padding: 4 }} aria-label="Close"><X size={14} /></button></div><ScriptBox value={item.desc || ""} isHtml={!!item.descHtml} open big onFocus={() => openIfNot(item.id)} onChange={(v) => updateItem(item.id, { desc: v, descHtml: true })} onToggle={() => {}} /></div></div>); })()}
 
       {/* compact stat bar: since-post ring + message + inline legend, no separate donut card.
           The since-post runway clock is only meaningful for the personal content cadence, so it is
@@ -2437,6 +2436,7 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
                       <DueChip due={i.due} off={i.dueOff} onToggle={() => updateItem(i.id, { dueOff: !i.dueOff })} />
                       {col === "To Edit" && <button onClick={(e) => { e.stopPropagation(); markPosted(i.id); }} className="rounded-full px-2 py-0.5" style={{ fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", background: `${C.mint}1a`, border: `1px solid ${C.mint}55`, color: C.mint }} title="Log it as posted">✓ Posted</button>}
                     </div>
+                    <PriorityControls item={i} onChange={(p) => updateItem(i.id, p)} hideDue />
                     <div className="flex items-center gap-1 mt-1.5"><span className="ml-auto flex gap-1">
                       {col !== "Idea" && <button onClick={(e) => { e.stopPropagation(); move(i.id, -1); }} style={{ ...iconBtn, padding: 2 }} aria-label="Back">←</button>}
                       {CONTENT_COLS.indexOf(col) < CONTENT_COLS.length - 1 && <button onClick={(e) => { e.stopPropagation(); move(i.id, 1); }} style={{ ...iconBtn, padding: 2, color: C.mint }} aria-label="Forward">→</button>}
@@ -2560,9 +2560,33 @@ function MusicModule({ data, setData }) {
     const was = c.steps[i].status === "done";
     return { ...c, steps: c.steps.map((st, j) => (j === i ? { ...st, status: was ? "todo" : "done", lastProgress: was ? st.lastProgress : todayISO() } : st)) };
   }) } }));
+  const totalSteps = chains.reduce((sum, chain) => sum + chain.steps.length, 0);
+  const doneSteps = chains.reduce((sum, chain) => sum + chain.steps.filter((step) => step.status === "done").length, 0);
+  const currentSteps = chains.map((chain) => {
+    const index = chain.steps.findIndex((step) => step.status !== "done");
+    return index === -1 ? null : { chain, index, step: chain.steps[index] };
+  }).filter(Boolean);
   return (
     <section>
-      <SectionHead title="Music" sub="Two chains. Each step unlocks the next one — tick what you're on to open what's next." />
+      <SectionHead title="Music dashboard" sub="Your live Music roadmap, with the next move from every chain in one place." />
+      <div className="rounded-2xl mb-5" style={{ ...card, borderRadius: 18, padding: 20 }}>
+        <div className="flex items-center gap-4 flex-wrap">
+          <Ring pct={totalSteps ? doneSteps / totalSteps : 0} tint={C.coral} size={74} thick={9} label={totalSteps ? doneSteps + "/" + totalSteps : "—"} />
+          <div className="flex-1" style={{ minWidth: 220 }}>
+            <div style={{ fontSize: 12, color: MUT, textTransform: "uppercase", letterSpacing: "0.06em" }}>Current focus</div>
+            <div className="flex flex-col gap-2 mt-2">
+              {currentSteps.map(({ chain, index, step }) => (
+                <div key={step.id} className="flex items-center gap-2 flex-wrap" style={{ fontSize: 13 }}>
+                  <button onClick={() => toggleStep(chain.id, index)} style={{ ...iconBtn, color: C.mint, border: "1px solid " + C.mint + "55", borderRadius: 7, padding: "3px 6px" }} title="Mark done"><Check size={12} /></button>
+                  <span style={{ color: C.coral, fontSize: 11, fontWeight: 600 }}>{chain.name}</span>
+                  <span style={{ fontWeight: 600 }}>{step.name}</span>
+                </div>
+              ))}
+              {currentSteps.length === 0 && <span style={{ color: C.mint, fontSize: 13 }}>Every Music chain is complete.</span>}
+            </div>
+          </div>
+        </div>
+      </div>
       <div className="grid gap-5" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(430px, 1fr))" }}>
         {chains.map((chain) => {
           const total = chain.steps.length;
