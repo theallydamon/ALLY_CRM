@@ -3211,7 +3211,7 @@ function MamaModule({ data, setData, q, navRequest, navigateToTask, completeTask
                     computePillarFillPercent score them exactly like every other pillar. */
 function MamaTaskDashboard({ data, setData, setSub, navigateToTask, completeTask }) {
   const creatorTasks = data.creators.flatMap((cr) => (cr.tasks || []).filter((t) => !t.done && !t.paused).map((t) => ({ ...t, ...computeUrgency(t), title: `${t.title} (${cr.name})`, sourceType: "mamaCreator", navTab: "mama", navSub: "creators", navOpenId: cr.id })));
-  const adminTasksList = (data.tasks || []).filter((t) => !t.done && !t.paused).map((t) => ({ ...t, ...computeUrgency(t), sourceType: "mamaAdmin", navTab: "mama", navSub: "adminTasks" }));
+  const adminTasksList = (data.tasks || []).filter((t) => !t.done && t.status !== "Done" && !t.paused).map((t) => ({ ...t, ...computeUrgency(t), sourceType: "mamaAdmin", navTab: "mama", navSub: "adminTasks" }));
 
   const BUCKETS = [
     { key: "creatorTasks", label: "Creator Tasks", emoji: "🧑‍🎤", accent: C.pink, tasks: creatorTasks, sub: "creators" },
