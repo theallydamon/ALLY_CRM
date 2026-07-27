@@ -1012,7 +1012,7 @@ function AllyCRM() {
       if (!a.anchor) a.anchor = ALLY_SEED.anchor;
       a = migrateAlly(a);
       m = { ...m, creators: (m.creators || []).map((c) => c.goals ? c : { ...c, goals: c.goal ? [{ id: uid(), text: c.goal }] : [] }) };
-      m = { ...m, creators: (m.creators || []).map((c) => (c.bio !== undefined && c.nextSteps !== undefined) ? c : { ...c, bio: c.bio || "", nextSteps: c.nextSteps || "" }) };
+      m = { ...m, creators: (m.creators || []).map((c) => ({ ...c, bio: c.bio || "", nextSteps: c.nextSteps || "", notes: typeof c.notes === "string" ? c.notes : Array.isArray(c.notes) ? c.notes.map((n) => typeof n === "string" ? n : (n && n.text) || "").filter(Boolean).join("\n") : "" })) };
       m = { ...m, tasks: (m.tasks || []).map((t) => t.description !== undefined ? t : { ...t, description: "" }) };
       /* admin tasks used to carry one single `link` string, only editable via the pencil-toggle —
          now they carry a `links` array (add new ones any time, none overwriting the last, same
@@ -1092,6 +1092,25 @@ function AllyCRM() {
     })();
   }, [user, localLoaded]);
 
+  /* Creator records carry their own edit time so an older browser session cannot overwrite a
+     newer creator note by saving the full Mama record. Other Mama fields keep their local value,
+     while each creator is resolved independently in favour of the newest edit. */
+  const mergeMamaCreators = (remoteMama, localMama) => {
+    const remote = remoteMama || {};
+    const local = localMama || {};
+    const remoteById = new Map((remote.creators || []).map((creator) => [creator.id, creator]));
+    const localById = new Map((local.creators || []).map((creator) => [creator.id, creator]));
+    const ids = [...localById.keys(), ...[...remoteById.keys()].filter((id) => !localById.has(id))];
+    const creators = ids.map((id) => {
+      const remoteCreator = remoteById.get(id);
+      const localCreator = localById.get(id);
+      if (!remoteCreator) return localCreator;
+      if (!localCreator) return remoteCreator;
+      return Number(localCreator.updatedAt || 0) > Number(remoteCreator.updatedAt || 0) ? localCreator : remoteCreator;
+    });
+    return { ...remote, ...local, creators };
+  };
+
   /* ongoing sync: same debounce shape as the localStorage save below, just a bit longer since
      it's a network write, and only once the initial reconcile above has actually happened. */
   useEffect(() => {
@@ -1099,7 +1118,15 @@ function AllyCRM() {
     setCloudState("saving"); clearTimeout(cloudTimer.current);
     cloudTimer.current = setTimeout(async () => {
       try {
-        await fbDb.collection("users").doc(user.uid).set({ ally, mama, updatedAt: Date.now() });
+        const docRef = fbDb.collection("users").doc(user.uid);
+        const mergedMama = await fbDb.runTransaction(async (transaction) => {
+          const snapshot = await transaction.get(docRef);
+          const remoteMama = snapshot.exists ? snapshot.data().mama : null;
+          const resolvedMama = mergeMamaCreators(remoteMama, mama);
+          transaction.set(docRef, { ally, mama: resolvedMama, updatedAt: Date.now() });
+          return resolvedMama;
+        });
+        if (JSON.stringify(mergedMama) !== JSON.stringify(mama)) setMama(mergedMama);
         setCloudState("synced");
       } catch (e) { setCloudState("error"); }
     }, 600);
@@ -3283,9 +3310,9 @@ function Creators({ data, setData, q, navRequest }) {
     if (navRequest && navRequest.navTab === "mama" && navRequest.navSub === "creators" && navRequest.navOpenId) setSelectedId(navRequest.navOpenId);
   }, [navRequest]);
   const ql = (q || "").toLowerCase();
-  const update = (id, patch) => setData((d) => ({ ...d, creators: d.creators.map((c) => (c.id === id ? { ...c, ...patch } : c)) }));
+  const update = (id, patch) => setData((d) => ({ ...d, creators: d.creators.map((c) => (c.id === id ? { ...c, ...patch, updatedAt: Date.now() } : c)) }));
   const remove = (id) => setData((d) => ({ ...d, creators: d.creators.filter((c) => c.id !== id) }));
-  const add = () => { const c = { id: uid(), name: "New creator", niche: "", bio: "", nextSteps: "", goals: [], aura: Math.floor(Math.random() * AURAS.length), links: [], notes: [], tasks: [] }; setData((d) => ({ ...d, creators: [c, ...d.creators] })); setSelectedId(c.id); };
+  const add = () => { const c = { id: uid(), name: "New creator", niche: "", bio: "", nextSteps: "", goals: [], aura: Math.floor(Math.random() * AURAS.length), links: [], notes: "", tasks: [], updatedAt: Date.now() }; setData((d) => ({ ...d, creators: [c, ...d.creators] })); setSelectedId(c.id); };
   const onRemove = (id) => {
     remove(id);
     if (selectedId === id) { const rest = data.creators.filter((c) => c.id !== id); setSelectedId(rest[0] ? rest[0].id : null); }
@@ -3337,6 +3364,10 @@ function CreatorDetailPage({ c, onUpdate, onRemove }) {
         <div className="rounded-2xl p-4" style={{ ...card, borderRadius: 18 }}>
           <Label text="Bio" />
           <AutoTextarea value={c.bio || ""} onChange={(v) => onUpdate({ bio: v })} placeholder="Who they are, what they're about…" />
+        </div>
+        <div className="rounded-2xl p-4" style={{ ...card, borderRadius: 18 }}>
+          <Label text="Notes" />
+          <AutoTextarea value={c.notes || ""} onChange={(v) => onUpdate({ notes: v })} placeholder="Meeting notes, context, and follow ups…" />
         </div>
         <div className="rounded-2xl p-4" style={{ ...card, borderRadius: 18 }}>
           <div className="flex items-center justify-between"><Label text={`Goal${c.goals.length > 1 ? "s" : ""}`} /><button onClick={() => onUpdate({ goals: [...c.goals, { id: uid(), text: "" }] })} style={{ ...iconBtn, color: aura, fontSize: 11, display: "flex", alignItems: "center", gap: 3 }}><Plus size={11} /> Add goal</button></div>
