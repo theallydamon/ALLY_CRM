@@ -620,7 +620,7 @@ Items with neither date keep inheriting the shared pillar-wide posting-countdown
 as before, purely so they still contribute to that pillar's open-task badge count. */
 const pushContentTasks = (items, pillarKey, urgency) => {
 items.forEach((i) => {
-const inProgress = i.status === "To Film" || i.status === "To Edit";
+const inProgress = i.status === "To Film" || i.status === "To Edit" || i.status === "Ideas";
 let any = false;
 if (inProgress && i.due && !i.dueOff) {
 out.push({ id: i.id, pillar: pillarKey, title: i.title, due: i.due, priority: i.priority || "Medium", lastProgress: null, created: i.created || null });
