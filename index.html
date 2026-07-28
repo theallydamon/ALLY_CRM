@@ -1617,7 +1617,7 @@ function setPillarItemPriority(setAlly, setMama, pillar, id, patch) {
     setMama((d) => ({
       ...d,
       tasks: d.tasks.map((t) => (t.id === id ? { ...t, ...patch } : t)),
-      creators: d.creators.map((cr) => ((cr.tasks || []).some((t) => t.id === id) ? { ...cr, tasks: cr.tasks.map((t) => (t.id === id ? { ...t, ...patch } : t)) } : cr)),
+      creators: d.creators.map((cr) => ((cr.tasks || []).some((t) => t.id === id) ? { ...cr, tasks: cr.tasks.map((t) => (t.id === id ? { ...t, ...patch } : t)), updatedAt: Date.now() } : cr)),
     }));
     return;
   }
@@ -1663,7 +1663,7 @@ function completePriorityTask(setAlly, setMama, task) {
       setMama((d) => ({ ...d, tasks: d.tasks.map((t) => (t.id === task.id ? { ...t, status: "Done", doneAt: now } : t)) }));
       return;
     case "mamaCreator":
-      setMama((d) => ({ ...d, creators: d.creators.map((cr) => ((cr.tasks || []).some((t) => t.id === task.id) ? { ...cr, tasks: cr.tasks.map((t) => (t.id === task.id ? { ...t, done: true, doneAt: now } : t)) } : cr)) }));
+      setMama((d) => ({ ...d, creators: d.creators.map((cr) => ((cr.tasks || []).some((t) => t.id === task.id) ? { ...cr, tasks: cr.tasks.map((t) => (t.id === task.id ? { ...t, done: true, doneAt: now } : t)), updatedAt: now } : cr)) }));
       return;
 /* content's two hub lists ("To Film" deadlines, "To Edit" deadlines) each have their own
        "done" mechanism on the Content tab itself: ticking a "To Film" item advances it straight
@@ -3247,7 +3247,7 @@ function MamaTaskDashboard({ data, setData, setSub, navigateToTask, completeTask
   const total = creatorTasks.length + adminTasksList.length;
 
   const updateByBucket = {
-    creatorTasks: (id, patch) => setData((d) => ({ ...d, creators: d.creators.map((cr) => ({ ...cr, tasks: (cr.tasks || []).map((t) => (t.id === id ? { ...t, ...patch } : t)) })) })),
+    creatorTasks: (id, patch) => setData((d) => ({ ...d, creators: d.creators.map((cr) => ({ ...cr, tasks: (cr.tasks || []).map((t) => (t.id === id ? { ...t, ...patch } : t)), updatedAt: Date.now() })) })),
     adminTasksBucket: (id, patch) => setData((d) => ({ ...d, tasks: d.tasks.map((t) => (t.id === id ? { ...t, ...patch } : t)) })),
   };
 
