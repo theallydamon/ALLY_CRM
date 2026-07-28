@@ -369,6 +369,9 @@ const MODULES = {
   mama:      { emoji: "💼", label: "MAMA",      accent: C.brown, bg: C.brownBg },
   deals:     { emoji: "🤝", label: "Deals",     accent: C.pink,  bg: C.pinkBg },
 };
+/* pseudo-module descriptor for the Music CONTENT pipeline card/subtab — deliberately not added
+to MODULES itself, since MODULES.music already means the unrelated song-roadmap tab. */
+const MUSIC_CONTENT_MOD = { emoji: "🎵", label: "MUSIC CONTENT", accent: C.lilac, bg: C.lilacBg };
 const TAB_ORDER = ["overview", "content", "mama", "music", "series", "anchor"]; // "deals" pulled for now — re-add here to bring the tab back
 
 /* ---------- storage shim: window.storage in the app, localStorage in the repo ---------- */
@@ -423,6 +426,8 @@ const isApartmentUnlocked = (ally) => !!ally.apartment.unlockedOverride || ally.
 /* ---------- pipeline constants ---------- */
 const CONTENT_COLS = ["Ideas", "To Film", "To Edit"];
 const CONTENT_TINT = { Ideas: C.lilac, "To Film": C.amber, "To Edit": C.mint, "Ready to Post": C.sky, Posted: FAINT };
+const PIPELINE_TINT = { content: C.sky, musicContent: C.lilac, brandContent: C.rose };
+const PIPELINE_LABEL = { content: "Content", musicContent: "Music", brandContent: "Brand deals" };
 
 /* one-time migration: content items saved under the old Scripted/Filmed/Edited/In Edit status names
    get remapped to the current Ideas/To Film/To Edit names, so the label shown on screen always matches
@@ -434,7 +439,7 @@ function migrateAlly(a) {
   if (!a) return a;
   let out = a;
   if (out.content && Array.isArray(out.content.items)) {
-    out = { ...out, content: { ...out.content, items: out.content.items.map((i) => CONTENT_STATUS_MIGRATE[i.status] ? { ...i, status: CONTENT_STATUS_MIGRATE[i.status] } : i) } };
+    out = { ...out, content: { ...out.content, items: out.content.items.map((i) => ({ ...(CONTENT_STATUS_MIGRATE[i.status] ? { ...i, status: CONTENT_STATUS_MIGRATE[i.status] } : i), scheduledFor: i.scheduledFor !== undefined ? i.scheduledFor : null })) } };
   }
   /* Anchor moved from one running text box to a per-day diary (entries keyed by ISO date, one
      string each). Fold any old single `idea` string in once, landing it on today's date so nothing
@@ -446,7 +451,12 @@ function migrateAlly(a) {
   if (!out.brandContent || !Array.isArray(out.brandContent.items)) {
     out = { ...out, brandContent: { items: [] } };
   } else {
-    out = { ...out, brandContent: { items: out.brandContent.items.map((i) => CONTENT_STATUS_MIGRATE[i.status] ? { ...i, status: CONTENT_STATUS_MIGRATE[i.status] } : i) } };
+    out = { ...out, brandContent: { items: out.brandContent.items.map((i) => ({ ...(CONTENT_STATUS_MIGRATE[i.status] ? { ...i, status: CONTENT_STATUS_MIGRATE[i.status] } : i), scheduledFor: i.scheduledFor !== undefined ? i.scheduledFor : null })) } };
+}
+if (!out.musicContent || !Array.isArray(out.musicContent.items)) {
+out = { ...out, musicContent: { lastPosted: null, cadence: 4, items: [] } };
+} else {
+out = { ...out, musicContent: { ...out.musicContent, cadence: out.musicContent.cadence || 4, items: out.musicContent.items.map((i) => ({ ...(CONTENT_STATUS_MIGRATE[i.status] ? { ...i, status: CONTENT_STATUS_MIGRATE[i.status] } : i), scheduledFor: i.scheduledFor !== undefined ? i.scheduledFor : null })) } };
   }
   /* Unlocks pillar cleanup: drop the standalone Vitality column (its 4 benefits go with it,
      Vitality remains the background engine described in keystoneNote, just not its own card),
@@ -516,7 +526,7 @@ const MIX_ROUTES = ["Fiverr", "Crighton", "Cassidy's boyfriend", "DIY"];
 const SOURCES = ["Discord", "Basecamp", "Email", "Sheets", "Meeting", "Self"];
 const SOURCE_TINT = { Discord: C.lilac, Basecamp: C.amber, Email: C.sky, Sheets: C.mint, Meeting: C.pink, Self: C.peach };
 const TASK_COLS = ["To do", "Doing", "Done"];
-const PRIORITY_PILLARS = ["mama", "content", "lifeAdmin"]; // "deals" pulled for now — re-add here to bring its priority card back
+const PRIORITY_PILLARS = ["mama", "content", "music", "lifeAdmin"]; // "deals" pulled for now — re-add here to bring its priority card back
 
 /* ---------- priority engine: shared urgency scoring across all 6 pillars ---------- */
 const PRIORITY_LEVELS = ["Low", "Medium", "High"];
@@ -580,48 +590,55 @@ function computeUrgency(item) {
      due 3+ days out       -> 5
    These are summed (additive) across every dated To Film/To Edit item, then added to the base. A
    disabled deadline (dueOff) and anything already Posted contribute nothing. */
-function contentDueWeight(daysUntilDue) {
-  if (daysUntilDue === null || daysUntilDue === undefined) return 0;
-  if (daysUntilDue <= 0) return 15; // due today or overdue (flat)
-  if (daysUntilDue <= 2) return 10; // due in 1-2 days
-  return 5;                          // due 3+ days out
-}
+/* the posting-countdown ring: purely how long it has been since you last posted anything in
+this pipeline, scaled by that pipeline's own cadence (content = 3 days, music = 4 days since
+that is a twice-a-week rhythm). 1 day since post on a 3-day cadence = 33% full, on a 4-day
+cadence (music) = 25% full, and it keeps climbing past 100% into an overflow/critical state if
+you let it run. This used to also blend in a load from dated To Film/To Edit items, but that is
+now its own separate Tasks ring (see computePillarFillPercent), so this stays a clean, single
+signal: only how stale the pipeline's last post is. */
 function computeContentUrgency(content) {
-  const since = daysSince(content.lastPosted);
-  const basePct = since === null ? 40 : since * 33;
-  const deadlineLoad = (content.items || []).reduce((sum, i) => {
-    if (!i.due || i.dueOff || i.status === "Posted") return sum;
-    if (i.status !== "To Film" && i.status !== "To Edit") return sum;
-    return sum + contentDueWeight(daysUntil(i.due));
-  }, 0);
-  const pct = basePct + deadlineLoad;
-  const bucket = pct > 80 ? "Urgent" : pct >= 40 ? "Medium" : "Low";
-  const score = Math.round((1 + (Math.min(pct, 100) / 100) * 5) * 10) / 10;
-  return { score, bucket, pct, since };
+const since = daysSince(content.lastPosted);
+const cadence = content.cadence || 3;
+const pct = since === null ? 40 : (since / cadence) * 100;
+const bucket = pct > 80 ? "Urgent" : pct >= 40 ? "Medium" : "Low";
+const score = Math.round((1 + (Math.min(pct, 100) / 100) * 5) * 10) / 10;
+return { score, bucket, pct, since };
 }
-
 /* pulls every outstanding item from all 6 pillars into one flat, scored list.
    unlocks pulls from two sources: Discovery ecosystem benefits currently "in progress",
    and the linear chain steps (apartment / car ownership) currently "active". */
 function collectPriorityTasks(ally, mama) {
   const out = [];
   {
-    /* the pillar-wide days-since-last-post signal (computeContentUrgency) still governs the
-       Content ring on the main hub untouched — nothing below affects it. Individual ideas can now
-       optionally carry their own deadline though, and once one is set that item is scored like
-       every other pillar's tasks (the trailing computeUrgency pass at the bottom of this function
-       handles it, same as deals/song/mama/unlocks below — it's skipped only for _preScored items).
-       Ideas with no deadline keep inheriting the shared pillar-wide score exactly as before. */
-    const cu = computeContentUrgency(ally.content);
-    ally.content.items.forEach((i) => {
-      if (i.due && !i.dueOff && !i.filmed && (i.status === "To Film" || i.status === "To Edit")) {
-        out.push({ id: i.id, pillar: "content", title: i.title, due: i.due, priority: "Medium", lastProgress: null, created: i.created || null });
-      } else {
-        out.push({ id: i.id, pillar: "content", title: i.title, due: null, lastProgress: null, created: i.created || null, score: cu.score, bucket: cu.bucket, daysUntilDue: null, daysSinceProgress: null, _preScored: true });
-      }
-    });
-  }
-  /* each active deal surfaces its CURRENT stage as the hub task: a Reel shows the current
+    /* each content-style pipeline (content, music) has its own posting-countdown ring
+(computeContentUrgency) untouched by anything below. Items can now carry two independent
+optional dates: `due` (get the current stage's work done by) and `scheduledFor` (when it
+should post — this is what puts it on the Content Calendar). Either, both, or neither can be
+set; each live date becomes its own task here so both get their own nag on the dashboard.
+Items with neither date keep inheriting the shared pillar-wide posting-countdown score exactly
+as before, purely so they still contribute to that pillar's open-task badge count. */
+const pushContentTasks = (items, pillarKey, urgency) => {
+items.forEach((i) => {
+const inProgress = i.status === "To Film" || i.status === "To Edit";
+let any = false;
+if (inProgress && i.due && !i.dueOff) {
+out.push({ id: i.id, pillar: pillarKey, title: i.title, due: i.due, priority: i.priority || "Medium", lastProgress: null, created: i.created || null });
+any = true;
+}
+if (inProgress && i.scheduledFor) {
+out.push({ id: i.id + "-sched", pillar: pillarKey, title: "Post: " + i.title, due: i.scheduledFor, priority: i.priority || "Medium", lastProgress: null, created: i.created || null });
+any = true;
+}
+if (!any) {
+out.push({ id: i.id, pillar: pillarKey, title: i.title, due: null, lastProgress: null, created: i.created || null, score: urgency.score, bucket: urgency.bucket, daysUntilDue: null, daysSinceProgress: null, _preScored: true });
+}
+});
+};
+pushContentTasks(ally.content.items, "content", computeContentUrgency(ally.content));
+pushContentTasks(ally.musicContent.items, "music", computeContentUrgency(ally.musicContent));
+}
+/* each active deal surfaces its CURRENT stage as the hub task: a Reel shows the current
      production stage ("Write script (Brand)", "Film + edit (Brand)"...) with that stage's own
      deadline; a Story shows "Post story (Brand)" with its single deadline. Done deals drop out. */
   ally.deals.deals.filter((d) => (d.type || "Active") === "Active" && (d.stage || "script") !== "done" && !d.paused).forEach((d) => {
@@ -694,7 +711,7 @@ function urgencyTint(pct) {
    to end up looking silly. A pillar that's truly overloaded still reads past 100%, that's intentional
    (it's meant to look like "more than a full day"), it just takes a lot more piled up to get there
    now instead of two or three items alone doing it. */
-const PRIORITY_BASE_PCT = { Low: 1, Medium: 2.5, High: 5 };
+const PRIORITY_BASE_PCT = { Low: 1, Medium: 5, High: 10 };
 /* once something is actually overdue (not just due today), it keeps escalating: +5 percentage
    points for every extra day past its due date, stacked on top of the flat priority contribution
    above. So a High-priority task due today still reads as 5%, same as always, but let it slip to
@@ -771,6 +788,7 @@ function Bar({ pct, tint }) {
 const ALLY_SEED = {
   content: { lastPosted: null, cadence: 3, items: [] },
   brandContent: { items: [] },
+musicContent: { lastPosted: null, cadence: 4, items: [] },
   anchor: { entries: {} },
   song: {
     stages: [
@@ -1555,7 +1573,7 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
           <div className="scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "28px 36px", display: "flex", flexDirection: "column", alignItems: "center" }}>
             <div style={{ width: "100%", maxWidth: 1360, margin: 0, paddingBottom: 44 }}>
               {tab === "overview" && <PersonalModule ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} q={q} navRequest={navRequest} navigateToTask={navigateToTask} completeTask={completeTask} />}
-              {tab === "content" && <ContentModule data={ally} setData={setAlly} q={q} />}
+              {tab === "content" && <ContentModule data={ally} setData={setAlly} q={q} navRequest={navRequest} />}
               {tab === "anchor" && <AnchorModule data={ally} setData={setAlly} />}
               {tab === "music" && <MusicModule data={ally} setData={setAlly} />}
               {tab === "series" && <SeriesModule data={ally} setData={setAlly} />}
@@ -1679,7 +1697,13 @@ function completePriorityTask(setAlly, setMama, task) {
     case "contentToEdit":
       setAlly((d) => ({ ...d, content: { ...d.content, items: d.content.items.map((i) => (i.id === task.id ? { ...i, status: "Ready to Post", due: null } : i)) } }));
       return;
-    case "lifeAdmin":
+    case "musicToFilm":
+setAlly((d) => ({ ...d, musicContent: { ...d.musicContent, items: d.musicContent.items.map((i) => (i.id === task.id ? { ...i, status: "To Edit", due: null } : i)) } }));
+return;
+case "musicToEdit":
+setAlly((d) => ({ ...d, musicContent: { ...d.musicContent, items: d.musicContent.items.map((i) => (i.id === task.id ? { ...i, status: "Ready to Post", due: null } : i)) } }));
+return;
+case "lifeAdmin":
       setAlly((d) => ({ ...d, lifeAdmin: { ...d.lifeAdmin, items: d.lifeAdmin.items.map((t) => (t.id === task.id ? { ...t, status: "Done", doneAt: now } : t)) } }));
       return;
   }
@@ -1749,33 +1773,41 @@ function PersonalModule({ ally, mama, setAlly, setMama, go, q, navRequest, navig
 
 /* ================= PRIORITY DASHBOARD ================= */
 function PriorityDashboard({ ally, mama, go, setAlly, setMama, navigateToTask, completeTask }) {
-  const tasks = collectPriorityTasks(ally, mama);
-  const byPillar = Object.fromEntries(PRIORITY_PILLARS.map((k) => [k, tasks.filter((t) => t.pillar === k)]));
-  const contentUrgency = computeContentUrgency(ally.content);
-  const fillPct = Object.fromEntries(PRIORITY_PILLARS.map((k) => [k, k === "content" ? contentUrgency.pct : computePillarFillPercent(byPillar[k])]));
-  const ranked = [...PRIORITY_PILLARS].sort((a, b) => fillPct[b] - fillPct[a]);
-  const rankOf = Object.fromEntries(ranked.map((k, i) => [k, i + 1]));
-  const onDropPriority = (pillar, id, patch) => setPillarItemPriority(setAlly, setMama, pillar, id, patch);
+const tasks = collectPriorityTasks(ally, mama);
+const byPillar = Object.fromEntries(PRIORITY_PILLARS.map((k) => [k, tasks.filter((t) => t.pillar === k)]));
+const contentPostUrgency = computeContentUrgency(ally.content);
+const musicPostUrgency = computeContentUrgency(ally.musicContent);
+const contentTaskPct = computePillarFillPercent(byPillar.content.filter((t) => !t._preScored));
+const musicTaskPct = computePillarFillPercent(byPillar.music.filter((t) => !t._preScored));
+const fillPct = Object.fromEntries(PRIORITY_PILLARS.map((k) => [k,
+k === "content" ? Math.max(contentTaskPct, contentPostUrgency.pct) :
+k === "music" ? Math.max(musicTaskPct, musicPostUrgency.pct) :
+computePillarFillPercent(byPillar[k])]));
+const ranked = [...PRIORITY_PILLARS].sort((a, b) => fillPct[b] - fillPct[a]);
+const rankOf = Object.fromEntries(ranked.map((k, i) => [k, i + 1]));
+const onDropPriority = (pillar, id, patch) => setPillarItemPriority(setAlly, setMama, pillar, id, patch);
 
-  return (
-    <section>
-      <div style={{ marginBottom: 20 }}>
-        <h1 style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: "clamp(28px,4.5vw,38px)", margin: 0, letterSpacing: "-0.02em" }}>Priorities right now 🎯</h1>
-      </div>
+return (
+<section>
+<div style={{ marginBottom: 20 }}>
+<h1 style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: "clamp(28px,4.5vw,38px)", margin: 0, letterSpacing: "-0.02em" }}>Priorities right now 🎯</h1>
+</div>
 
-      {/* every pillar gets its own independent ring, ranked left to right by how full it is.
-          min-width 360 (vs the 280 other grids in the app use) keeps this specific grid at 3
-          per row instead of 4 on a full-width screen, still auto-fit so it still reflows down
-          to fewer columns on narrower windows. */}
-      <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))" }}>
-        {ranked.map((k) => (
-          k === "content"
-            ? <ContentPillarCard key={k} content={ally.content} go={go} rank={rankOf[k]} pct={fillPct[k]} onNavigate={navigateToTask} onComplete={completeTask} />
-            : <PriorityPillarCard key={k} pillarKey={k} tasks={byPillar[k]} go={go} rank={rankOf[k]} onDropPriority={onDropPriority} pct={fillPct[k]} onNavigate={navigateToTask} onComplete={completeTask} />
-        ))}
-      </div>
-    </section>
-  );
+{/* every pillar gets its own independent ring, ranked left to right by how full it is.
+min-width 360 (vs the 280 other grids in the app use) keeps this specific grid at 3
+per row instead of 4 on a full-width screen, still auto-fit so it still reflows down
+to fewer columns on narrower windows. */}
+<div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))" }}>
+{ranked.map((k) => (
+k === "content"
+? <ContentPillarCard key={k} content={ally.content} pipelineKey="content" mod={MODULES.content} go={go} rank={rankOf[k]} taskPct={contentTaskPct} postPct={contentPostUrgency.pct} onNavigate={navigateToTask} onComplete={completeTask} />
+: k === "music"
+? <ContentPillarCard key={k} content={ally.musicContent} pipelineKey="musicContent" mod={MUSIC_CONTENT_MOD} go={go} rank={rankOf[k]} taskPct={musicTaskPct} postPct={musicPostUrgency.pct} onNavigate={navigateToTask} onComplete={completeTask} />
+: <PriorityPillarCard key={k} pillarKey={k} tasks={byPillar[k]} go={go} rank={rankOf[k]} onDropPriority={onDropPriority} pct={fillPct[k]} onNavigate={navigateToTask} onComplete={completeTask} />
+))}
+</div>
+</section>
+);
 }
 
 const PRIORITY_COL_TINT = { Urgent: C.rose, Medium: C.amber, Low: C.sky };
@@ -1783,75 +1815,84 @@ const PRIORITY_COL_TINT = { Urgent: C.rose, Medium: C.amber, Low: C.sky };
 /* Content's card doesn't show Urgent/Medium/Low task columns like the other pillars — content has no
    individual priorities anymore, just one master signal (days since last post, entirely independent
    of the pipeline) rendered as its own fill ring, plus a glance at where ideas sit in the pipeline. */
-function ContentPillarCard({ content, go, rank, pct, onNavigate, onComplete }) {
-  const mod = MODULES.content;
-  const since = daysSince(content.lastPosted);
-  const tint = urgencyTint(pct);
-  const critical = pct > 100;
-  const pipelineCols = ["Ready to Post", "To Edit", "To Film", "Ideas"];
-  const counts = Object.fromEntries(pipelineCols.map((c) => [c, content.items.filter((i) => i.status === c).length]));
-  /* two separate deadline feeds so filming deadlines and editing deadlines stay visually apart —
-     title pulls through by title only (never the script/desc box), same rule every other pillar
-     follows. The ring above stays purely days-since-post driven regardless of what's in either list. */
-  const toFilmDated = content.items.filter((i) => i.status === "To Film" && i.due && !i.dueOff).sort((a, b) => daysUntil(a.due) - daysUntil(b.due)).slice(0, 3);
-  const toEditDated = content.items.filter((i) => i.status === "To Edit" && i.due && !i.dueOff).sort((a, b) => daysUntil(a.due) - daysUntil(b.due)).slice(0, 3);
-  return (
-    <div onClick={() => go("content")} className="rounded-2xl p-5" style={{ ...card, borderRadius: 18, borderLeft: `4px solid ${mod.accent}`, cursor: "pointer" }}>
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2 min-w-0">
-          <span style={{ width: 28, height: 28, borderRadius: 99, background: mod.accent, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 14, flexShrink: 0 }}>{rank}</span>
-          <span style={{ fontSize: 17, flexShrink: 0 }}>{mod.emoji}</span>
-          <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 16, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{mod.label}</span>
-        </div>
-        <ArrowUpRight size={16} color={MUT} />
-      </div>
-      <div className="flex flex-col items-center text-center" style={{ padding: "6px 0 16px" }}>
-        <Ring pct={Math.min(1, pct / 100)} tint={tint} size={148} thick={16} label={`${Math.round(pct)}%`} />
-        <div style={{ fontSize: 13.5, fontWeight: 600, color: tint, marginTop: 10 }}>{since === null ? "no post logged yet" : since === 1 ? "1 day since last post" : `${since} days since last post`}</div>
-        {critical && <div style={{ fontSize: 10.5, fontWeight: 700, color: C.rose, marginTop: 3, letterSpacing: "0.03em" }}>⚠ CRITICAL — post overdue</div>}
-      </div>
-      <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
-        {pipelineCols.map((c) => (
-          <div key={c} className="rounded-lg py-2 text-center" style={{ background: C.soft, border: `1px solid ${LINE}` }}>
-            <div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 19, color: CONTENT_TINT[c] }}>{counts[c]}</div>
-            <div style={{ fontSize: 9.5, letterSpacing: "0.04em", textTransform: "uppercase", color: MUT, marginTop: 2 }}>{c}</div>
-          </div>
-        ))}
-      </div>
-      {(toFilmDated.length > 0 || toEditDated.length > 0) && (
-        <div className="grid gap-3 mt-3 pt-3" style={{ gridTemplateColumns: "1fr 1fr", borderTop: `1px solid ${LINE}` }}>
-          <div className="flex flex-col gap-1.5" style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 10, letterSpacing: "0.06em", textTransform: "uppercase", color: MUT }}>To Film</div>
-            {toFilmDated.map((i) => (
-              <div key={i.id} onClick={(e) => e.stopPropagation()} className="flex items-center gap-1.5" style={{ fontSize: 12 }}>
-                <CompleteCheckbox onComplete={() => onComplete && onComplete({ id: i.id, sourceType: "contentToFilm" })} label="Move to In Edit" />
-                <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, cursor: "pointer" }} onClick={(e) => { e.stopPropagation(); onNavigate && onNavigate({ id: i.id, navTab: "content" }); }}>
-                  <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{i.title}</span>
-                  <DueChip due={i.due} />
-                </div>
-              </div>
-            ))}
-            {toFilmDated.length === 0 && <div style={{ fontSize: 11.5, color: FAINT }}>—</div>}
-          </div>
-          <div className="flex flex-col gap-1.5" style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 10, letterSpacing: "0.06em", textTransform: "uppercase", color: MUT }}>To Edit</div>
-            {toEditDated.map((i) => (
-              <div key={i.id} onClick={(e) => e.stopPropagation()} className="flex items-center gap-1.5" style={{ fontSize: 12 }}>
-        <CompleteCheckbox onComplete={() => onComplete && onComplete({ id: i.id, sourceType: "contentToEdit" })} label="Ready to post" />
-                <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, cursor: "pointer" }} onClick={(e) => { e.stopPropagation(); onNavigate && onNavigate({ id: i.id, navTab: "content" }); }}>
-                  <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{i.title}</span>
-                  <DueChip due={i.due} />
-                </div>
-              </div>
-            ))}
-            {toEditDated.length === 0 && <div style={{ fontSize: 11.5, color: FAINT }}>—</div>}
-          </div>
-        </div>
-      )}
-    </div>
-  );
+function ContentPillarCard({ content, pipelineKey, mod, go, rank, taskPct, postPct, onNavigate, onComplete }) {
+const since = daysSince(content.lastPosted);
+const taskTint = urgencyTint(taskPct);
+const postTint = urgencyTint(postPct);
+const critical = postPct > 100;
+const filmType = pipelineKey === "musicContent" ? "musicToFilm" : "contentToFilm";
+const editType = pipelineKey === "musicContent" ? "musicToEdit" : "contentToEdit";
+const navSub = pipelineKey === "musicContent" ? "musicContent" : "content";
+const pipelineCols = ["Ready to Post", "To Edit", "To Film", "Ideas"];
+const counts = Object.fromEntries(pipelineCols.map((c) => [c, content.items.filter((i) => i.status === c).length]));
+/* two separate deadline feeds so filming deadlines and editing deadlines stay visually apart —
+title pulls through by title only (never the script/desc box), same rule every other pillar
+follows. Both rings above stay purely score-driven regardless of what is in either list. */
+const toFilmDated = content.items.filter((i) => i.status === "To Film" && ((i.due && !i.dueOff) || i.scheduledFor)).sort((a, b) => daysUntil(a.due || a.scheduledFor) - daysUntil(b.due || b.scheduledFor)).slice(0, 3);
+const toEditDated = content.items.filter((i) => i.status === "To Edit" && ((i.due && !i.dueOff) || i.scheduledFor)).sort((a, b) => daysUntil(a.due || a.scheduledFor) - daysUntil(b.due || b.scheduledFor)).slice(0, 3);
+return (
+<div onClick={() => onNavigate && onNavigate({ navTab: "content", navSub })} className="rounded-2xl p-5" style={{ ...card, borderRadius: 18, borderLeft: "4px solid " + mod.accent, cursor: "pointer" }}>
+<div className="flex items-center justify-between mb-3">
+<div className="flex items-center gap-2 min-w-0">
+<span style={{ width: 28, height: 28, borderRadius: 99, background: mod.accent, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 14, flexShrink: 0 }}>{rank}</span>
+<span style={{ fontSize: 17, flexShrink: 0 }}>{mod.emoji}</span>
+<span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 16, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{mod.label}</span>
+</div>
+<ArrowUpRight size={16} color={MUT} />
+</div>
+<div className="flex items-center justify-center gap-6" style={{ padding: "6px 0 16px" }}>
+<div className="flex flex-col items-center text-center">
+<Ring pct={Math.min(1, taskPct / 100)} tint={taskTint} size={104} thick={12} label={Math.round(taskPct) + "%"} />
+<div style={{ fontSize: 11, fontWeight: 600, color: MUT, marginTop: 8, letterSpacing: "0.03em", textTransform: "uppercase" }}>Tasks</div>
+</div>
+<div className="flex flex-col items-center text-center">
+<Ring pct={Math.min(1, postPct / 100)} tint={postTint} size={104} thick={12} label={Math.round(postPct) + "%"} />
+<div style={{ fontSize: 11, fontWeight: 600, color: MUT, marginTop: 8, letterSpacing: "0.03em", textTransform: "uppercase" }}>Posting</div>
+</div>
+</div>
+<div style={{ fontSize: 13.5, fontWeight: 600, color: postTint, textAlign: "center", marginTop: -6, marginBottom: 12 }}>{since === null ? "no post logged yet" : since === 1 ? "1 day since last post" : since + " days since last post"}</div>
+{critical && <div style={{ fontSize: 10.5, fontWeight: 700, color: C.rose, marginTop: -8, marginBottom: 10, textAlign: "center", letterSpacing: "0.03em" }}>⚠ CRITICAL — post overdue</div>}
+<div className="grid gap-2" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+{pipelineCols.map((c) => (
+<div key={c} className="rounded-lg py-2 text-center" style={{ background: C.soft, border: "1px solid " + LINE }}>
+<div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 19, color: CONTENT_TINT[c] }}>{counts[c]}</div>
+<div style={{ fontSize: 9.5, letterSpacing: "0.04em", textTransform: "uppercase", color: MUT, marginTop: 2 }}>{c}</div>
+</div>
+))}
+</div>
+{(toFilmDated.length > 0 || toEditDated.length > 0) && (
+<div className="grid gap-3 mt-3 pt-3" style={{ gridTemplateColumns: "1fr 1fr", borderTop: "1px solid " + LINE }}>
+<div className="flex flex-col gap-1.5" style={{ minWidth: 0 }}>
+<div style={{ fontSize: 10, letterSpacing: "0.06em", textTransform: "uppercase", color: MUT }}>To Film</div>
+{toFilmDated.map((i) => (
+<div key={i.id} onClick={(e) => e.stopPropagation()} className="flex items-center gap-1.5" style={{ fontSize: 12 }}>
+<CompleteCheckbox onComplete={() => onComplete && onComplete({ id: i.id, sourceType: filmType })} label="Move to In Edit" />
+<div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, cursor: "pointer" }} onClick={(e) => { e.stopPropagation(); onNavigate && onNavigate({ id: i.id, navTab: "content", navSub }); }}>
+<span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{i.title}</span>
+<DueChip due={i.due || i.scheduledFor} />
+</div>
+</div>
+))}
+{toFilmDated.length === 0 && <div style={{ fontSize: 11.5, color: FAINT }}>—</div>}
+</div>
+<div className="flex flex-col gap-1.5" style={{ minWidth: 0 }}>
+<div style={{ fontSize: 10, letterSpacing: "0.06em", textTransform: "uppercase", color: MUT }}>To Edit</div>
+{toEditDated.map((i) => (
+<div key={i.id} onClick={(e) => e.stopPropagation()} className="flex items-center gap-1.5" style={{ fontSize: 12 }}>
+<CompleteCheckbox onComplete={() => onComplete && onComplete({ id: i.id, sourceType: editType })} label="Ready to post" />
+<div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, cursor: "pointer" }} onClick={(e) => { e.stopPropagation(); onNavigate && onNavigate({ id: i.id, navTab: "content", navSub }); }}>
+<span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{i.title}</span>
+<DueChip due={i.due || i.scheduledFor} />
+</div>
+</div>
+))}
+{toEditDated.length === 0 && <div style={{ fontSize: 11.5, color: FAINT }}>—</div>}
+</div>
+</div>
+)}
+</div>
+);
 }
-
 /* dragging a chip between Urgent/Medium/Low sets its underlying priority (High/Medium/Low) via
    setPillarItemPriority, so it feeds straight back into the item's own tab. Drops carry their
    source pillar in the payload, so a drop is ignored unless it lands on a column in its own card —
@@ -2237,66 +2278,79 @@ function ScriptBox({ value, isHtml, open, onFocus, onChange, onToggle, big, plac
 }
 
 function ContentCalendar({ scheduled, onOpen }) {
-  const [cursor, setCursor] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
-  const changeMonth = (amount) => setCursor((d) => new Date(d.getFullYear(), d.getMonth() + amount, 1));
-  const start = new Date(cursor.getFullYear(), cursor.getMonth(), 1 - ((cursor.getDay() + 6) % 7));
-  const days = Array.from({ length: 28 }, (_, i) => { const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i); return { d, key: d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0") }; });
-  const slots = scheduled.reduce((all, item) => { (all[item.due] || (all[item.due] = [])).push(item); return all; }, {});
-  const today = todayISO();
-  return <div style={{ minHeight: "calc(100vh - 190px)", display: "flex", flexDirection: "column", gap: 16 }}>
-    <div className="flex items-center justify-between"><button aria-label="Previous month" onClick={() => changeMonth(-1)} style={{ ...iconBtn, fontSize: 22 }}>←</button><div style={{ textAlign: "center" }}><div style={{ fontSize: 30, fontWeight: 700 }}>{cursor.toLocaleDateString("en-ZA", { month: "long", year: "numeric" })}</div><div style={{ fontSize: 11, color: MUT }}>Four week content calendar</div></div><button aria-label="Next month" onClick={() => changeMonth(1)} style={{ ...iconBtn, fontSize: 22 }}>→</button></div>
-    <div style={{ flex: 1, display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gridTemplateRows: "auto repeat(4, minmax(138px, 1fr))", gap: 1, background: LINE, border: "1px solid " + LINE, borderRadius: 18, overflow: "hidden" }}>{["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((n) => <div key={n} style={{ padding: 10, background: C.canvas, color: MUT, fontSize: 10, fontWeight: 700 }}>{n}</div>)}{days.map(({ d, key }) => <div key={key} style={{ padding: 10, background: key === today ? C.lilac + "18" : C.canvas, boxShadow: key === today ? "inset 0 0 0 2px " + C.lilac : "none", opacity: d.getMonth() === cursor.getMonth() ? 1 : .4 }}><div style={{ textAlign: "right", color: key === today ? C.lilac : MUT, fontSize: 12, fontWeight: key === today ? 800 : 500, marginBottom: 8 }}>{d.toLocaleDateString("en-ZA", { weekday: "short", day: "numeric" })}</div>{(slots[key] || []).map((item) => { const tint = item.status === "Posted" ? CONTENT_TINT.Posted : CONTENT_TINT["Ready to Post"]; return <button key={item.pipelineKey + item.id} onClick={() => onOpen(item)} title={item.title} style={{ width: "100%", textAlign: "left", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", padding: "6px 7px", marginBottom: 5, borderRadius: 8, border: "1px solid " + tint + "55", background: tint + "19", color: C.ink, cursor: "pointer", fontFamily: "inherit", fontSize: 11 }}>{item.status === "Posted" ? "✓ " : ""}{item.title}</button>; })}</div>)}</div>
-  </div>;
+const [cursor, setCursor] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
+const changeMonth = (amount) => setCursor((d) => new Date(d.getFullYear(), d.getMonth() + amount, 1));
+const goToday = () => setCursor(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
+/* 6-week (42 cell) grid guarantees full month coverage regardless of month length/start day —
+a 4-week grid could run out before the month (or today) did, which is why today sometimes
+wasn't showing up at all. Same fix the Anchor date-picker already uses. */
+const start = new Date(cursor.getFullYear(), cursor.getMonth(), 1 - ((cursor.getDay() + 6) % 7));
+const days = Array.from({ length: 42 }, (_, i) => { const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i); return { d, key: d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0") }; });
+const slots = scheduled.reduce((all, item) => { (all[item.scheduledFor] || (all[item.scheduledFor] = [])).push(item); return all; }, {});
+const today = todayISO();
+return <div style={{ minHeight: "calc(100vh - 190px)", display: "flex", flexDirection: "column", gap: 16 }}>
+<div className="flex items-center justify-between"><button aria-label="Previous month" onClick={() => changeMonth(-1)} style={{ ...iconBtn, fontSize: 22 }}>←</button><div style={{ textAlign: "center" }}><div style={{ fontSize: 30, fontWeight: 700 }}>{cursor.toLocaleDateString("en-ZA", { month: "long", year: "numeric" })}</div><div className="flex items-center justify-center gap-2" style={{ fontSize: 11, color: MUT }}><span>Content calendar</span><button onClick={goToday} style={{ ...iconBtn, fontSize: 10.5, padding: "2px 8px", borderRadius: 999, border: "1px solid " + LINE }}>Today</button></div></div><button aria-label="Next month" onClick={() => changeMonth(1)} style={{ ...iconBtn, fontSize: 22 }}>→</button></div>
+<div className="flex items-center gap-4 flex-wrap" style={{ fontSize: 11, color: MUT }}>
+{Object.keys(PIPELINE_TINT).map((k) => <span key={k} className="flex items-center gap-1.5"><span style={{ width: 7, height: 7, borderRadius: 2, background: PIPELINE_TINT[k] }} />{PIPELINE_LABEL[k]}</span>)}
+</div>
+<div style={{ flex: 1, display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gridTemplateRows: "auto repeat(6, minmax(112px, 1fr))", gap: 1, background: LINE, border: "1px solid " + LINE, borderRadius: 18, overflow: "hidden" }}>{["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((n) => <div key={n} style={{ padding: 10, background: C.canvas, color: MUT, fontSize: 10, fontWeight: 700 }}>{n}</div>)}{days.map(({ d, key }) => <div key={key} style={{ padding: 10, background: key === today ? C.lilac + "18" : C.canvas, boxShadow: key === today ? "inset 0 0 0 2px " + C.lilac : "none", opacity: d.getMonth() === cursor.getMonth() ? 1 : .4 }}><div style={{ textAlign: "right", color: key === today ? C.lilac : MUT, fontSize: 12, fontWeight: key === today ? 800 : 500, marginBottom: 8 }}>{d.toLocaleDateString("en-ZA", { weekday: "short", day: "numeric" })}</div>{(slots[key] || []).map((item) => { const tint = PIPELINE_TINT[item.pipelineKey] || C.sky; return <button key={item.pipelineKey + item.id} onClick={() => onOpen(item)} title={item.title} style={{ width: "100%", textAlign: "left", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", padding: "6px 7px", marginBottom: 5, borderRadius: 8, border: "1px solid " + tint + "55", background: tint + (item.status === "Posted" ? "0d" : "19"), color: C.ink, cursor: "pointer", fontFamily: "inherit", fontSize: 11, opacity: item.status === "Posted" ? 0.6 : 1 }}>{item.status === "Posted" ? "✓ " : ""}{item.title}</button>; })}</div>)}</div>
+</div>;
 }
 
-function ContentModule({ data, setData, q }) {
-  const [subtab, setSubtab] = useState("content");
-  const [calendarFocus, setCalendarFocus] = useState(null);
-  const tabs = [
-    { id: "content", label: "Board" },
-    { id: "brandDeals", label: "Brand Deals" },
-    { id: "calendar", label: "Content Calendar" },
-  ];
-  const calendarItems = ["content", "brandContent"].flatMap((pipelineKey) => (data[pipelineKey]?.items || []).map((item) => ({ ...item, pipelineKey })));
-  /* the To Edit deadline IS the calendar slot: anything in To Edit carrying a live date shows on
-     that date, alongside anything already logged as Posted (which keeps its slot forever). */
-  const scheduled = calendarItems.filter((item) => (item.status === "To Edit" || item.status === "Scheduled" || item.status === "Posted") && item.due && !item.dueOff).sort((a, b) => a.due.localeCompare(b.due));
-  /* opens the video right here on the calendar — it used to switch subtabs and throw you back onto
-     the pipeline board, which lost your place on the calendar every time. */
-  const openCalendarItem = (item) => setCalendarFocus({ pipelineKey: item.pipelineKey, id: item.id });
-  const patchFocused = (p) => setData((d) => ({ ...d, [calendarFocus.pipelineKey]: { ...d[calendarFocus.pipelineKey], items: d[calendarFocus.pipelineKey].items.map((z) => (z.id === calendarFocus.id ? { ...z, ...p } : z)) } }));
-  return (
-    <section style={{ width: "100%", margin: 0, textAlign: "left" }}>
-      <nav className="flex gap-2 mb-6 flex-wrap w-full" style={{ justifyContent: "flex-start" }}>
-        {tabs.map((tab) => <button key={tab.id} onClick={() => setSubtab(tab.id)} className="rounded-full px-4 py-2" style={{ background: subtab === tab.id ? C.dark : C.card, border: `1px solid ${subtab === tab.id ? C.dark : LINE}`, color: subtab === tab.id ? C.canvas : C.ink, cursor: "pointer", fontSize: 14, fontWeight: subtab === tab.id ? 600 : 400, fontFamily: "inherit" }}>{tab.label}</button>)}
-      </nav>
-      {subtab === "content" && <ContentPipeline data={data} setData={setData} q={q} pipelineKey="content" heading={null} />}
-      {subtab === "brandDeals" && <ContentPipeline data={data} setData={setData} q={q} pipelineKey="brandContent" heading="Brand Deals" />}
-      {subtab === "calendar" && <ContentCalendar scheduled={scheduled} onOpen={openCalendarItem} />}
-      {calendarFocus && (() => {
-        const item = ((data[calendarFocus.pipelineKey] || {}).items || []).find((z) => z.id === calendarFocus.id);
-        if (!item) return null;
-        return (
-          <div onClick={() => { if (hasTextSelection()) return; setCalendarFocus(null); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-            <div onClick={(e) => e.stopPropagation()} style={{ ...card, borderRadius: 16, padding: 20, width: "100%", maxWidth: 640, maxHeight: "85vh", display: "flex", flexDirection: "column", gap: 10, overflow: "auto" }}>
-              <div className="flex items-center gap-2">
-                <div className="flex-1 min-w-0"><InlineEdit value={item.title} onChange={(v) => patchFocused({ title: v })} strong /></div>
-                <button onClick={() => setCalendarFocus(null)} style={{ ...iconBtn, padding: 4 }} aria-label="Close"><X size={14} /></button>
-              </div>
-              <div className="flex items-center gap-2 flex-wrap" style={{ fontSize: 11.5, color: MUT }}>
-                <span style={{ color: CONTENT_TINT[item.status] || MUT, fontWeight: 600 }}>{item.status}</span>
-                <input type="date" value={item.due || ""} onChange={(e) => patchFocused({ due: e.target.value || null })} className="rounded-md" style={{ ...darkInput, fontSize: 11.5, padding: "4px 7px" }} aria-label="Date" />
-                {item.status !== "Posted" && <button onClick={() => { patchFocused({ status: "Posted", postedAt: todayISO() }); if (calendarFocus.pipelineKey === "content") setData((d) => ({ ...d, content: { ...d.content, lastPosted: todayISO() } })); }} className="rounded-full px-2.5 py-1" style={{ fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", background: `${C.mint}1a`, border: `1px solid ${C.mint}55`, color: C.mint }}>✓ Posted</button>}
-              </div>
-              <ScriptBox value={item.desc || ""} isHtml={!!item.descHtml} open big onFocus={() => {}} onChange={(v) => patchFocused({ desc: v, descHtml: true })} onToggle={() => {}} />
-            </div>
-          </div>
-        );
-      })()}
-    </section>
-  );
+function ContentModule({ data, setData, q, navRequest }) {
+const [subtab, setSubtab] = useState("content");
+const [calendarFocus, setCalendarFocus] = useState(null);
+/* a dashboard task pointing at the Music (or another) subtab needs this tab to actually land
+on that subtab, not just the default Board — same navRequest pattern Mama/Deals/LifeAdmin use. */
+useEffect(() => { if (navRequest && navRequest.navTab === "content" && navRequest.navSub) setSubtab(navRequest.navSub); }, [navRequest]);
+const tabs = [
+{ id: "content", label: "Board" },
+{ id: "brandDeals", label: "Brand Deals" },
+{ id: "musicContent", label: "Music" },
+{ id: "calendar", label: "Content Calendar" },
+];
+const calendarItems = ["content", "brandContent", "musicContent"].flatMap((pipelineKey) => (data[pipelineKey]?.items || []).map((item) => ({ ...item, pipelineKey })));
+/* the scheduled/post date is what puts something on the calendar now, independent of status or
+which pipeline it lives in — Posted items keep their slot forever, everything else only shows
+once it actually has a scheduled date. */
+const scheduled = calendarItems.filter((item) => item.scheduledFor).sort((a, b) => a.scheduledFor.localeCompare(b.scheduledFor));
+/* opens the video right here on the calendar — it used to switch subtabs and throw you back onto
+the pipeline board, which lost your place on the calendar every time. */
+const openCalendarItem = (item) => setCalendarFocus({ pipelineKey: item.pipelineKey, id: item.id });
+const patchFocused = (p) => setData((d) => ({ ...d, [calendarFocus.pipelineKey]: { ...d[calendarFocus.pipelineKey], items: d[calendarFocus.pipelineKey].items.map((z) => (z.id === calendarFocus.id ? { ...z, ...p } : z)) } }));
+return (
+<section style={{ width: "100%", margin: 0, textAlign: "left" }}>
+<nav className="flex gap-2 mb-6 flex-wrap w-full" style={{ justifyContent: "flex-start" }}>
+{tabs.map((tab) => <button key={tab.id} onClick={() => setSubtab(tab.id)} className="rounded-full px-4 py-2" style={{ background: subtab === tab.id ? C.dark : C.card, border: "1px solid " + (subtab === tab.id ? C.dark : LINE), color: subtab === tab.id ? C.canvas : C.ink, cursor: "pointer", fontSize: 14, fontWeight: subtab === tab.id ? 600 : 400, fontFamily: "inherit" }}>{tab.label}</button>)}
+</nav>
+{subtab === "content" && <ContentPipeline data={data} setData={setData} q={q} pipelineKey="content" heading={null} />}
+{subtab === "brandDeals" && <ContentPipeline data={data} setData={setData} q={q} pipelineKey="brandContent" heading="Brand Deals" />}
+{subtab === "musicContent" && <ContentPipeline data={data} setData={setData} q={q} pipelineKey="musicContent" heading="Music" />}
+{subtab === "calendar" && <ContentCalendar scheduled={scheduled} onOpen={openCalendarItem} />}
+{calendarFocus && (() => {
+const item = ((data[calendarFocus.pipelineKey] || {}).items || []).find((z) => z.id === calendarFocus.id);
+if (!item) return null;
+return (
+<div onClick={() => { if (hasTextSelection()) return; setCalendarFocus(null); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+<div onClick={(e) => e.stopPropagation()} style={{ ...card, borderRadius: 16, padding: 20, width: "100%", maxWidth: 640, maxHeight: "85vh", display: "flex", flexDirection: "column", gap: 10, overflow: "auto" }}>
+<div className="flex items-center gap-2">
+<div className="flex-1 min-w-0"><InlineEdit value={item.title} onChange={(v) => patchFocused({ title: v })} strong /></div>
+<button onClick={() => setCalendarFocus(null)} style={{ ...iconBtn, padding: 4 }} aria-label="Close"><X size={14} /></button>
+</div>
+<div className="flex items-center gap-2 flex-wrap" style={{ fontSize: 11.5, color: MUT }}>
+<span style={{ color: CONTENT_TINT[item.status] || MUT, fontWeight: 600 }}>{item.status}</span>
+<span style={{ color: PIPELINE_TINT[item.pipelineKey] || MUT }}>{PIPELINE_LABEL[item.pipelineKey]}</span>
+<input type="date" value={item.scheduledFor || ""} onChange={(e) => patchFocused({ scheduledFor: e.target.value || null })} className="rounded-md" style={{ ...darkInput, fontSize: 11.5, padding: "4px 7px" }} aria-label="Scheduled date" />
+{item.status !== "Posted" && <button onClick={() => { patchFocused({ status: "Posted", postedAt: todayISO() }); if (calendarFocus.pipelineKey !== "brandContent") setData((d) => ({ ...d, [calendarFocus.pipelineKey]: { ...d[calendarFocus.pipelineKey], lastPosted: todayISO() } })); }} className="rounded-full px-2.5 py-1" style={{ fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", background: C.mint + "1a", border: "1px solid " + C.mint + "55", color: C.mint }}>✓ Posted</button>}
+</div>
+<ScriptBox value={item.desc || ""} isHtml={!!item.descHtml} open big onFocus={() => {}} onChange={(v) => patchFocused({ desc: v, descHtml: true })} onToggle={() => {}} />
+</div>
+</div>
+);
+})()}
+</section>
+);
 }
-
 function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = null }) {
   const content = data[pipelineKey];
   const h = contentHealth(content);
@@ -2310,7 +2364,7 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
   const openIfNot = (id) => setOpenDesc((o) => (o[id] ? o : { ...o, [id]: true }));
   const patch = (p) => setData((d) => ({ ...d, [pipelineKey]: { ...d[pipelineKey], ...p } }));
   const ql = (q || "").toLowerCase();
-  const add = () => { const t = title.trim(); if (!t) return; patch({ items: [{ id: uid(), title: t, desc: description.trim(), status: "Ideas", created: todayISO(), due: null }, ...content.items] }); setTitle(""); setDescription(""); };
+  const add = () => { const t = title.trim(); if (!t) return; patch({ items: [{ id: uid(), title: t, desc: description.trim(), status: "Ideas", created: todayISO(), due: null, scheduledFor: null }, ...content.items] }); setTitle(""); setDescription(""); };
   const move = (id, dir) => setData((d) => {
     const items = d[pipelineKey].items.map((i) => {
       if (i.id !== id) return i;
@@ -2346,7 +2400,7 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
   /* in-pipeline "upcoming" list: only future/today scheduled items so passed dates drop off this
      board view automatically. The dedicated Content Calendar tab keeps its own unfiltered list, so
      nothing is actually deleted — it just stops showing here once its date has gone by. */
-  const scheduled = content.items.filter((i) => (i.status === "To Edit" || i.status === "Scheduled") && i.due && !i.dueOff && i.due >= todayISO()).sort((a, b) => a.due.localeCompare(b.due));
+  const scheduled = content.items.filter((i) => i.status !== "Posted" && i.scheduledFor && i.scheduledFor >= todayISO()).sort((a, b) => a.scheduledFor.localeCompare(b.scheduledFor));
 
 
   return (
@@ -2397,9 +2451,9 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
           <div className="flex flex-col gap-2">
             {scheduled.map((i) => (
               <div key={i.id} className="flex items-center gap-2.5 flex-wrap" style={{ fontSize: 13 }}>
-                <DueChip due={i.due} />
+                <DueChip due={i.scheduledFor} />
                 <span className="flex-1" style={{ minWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", cursor: "pointer" }} onClick={() => setExpandedId(i.id)}>{i.title}</span>
-                <input type="date" value={i.due || ""} onChange={(e) => updateItem(i.id, { due: e.target.value || null })} className="rounded-md" style={{ ...darkInput, fontSize: 11.5, padding: "4px 7px" }} aria-label="Scheduled date" />
+                <input type="date" value={i.scheduledFor || ""} onChange={(e) => updateItem(i.id, { scheduledFor: e.target.value || null })} className="rounded-md" style={{ ...darkInput, fontSize: 11.5, padding: "4px 7px" }} aria-label="Scheduled date" />
                 <button onClick={() => markPosted(i.id)} className="rounded-full px-2.5 py-1" style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.03em", cursor: "pointer", fontFamily: "inherit", background: `${C.mint}1a`, border: `1px solid ${C.mint}55`, color: C.mint }}>✓ Posted</button>
               </div>
             ))}
@@ -2430,10 +2484,14 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
                     <InlineEdit value={i.title} onChange={(v) => updateItem(i.id, { title: v })} strong bubbleClicks /><button onClick={(e) => { e.stopPropagation(); setExpandedId(i.id); }} style={{ ...iconBtn, padding: 2, marginLeft: 6 }} aria-label="Expand description" title="Expand description to full screen">⤢</button>
                     <ScriptBox value={i.desc || ""} isHtml={!!i.descHtml} open={descOpen} onFocus={() => openIfNot(i.id)} onChange={(v) => updateItem(i.id, { desc: v, descHtml: true })} onToggle={toggleDesc} />
                     <div className="flex items-center gap-2 mt-1.5 flex-wrap" style={{ fontSize: 10.5 }}>
-                      {/* on To Edit this date is the post date — it's what puts the video on the
-                          Content Calendar. Everywhere else it's just a working deadline. */}
-                      <input type="date" value={i.due || ""} onClick={(e) => e.stopPropagation()} onChange={(e) => updateItem(i.id, { due: e.target.value || null })} className="rounded-md" style={{ ...darkInput, fontSize: 10.5, padding: "3px 5px", opacity: i.dueOff ? 0.5 : 1, borderColor: col === "To Edit" && i.due && !i.dueOff ? `${C.mint}66` : undefined }} aria-label={col === "To Edit" ? "Post date" : "Deadline (optional)"} title={col === "To Edit" ? "Post date — this is what puts it on the content calendar" : "Deadline (optional)"} />
+                      {/* two independent dates now: a deadline for finishing the current stage's work, and a
+                          scheduled/post date that puts it on the Content Calendar — both live regardless of the column. */}
+                      <span style={{ fontSize: 9, color: MUT }}>Deadline</span>
+<input type="date" value={i.due || ""} onClick={(e) => e.stopPropagation()} onChange={(e) => updateItem(i.id, { due: e.target.value || null })} className="rounded-md" style={{ ...darkInput, fontSize: 10.5, padding: "3px 5px", opacity: i.dueOff ? 0.5 : 1 }} aria-label="Deadline (get it done)" title="Deadline — when you want this stage's work finished" />
                       <DueChip due={i.due} off={i.dueOff} onToggle={() => updateItem(i.id, { dueOff: !i.dueOff })} />
+<span style={{ fontSize: 9, color: MUT, marginLeft: 4 }}>Scheduled</span>
+<input type="date" value={i.scheduledFor || ""} onClick={(e) => e.stopPropagation()} onChange={(e) => updateItem(i.id, { scheduledFor: e.target.value || null })} className="rounded-md" style={{ ...darkInput, fontSize: 10.5, padding: "3px 5px", borderColor: i.scheduledFor ? `${C.sky}66` : undefined }} aria-label="Scheduled / post date" title="Scheduled date — puts it on the Content Calendar" />
+<DueChip due={i.scheduledFor} />
                       {col === "To Edit" && <button onClick={(e) => { e.stopPropagation(); markPosted(i.id); }} className="rounded-full px-2 py-0.5" style={{ fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", background: `${C.mint}1a`, border: `1px solid ${C.mint}55`, color: C.mint }} title="Log it as posted">✓ Posted</button>}
                     </div>
                     <PriorityControls item={i} onChange={(p) => updateItem(i.id, p)} hideDue />
@@ -2454,6 +2512,7 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
     </section>
   );
 }
+
 
 function RingDark({ value, max, label, tint, size = 100 }) {
   const r = (size - 9) / 2, c = 2 * Math.PI * r, pct = max ? Math.min(1, value / max) : 0;
