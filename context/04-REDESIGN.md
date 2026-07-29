@@ -75,18 +75,38 @@ does not apply here.
 Other calendars visible on that account: `Ally Damon` (primary), `Birthdays`,
 `adamon@amplified.community` (under Other calendars), `Holidays in South Africa`.
 
+### Decisions taken by the owner, 29 July 2026
+
+1. **New blocks are written to the gmail primary calendar.** The `ally@mama.co.za` calendar is
+   readable and writable, but is only ever *read* — its events block out slots so a drop cannot
+   double-book, and nothing is written to it. Rationale: that calendar is shared with
+   `adamon@amplified.community`, so personal time-blocking there would leak.
+2. **Anchor and Series tabs deleted.** Data left intact pending an export — see open questions.
+3. **Firebase API key stays locked to the production domain.** Local testing is not enabled;
+   changes are verified on the live origin after publishing instead.
+
+Still open: whether Birthdays / Holidays / `adamon@amplified.community` should also block out slots,
+or only the two main calendars. Working assumption is the two main ones.
+
 ### One extra OAuth scope is needed
 
 `https://www.googleapis.com/auth/calendar.events` alone **cannot list the account's calendars**.
 Per the Calendar API reference for `calendarList.list`, that endpoint requires one of
 `calendar.readonly`, `calendar`, `calendar.calendarlist`, or `calendar.calendarlist.readonly`.
 
-Add **`https://www.googleapis.com/auth/calendar.calendarlist.readonly`** - the narrowest option that
-works. It is read-only and grants nothing beyond seeing which calendars exist.
+**RESOLVED 29 July 2026.** `https://www.googleapis.com/auth/calendar.calendarlist.readonly` was added
+under Data Access and verified after save. Google classifies it as **non-sensitive**, which is a
+better outcome than expected: non-sensitive scopes carry no app-verification burden, unlike
+`calendar.readonly` which would have been sensitive.
 
-Alternative if we want to avoid a second scope: hardcode the calendar IDs (`primary` and
-`ally@mama.co.za`) and skip discovery. Cheaper on permissions, but no calendar-picker UI and it
-breaks silently if a calendar is renamed or added.
+Declared scopes are now:
+
+| Scope | Google's classification | What it allows |
+| --- | --- | --- |
+| `calendar.events` | Sensitive | View and edit events on all your calendars |
+| `calendar.calendarlist.readonly` | Non-sensitive | See the list of calendars you're subscribed to |
+
+Note this is the narrowest working pair. `calendar.readonly` and full `calendar` were both avoided.
 
 ### The production origin is www.theallydamon.com, NOT theallydamon.github.io
 
