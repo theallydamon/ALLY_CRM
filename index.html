@@ -19,6 +19,14 @@
 <script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore-compat.js"></script>
+<!-- Google Identity Services. Provides google.accounts.oauth2 for the Calendar access token.
+     Deliberately separate from Firebase Auth: Firebase signs you IN (identity), GIS grants the
+     app permission to touch your CALENDAR (authorisation). They are different concerns and
+     Firebase's Google provider cannot mint a Calendar access token on its own.
+     No integrity attribute: Google does not publish a hash for this endpoint and ships updates
+     to it, so any hash we pinned would break the app on their next release. See the SRI note in
+     context/04-REDESIGN.md. -->
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
 html,body,#root{height:100%;margin:0;background:#0B0B0D;font-family:"Bricolage Grotesque",sans-serif;}
 /* dashboard task navigation: brief flash on whatever element scrollAndHighlight() scrolls to,
@@ -37,7 +45,7 @@ html,body,#root{height:100%;margin:0;background:#0B0B0D;font-family:"Bricolage G
 <body>
 <div id="root"></div>
 <script type="text/babel" data-presets="react">
-const { useState, useEffect, useLayoutEffect, useRef } = React;
+const { useState, useEffect, useLayoutEffect, useRef, useCallback } = React;
 
 /* ---- inline icons (subset of lucide, drawn as SVG) ---- */
 function Ico(paths) {
@@ -1052,6 +1060,165 @@ function AnchorModule({ data, setData }) {
   );
 }
 
+/* ================= GOOGLE CALENDAR AUTHORISATION =================
+   Step 2 of context/04-REDESIGN.md. This file grants the app permission to read and write the
+   owner's Google Calendar. It does NOT render any calendar UI — that is step 3.
+
+   SECURITY RULES FOR THIS SECTION. These come from 02-GOAL.md and are not stylistic:
+
+   1. The access token lives in a ref and in nothing else. Never localStorage, never
+      sessionStorage, never window.storage, never Firestore, never the URL, never the JSON
+      export. If you find yourself wanting to persist it "just to avoid re-consenting", don't —
+      a one-hour lifetime with a reconnect prompt is the intended design.
+   2. Never log the token and never put it in an error message or on screen. The helpers below
+      deliberately surface only status codes and mapped text.
+   3. No client secret. A browser-only implicit flow does not need one, and one must never appear
+      in this repo.
+   4. Signing out of the CRM must clear the token. Wired up in signOutGoogle.
+
+   WHY GIS AND NOT FIREBASE: Firebase's GoogleAuthProvider can request calendar scopes and hand
+   back an OAuth credential, but only at initial sign-in, and its token is not refreshable for
+   API use here. Google Identity Services' token client is purpose-built for exactly this: ask
+   for a narrow scope, on demand, separately from identity. */
+
+const GOOGLE_CLIENT_ID = "139362174943-bg2h6vu4tgt6is8tu0ca415nea741fn3.apps.googleusercontent.com";
+
+/* calendar.events  -> read and write events (the feature)
+   calendar.calendarlist.readonly -> list which calendars exist, read-only.
+   calendar.events on its own CANNOT list calendars; calendarList.list requires one of
+   calendar.readonly / calendar / calendar.calendarlist / calendar.calendarlist.readonly, and
+   the .readonly calendarlist variant is the narrowest of those. Both must be declared under
+   Data Access in the Google Auth Platform console or consent will not include them. */
+const CAL_SCOPE_EVENTS = "https://www.googleapis.com/auth/calendar.events";
+const CAL_SCOPE_LIST = "https://www.googleapis.com/auth/calendar.calendarlist.readonly";
+const CAL_SCOPES = `${CAL_SCOPE_EVENTS} ${CAL_SCOPE_LIST}`;
+const CAL_API = "https://www.googleapis.com/calendar/v3";
+/* Re-prompt this many ms before the real expiry rather than waiting for a 401 mid-drag. Google
+   issues ~3600s tokens; treating them as expired slightly early is much kinder than letting a
+   drop silently fail. */
+const CAL_EXPIRY_MARGIN_MS = 120000;
+const REVOKE_HELP_URL = "https://myaccount.google.com/permissions";
+
+/* Hook owning the calendar connection. Returns everything the UI needs and nothing it doesn't —
+   note there is no getter that exposes the raw token to callers; the only way to use it is
+   calFetch, which keeps the token inside this closure. */
+function useCalendarAuth(crmUser) {
+  const tokenRef = useRef(null);        // { value, expiresAt } — memory only, by design
+  const clientRef = useRef(null);       // the GIS token client, created once
+  const [connected, setConnected] = useState(false);
+  const [account, setAccount] = useState("");   // primary calendar id, i.e. the granted account
+  const [calError, setCalError] = useState("");
+  const [connecting, setConnecting] = useState(false);
+  const [gisReady, setGisReady] = useState(false);
+
+  /* GIS is loaded async/defer, so it may not exist yet on first render. Poll briefly rather than
+     racing it, and give up with a clear message instead of leaving a dead button. */
+  useEffect(() => {
+    let tries = 0, id = null;
+    const check = () => {
+      if (window.google && window.google.accounts && window.google.accounts.oauth2) { setGisReady(true); return; }
+      if (++tries > 40) { setCalError("Google's authorisation library did not load. A privacy extension or blocker may be stopping accounts.google.com."); return; }
+      id = setTimeout(check, 250);
+    };
+    check();
+    return () => id && clearTimeout(id);
+  }, []);
+
+  const clearToken = useCallback(() => {
+    tokenRef.current = null;
+    setConnected(false); setAccount("");
+  }, []);
+
+  /* Signing out of the CRM must drop the calendar grant from memory too — otherwise the next
+     person to use this browser profile inherits a live token. */
+  useEffect(() => { if (!crmUser) clearToken(); }, [crmUser, clearToken]);
+
+  const tokenValid = () => {
+    const t = tokenRef.current;
+    return !!(t && t.value && Date.now() < t.expiresAt - CAL_EXPIRY_MARGIN_MS);
+  };
+
+  const connect = useCallback(() => {
+    setCalError("");
+    if (!gisReady) { setCalError("Still loading Google's authorisation library — try again in a moment."); return; }
+    setConnecting(true);
+    if (!clientRef.current) {
+      clientRef.current = window.google.accounts.oauth2.initTokenClient({
+        client_id: GOOGLE_CLIENT_ID,
+        scope: CAL_SCOPES,
+        callback: (resp) => {
+          setConnecting(false);
+          if (resp && resp.error) {
+            setCalError(resp.error === "access_denied"
+              ? "Calendar access was declined. Nothing was changed."
+              : `Could not get calendar permission (${resp.error}).`);
+            return;
+          }
+          if (!resp || !resp.access_token) { setCalError("Google returned no access token. Try again."); return; }
+          /* Verify we actually got what we asked for. A user can untick individual permissions on
+             the consent screen, which returns a token that silently cannot do the job. */
+          const granted = (resp.scope || "").split(/\s+/);
+          if (!granted.includes(CAL_SCOPE_EVENTS)) {
+            setCalError("Permission to edit calendar events was not granted, so scheduling cannot work. Reconnect and leave both boxes ticked.");
+            return;
+          }
+          tokenRef.current = { value: resp.access_token, expiresAt: Date.now() + (Number(resp.expires_in) || 3600) * 1000 };
+          setConnected(true);
+          if (!granted.includes(CAL_SCOPE_LIST)) setCalError("Connected, but permission to list your calendars was not granted, so only your main calendar will be available.");
+        },
+        error_callback: (err) => {
+          setConnecting(false);
+          const type = (err && err.type) || "";
+          setCalError(type === "popup_closed"
+            ? "The Google permission window was closed before finishing."
+            : type === "popup_failed_to_open"
+            ? "The browser blocked Google's permission window. Allow popups for this site and try again."
+            : "Could not open Google's permission window.");
+        },
+      });
+    }
+    /* consent on first connect so the scope list is visible; empty afterwards to avoid nagging */
+    clientRef.current.requestAccessToken({ prompt: connected ? "" : "consent" });
+  }, [gisReady, connected]);
+
+  /* Single funnel for every Calendar API call. Keeps the token private, turns expiry into a
+     reconnect prompt rather than a silent failure, and never echoes the token in an error. */
+  const calFetch = useCallback(async (path, options = {}) => {
+    if (!tokenValid()) { clearToken(); setCalError("Your calendar connection expired. Reconnect to carry on."); return { ok: false, expired: true }; }
+    let res;
+    try {
+      res = await fetch(`${CAL_API}${path}`, {
+        ...options,
+        headers: { Authorization: `Bearer ${tokenRef.current.value}`, "Content-Type": "application/json", ...(options.headers || {}) },
+      });
+    } catch (e) {
+      setCalError("Could not reach Google Calendar. Check your connection.");
+      return { ok: false, network: true };
+    }
+    if (res.status === 401 || res.status === 403) {
+      clearToken();
+      setCalError(res.status === 401
+        ? "Your calendar connection expired. Reconnect to carry on."
+        : "Google refused that calendar request. The permission may have been revoked.");
+      return { ok: false, expired: true, status: res.status };
+    }
+    if (!res.ok) { setCalError(`Google Calendar returned an error (${res.status}).`); return { ok: false, status: res.status }; }
+    if (res.status === 204) return { ok: true, data: null };
+    try { return { ok: true, data: await res.json() }; }
+    catch (e) { return { ok: true, data: null }; }
+  }, [clearToken]);
+
+  const disconnect = useCallback(() => {
+    const t = tokenRef.current;
+    if (t && t.value && window.google && window.google.accounts && window.google.accounts.oauth2) {
+      try { window.google.accounts.oauth2.revoke(t.value); } catch (e) {}
+    }
+    clearToken(); setCalError("");
+  }, [clearToken]);
+
+  return { connected, connecting, account, setAccount, calError, setCalError, gisReady, connect, disconnect, calFetch, tokenValid };
+}
+
 /* Human-readable causes for the Firebase auth error codes that actually happen in this app.
    Module scope on purpose: it is a constant lookup, and signInGoogle plus the redirect-result
    handler both need it. Empty string means "benign, say nothing". */
@@ -1107,6 +1274,11 @@ function AllyCRM() {
   const [user, setUser] = useState(null);
   const [authReady, setAuthReady] = useState(false); // becomes true once we've heard back from Firebase at least once
   const [cloudState, setCloudState] = useState("offline"); // offline | loading | saving | synced | error
+
+  /* Calendar authorisation. Separate from `user` above: `user` is who you are (Firebase), this is
+     whether the app may touch your calendar (Google Identity Services). Passing `user` in lets the
+     hook drop the token the moment you sign out of the CRM. */
+  const cal = useCalendarAuth(user);
   const cloudLoadedFor = useRef(null); // uid a reconcile is/was in flight for
   const reconcileDone = useRef(false); // true only once that reconcile has FULLY resolved (fixes a
     // real race: signing in on a new device used to let the ongoing-save effect below fire in the
@@ -1179,6 +1351,10 @@ function AllyCRM() {
   };
   const signOutGoogle = async () => {
     if (!fbAuth) return;
+    /* Drop the calendar grant FIRST. useCalendarAuth also clears on `user` going null, but that is
+       a reactive backstop; doing it explicitly here means the token is gone even if the sign-out
+       below throws partway. Required by 02-GOAL.md: signing out clears the calendar token. */
+    try { cal.disconnect(); } catch (e) {}
     try { await fbAuth.signOut(); } catch (e) {}
     cloudLoadedFor.current = null; reconcileDone.current = false; setCloudState("offline"); setUser(null);
   };
@@ -1645,7 +1821,7 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
               hidden behind it. */}
           <div className="scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "24px 32px", display: "flex", flexDirection: "column", alignItems: "center" }}>
             <div style={{ width: "100%", maxWidth: 1280, margin: 0, paddingBottom: 32 }}>
-              {tab === "overview" && <PersonalModule ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} q={q} navRequest={navRequest} navigateToTask={navigateToTask} completeTask={completeTask} />}
+              {tab === "overview" && <PersonalModule ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} q={q} navRequest={navRequest} navigateToTask={navigateToTask} completeTask={completeTask} cal={cal} crmEmail={user ? user.email : ""} />}
               {tab === "content" && <ContentModule data={ally} setData={setAlly} q={q} navRequest={navRequest} />}
               {tab === "music" && <MusicModule data={ally} setData={setAlly} />}
               {tab === "lifeAdmin" && <LifeAdminModule data={ally} setData={setAlly} q={q} />}
@@ -1844,12 +2020,106 @@ function CompleteCheckbox({ onComplete, size = 18, mt = 0, label = "Mark complet
    the summary rings first, your own life admin board second. Life Admin tasks navigate here via
    navRequest.navSub, and the dashboard's own Life Admin card just flips this subtab rather than
    trying to jump to a rail tab that no longer exists. */
+/* ================= CALENDAR CONNECTION PANEL =================
+   The only calendar UI in step 2. Deliberately a status strip rather than a big empty calendar:
+   until step 3 builds the day grid there is nothing to show, and a fake grid would imply the
+   feature works. Sits above the priority cards, which is where the grid will go.
+
+   The "Check the connection" action is not decoration — it proves the whole chain end to end
+   (token -> Google -> a real calendar list) and captures which account was actually granted,
+   which is the one thing a token alone cannot tell you. */
+function CalendarPanel({ cal, crmEmail }) {
+  const { connected, connecting, account, setAccount, calError, setCalError, gisReady, connect, disconnect, calFetch } = cal;
+  const [checking, setChecking] = useState(false);
+  const [calendars, setCalendars] = useState(null);
+
+  const check = async () => {
+    setChecking(true); setCalError(""); setCalendars(null);
+    const r = await calFetch("/users/me/calendarList?minAccessRole=reader&maxResults=50");
+    setChecking(false);
+    if (!r.ok) return;
+    const items = ((r.data && r.data.items) || []).map((c) => ({
+      id: c.id, name: c.summary, primary: !!c.primary, role: c.accessRole,
+    }));
+    setCalendars(items);
+    const primary = items.find((c) => c.primary);
+    if (primary) setAccount(primary.id);
+  };
+
+  const mismatch = account && crmEmail && account.toLowerCase() !== crmEmail.toLowerCase();
+
+  return (
+    <div className="rounded-2xl p-4 mb-5" style={{ ...card, borderRadius: 16, borderLeft: `3px solid ${connected ? C.mint : C.accent}` }}>
+      <div className="flex items-center gap-3 flex-wrap">
+        <div style={{ flex: 1, minWidth: 220 }}>
+          <div style={{ fontWeight: 700, fontSize: 14 }}>
+            Google Calendar {connected ? <span style={{ color: C.mint, fontWeight: 600 }}>· connected</span> : <span style={{ color: MUT, fontWeight: 400 }}>· not connected</span>}
+          </div>
+          <div style={{ fontSize: 11.5, color: MUT, marginTop: 2 }}>
+            {connected
+              ? (account ? `Granted on ${account}` : "Permission granted. Check the connection to confirm which account.")
+              : "Needed before tasks can be dropped onto a day. Access lasts about an hour, then asks again."}
+          </div>
+        </div>
+        {!connected ? (
+          <button onClick={connect} disabled={connecting || !gisReady} style={{ ...pillDark, padding: "8px 14px", fontSize: 12.5, opacity: connecting || !gisReady ? 0.55 : 1 }}>
+            {connecting ? "Waiting for Google…" : gisReady ? "Connect" : "Loading…"}
+          </button>
+        ) : (
+          <div className="flex items-center gap-2 flex-wrap">
+            <button onClick={check} disabled={checking} style={{ ...pillGhost, padding: "7px 12px", fontSize: 12 }}>{checking ? "Checking…" : "Check the connection"}</button>
+            <button onClick={disconnect} style={{ ...iconBtn, fontSize: 12, padding: "7px 12px", border: `1px solid ${LINE}`, borderRadius: 999 }}>Disconnect</button>
+          </div>
+        )}
+      </div>
+
+      {calError && (
+        <div role="alert" style={{ marginTop: 11, padding: "8px 10px", borderRadius: 9, background: C.accentBg, border: `1px solid ${C.accentLine}`, fontSize: 11.5, lineHeight: 1.45 }}>
+          {calError}
+          {!connected && <button onClick={connect} style={{ ...iconBtn, fontSize: 11.5, color: C.accent, padding: "4px 0 0", textDecoration: "underline" }}>Try connecting again</button>}
+        </div>
+      )}
+
+      {mismatch && (
+        <div role="alert" style={{ marginTop: 11, padding: "8px 10px", borderRadius: 9, background: `${C.amber}14`, border: `1px solid ${C.amber}55`, fontSize: 11.5, lineHeight: 1.45 }}>
+          Careful: you are signed into the CRM as <strong>{crmEmail}</strong> but granted calendar access on <strong>{account}</strong>. Blocks would be written to the wrong calendar. Disconnect and reconnect, picking {crmEmail}.
+        </div>
+      )}
+
+      {calendars && (
+        <div style={{ marginTop: 11 }}>
+          <div style={{ fontSize: 10.5, letterSpacing: "0.08em", textTransform: "uppercase", color: MUT, marginBottom: 5 }}>
+            {calendars.length} calendar{calendars.length === 1 ? "" : "s"} reachable
+          </div>
+          <div className="flex flex-col" style={{ gap: 3 }}>
+            {calendars.map((c) => {
+              const writable = c.role === "owner" || c.role === "writer";
+              return (
+                <div key={c.id} className="flex items-center gap-2" style={{ fontSize: 12 }}>
+                  <span style={{ width: 6, height: 6, borderRadius: 99, background: writable ? C.mint : MUT, flexShrink: 0 }} />
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</span>
+                  {c.primary && <span style={{ fontSize: 9.5, color: MUT, letterSpacing: "0.06em" }}>MAIN</span>}
+                  <span style={{ fontSize: 10, color: writable ? C.mint : MUT }}>{writable ? "can add events" : "view only"}</span>
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ fontSize: 10.5, color: FAINT, marginTop: 7, lineHeight: 1.45 }}>
+            Nothing has been written to any calendar. Revoke access any time at <a href={REVOKE_HELP_URL} target="_blank" rel="noopener noreferrer" style={{ color: MUT, textDecoration: "underline" }}>your Google permissions page</a>.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* HOME. Life Admin used to live here as a subtab; it is now a top-level tab in its own right, so
-   this no longer has any subtabs and is a thin wrapper around the dashboard. The calendar day grid
-   lands above PriorityDashboard in a later step — this is the component it goes into. */
-function PersonalModule({ ally, mama, setAlly, setMama, go, q, navRequest, navigateToTask, completeTask }) {
+   this no longer has any subtabs. The calendar day grid lands between CalendarPanel and
+   PriorityDashboard in step 3. */
+function PersonalModule({ ally, mama, setAlly, setMama, go, q, navRequest, navigateToTask, completeTask, cal, crmEmail }) {
   return (
     <section style={{ width: "100%", margin: 0, textAlign: "left" }}>
+      {cal && <CalendarPanel cal={cal} crmEmail={crmEmail} />}
       <PriorityDashboard ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} navigateToTask={navigateToTask} completeTask={completeTask} />
     </section>
   );
