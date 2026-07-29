@@ -985,14 +985,33 @@ const CAL_API = "https://www.googleapis.com/calendar/v3";
 const CAL_EXPIRY_MARGIN_MS = 120000;
 const REVOKE_HELP_URL = "https://myaccount.google.com/permissions";
 
-/* A boolean hint that consent was granted at some point on this browser. This is NOT the token and
-   NOT a credential — it holds no secret and grants nothing. Its only job is to tell us it is safe
-   to attempt a SILENT token request on load: with an existing grant, Google returns a token with no
-   popup and no clicking, which is what makes the connection feel persistent even though the token
-   itself is deliberately never stored. Without the hint we would have to either pop a window on
-   every page load (awful) or make the owner click Connect every time (also awful).
-   If access is revoked externally, the silent request fails and we simply clear the hint. */
-const CAL_GRANT_HINT_KEY = "ally-crm-cal-granted";
+/* HOW THE CONNECTION STAYS UP WITHOUT EVER ASKING AGAIN — read this before changing any of it.
+
+   The owner's requirement is blunt and correct: authorise once, never see a Connect prompt again.
+   What makes that possible is that CONSENT and TOKENS are different things.
+
+   * Consent is the durable part. It lives in the owner's Google account, granted once, and stays
+     until revoked at myaccount.google.com/permissions. Nothing in this app stores it or can lose it.
+   * A token is the short-lived part, about an hour. It is deliberately never persisted (02-GOAL.md).
+
+   Because consent already exists, `requestAccessToken({ prompt: "" })` returns a fresh token with
+   NO popup, NO user gesture and NO UI whatsoever. So the app simply does that itself:
+
+     - once on load, whenever signed into the CRM
+     - again a few minutes before each token expires, on a timer
+
+   The result is a connection that behaves as permanent while holding nothing sensitive. There is
+   no flag to get out of sync, and no button to click. An earlier version gated the load attempt on
+   a localStorage flag; that was wrong, because a brand-new flag makes an already-consented account
+   look unconnected and re-prompts for no reason. Never reintroduce it.
+
+   A silent attempt that fails is a normal, expected event — access revoked at Google, or offline.
+   It must stay quiet: only the small status dot changes. Do not surface a prompt on page load.
+
+   WHAT CANNOT BE DONE: a token that never expires. That requires a refresh token, which Google only
+   issues to a confidential client authenticating with a client secret, i.e. a server. This app is
+   browser-only and must never contain a secret, so background renewal above is the correct and
+   complete answer, not a workaround. */
 
 /* Calendars that should never contribute busy slots, decided by the owner 29 Jul 2026:
    Birthdays off, Holidays ON, adamon@amplified.community off. Matched by pattern rather than by
@@ -1007,11 +1026,14 @@ const calHiddenByDefault = (id) => CAL_HIDE_PATTERNS.some((re) => re.test(id || 
 function useCalendarAuth(crmUser) {
   const tokenRef = useRef(null);        // { value, expiresAt } — memory only, by design
   const clientRef = useRef(null);       // the GIS token client, created once
+  const revokedRef = useRef(false);     // set by an explicit Disconnect, so the silent reconnect
+                                        // does not immediately reverse it within the same session
   const silentRef = useRef(false);      // true while an auto-reconnect is in flight, so its
                                         // failures stay quiet. A ref, not state, because the GIS
                                         // callbacks are created once and would close over a stale
                                         // state value.
   const [connected, setConnected] = useState(false);
+  const [tokenSeq, setTokenSeq] = useState(0);
   const [account, setAccount] = useState("");   // primary calendar id, i.e. the granted account
   const [calError, setCalError] = useState("");
   const [connecting, setConnecting] = useState(false);
@@ -1071,17 +1093,18 @@ function useCalendarAuth(crmUser) {
           }
           tokenRef.current = { value: resp.access_token, expiresAt: Date.now() + (Number(resp.expires_in) || 3600) * 1000 };
           setConnected(true);
-          try { localStorage.setItem(CAL_GRANT_HINT_KEY, "1"); } catch (e) {}
+          /* bumped on every successful token so the renewal timer below re-arms; `connected` alone
+             stays true through a renewal and would leave the effect dormant after the first one. */
+          setTokenSeq((n) => n + 1);
+          setCalError("");
           if (!granted.includes(CAL_SCOPE_LIST)) setCalError("Connected, but permission to list your calendars was not granted, so only your main calendar will be available.");
         },
         error_callback: (err) => {
           setConnecting(false);
           const type = (err && err.type) || "";
-          /* A silent attempt failing is expected and normal — access may have been revoked, or the
-             browser blocked the hidden window. Clear the hint and stay quiet; the chip will just
-             read "not connected" and one click fixes it. Shouting about it on every page load
-             would be worse than the problem. */
-          try { localStorage.removeItem(CAL_GRANT_HINT_KEY); } catch (e) {}
+          /* A silent attempt failing is expected and normal — access revoked at Google, or offline.
+             Stay completely quiet: only the status dot changes. Surfacing this on page load is
+             exactly the re-prompting the owner does not want. */
           if (silentRef.current) return;
           setCalError(type === "popup_closed"
             ? "The Google permission window was closed before finishing."
@@ -1092,21 +1115,42 @@ function useCalendarAuth(crmUser) {
       });
     }
     silentRef.current = !!silent;
-    /* prompt "consent" on a genuine first connect so the scope list is visible and reviewable;
-       empty string otherwise, which is what lets an existing grant resolve with no UI at all. */
-    let hinted = false;
-    try { hinted = localStorage.getItem(CAL_GRANT_HINT_KEY) === "1"; } catch (e) {}
-    clientRef.current.requestAccessToken({ prompt: (connected || hinted || silent) ? "" : "consent" });
-  }, [gisReady, connected]);
+    /* Always prompt: "" — never "consent". With consent already on the account this resolves with
+       no UI at all, which is the whole point. Without consent it fails quietly, and the owner can
+       grant from the chip's details popover, where "consent" IS used so the scopes stay reviewable. */
+    clientRef.current.requestAccessToken({ prompt: "" });
+  }, [gisReady]);
 
-  /* Auto-reconnect on load. Only ever attempted when signed into the CRM and only when the hint
-     says consent already exists, so this cannot surprise the owner with a popup out of nowhere. */
+  /* Explicit first-time grant. The ONLY path that may show Google's consent screen, and it is only
+     ever reachable from a deliberate click in the chip popover — never from page load. */
+  const grant = useCallback(() => {
+    if (!gisReady || !clientRef.current) { connect(false); return; }
+    setCalError(""); setConnecting(true); silentRef.current = false;
+    clientRef.current.requestAccessToken({ prompt: "consent" });
+  }, [gisReady, connect]);
+
+  /* Silent connect on load. Unconditional whenever signed into the CRM: consent lives in the Google
+     account, not here, so there is nothing local to check and nothing that can fall out of sync.
+     If consent exists this is invisible. If it does not, it fails quietly. Either way the owner is
+     never asked anything. */
   useEffect(() => {
     if (!gisReady || !crmUser || connected) return;
-    let hinted = false;
-    try { hinted = localStorage.getItem(CAL_GRANT_HINT_KEY) === "1"; } catch (e) {}
-    if (hinted) connect(true);
+    if (revokedRef.current) return; // disconnected on purpose this session — do not undo it
+    connect(true);
   }, [gisReady, crmUser, connected, connect]);
+
+  /* Background renewal. Re-requests a token shortly before the current one lapses, so a session
+     left open all day never lands on an expired token mid-drag. Same silent path, so still no UI.
+     Runs off the actual expiry rather than a fixed interval, because Google's lifetime is not
+     guaranteed to be exactly an hour. */
+  useEffect(() => {
+    if (!connected) return;
+    const t = tokenRef.current;
+    if (!t) return;
+    const due = Math.max(15000, t.expiresAt - Date.now() - CAL_EXPIRY_MARGIN_MS - 30000);
+    const id = setTimeout(() => connect(true), due);
+    return () => clearTimeout(id);
+  }, [connected, tokenSeq, connect]);
 
   /* Single funnel for every Calendar API call. Keeps the token private, turns expiry into a
      reconnect prompt rather than a silent failure, and never echoes the token in an error. */
@@ -1140,12 +1184,13 @@ function useCalendarAuth(crmUser) {
     if (t && t.value && window.google && window.google.accounts && window.google.accounts.oauth2) {
       try { window.google.accounts.oauth2.revoke(t.value); } catch (e) {}
     }
-    /* Clear the hint too, or the auto-reconnect above would immediately undo the disconnect. */
-    try { localStorage.removeItem(CAL_GRANT_HINT_KEY); } catch (e) {}
+    /* revoke() withdraws consent at Google, so the silent reconnect above correctly stops working
+       rather than instantly undoing this. Reconnecting afterwards needs a real consent click. */
+    revokedRef.current = true;
     clearToken(); setCalError("");
   }, [clearToken]);
 
-  return { connected, connecting, account, setAccount, calError, setCalError, gisReady, connect, disconnect, calFetch, tokenValid };
+  return { connected, connecting, account, setAccount, calError, setCalError, gisReady, connect, grant, disconnect, calFetch, tokenValid, revoked: revokedRef };
 }
 
 /* Human-readable causes for the Firebase auth error codes that actually happen in this app.
@@ -1958,8 +2003,19 @@ function CompleteCheckbox({ onComplete, size = 18, mt = 0, label = "Mark complet
    The "Check the connection" action is not decoration — it proves the whole chain end to end
    (token -> Google -> a real calendar list) and captures which account was actually granted,
    which is the one thing a token alone cannot tell you. */
+/* Deliberately near-invisible. The owner's instruction was that a working calendar connection must
+   never advertise itself, and must never show anything resembling a Connect prompt. So:
+
+   * healthy and connected  -> a single small green dot, no text, no button
+   * still trying on load   -> the same dot, dimmed
+   * genuinely broken       -> a red dot, and ONLY then any wording
+   * consent never granted  -> a red dot; the actual grant button lives inside the popover, one
+                               click deep, because Google requires a real user gesture for consent
+
+   The popover is the disconnect affordance 02-GOAL.md requires. Do not promote any of this back
+   into the page body. */
 function CalendarChip({ cal, crmEmail }) {
-  const { connected, connecting, account, setAccount, calError, setCalError, gisReady, connect, disconnect, calFetch } = cal;
+  const { connected, connecting, account, setAccount, calError, setCalError, gisReady, connect, grant, disconnect, calFetch } = cal;
   const [open, setOpen] = useState(false);
   const [calendars, setCalendars] = useState(null);
   const [checking, setChecking] = useState(false);
@@ -1989,15 +2045,13 @@ function CalendarChip({ cal, crmEmail }) {
 
   return (
     <div style={{ position: "relative", flexShrink: 0 }}>
-      <button onClick={() => (connected || calError ? setOpen((o) => !o) : connect())} disabled={connecting || (!gisReady && !connected)}
-        title={connected ? `Google Calendar connected${account ? ` · ${account}` : ""}` : "Connect Google Calendar"}
-        aria-label={connected ? "Google Calendar connected" : "Connect Google Calendar"}
-        className="flex items-center gap-1.5"
-        style={{ ...iconBtn, fontSize: 11, padding: "5px 9px", border: `1px solid ${connected ? LINE : C.accentLine}`, borderRadius: 8, background: connected ? "transparent" : C.accentBg, cursor: "pointer" }}>
-        <span style={{ width: 7, height: 7, borderRadius: 99, background: dot, flexShrink: 0 }} className={connecting ? "pulse-dot" : ""} />
-        <span className="btn-label" style={{ whiteSpace: "nowrap", color: connected ? MUT : C.ink }}>
-          {connecting ? "Connecting…" : connected ? "Calendar" : "Connect calendar"}
-        </span>
+      <button onClick={() => setOpen((o) => !o)}
+        title={connected ? `Google Calendar connected${account ? ` · ${account}` : ""}` : "Google Calendar not connected"}
+        aria-label={connected ? "Google Calendar connected" : "Google Calendar not connected"}
+        className="flex items-center justify-center"
+        style={{ ...iconBtn, padding: 6, borderRadius: 99, border: "1px solid transparent", cursor: "pointer" }}>
+        <span className={!connected && !calError ? "pulse-dot" : ""}
+          style={{ width: 7, height: 7, borderRadius: 99, background: dot, flexShrink: 0, display: "block" }} />
       </button>
 
       {open && (
@@ -2009,8 +2063,9 @@ function CalendarChip({ cal, crmEmail }) {
             </div>
             <div style={{ fontSize: 10.5, color: MUT, lineHeight: 1.45 }}>
               {connected
-                ? (account ? `Granted on ${account}. Reconnects itself on reload.` : "Permission granted.")
-                : "Not connected."}
+                ? (account ? `Granted on ${account}. Renews itself — you will not be asked again.` : "Permission granted.")
+                : connecting ? "Reconnecting…"
+                : "Not connected. Access was either never granted on this account, or revoked at Google."}
             </div>
 
             {calError && (
@@ -2045,7 +2100,7 @@ function CalendarChip({ cal, crmEmail }) {
             <div className="flex items-center gap-2" style={{ marginTop: 11 }}>
               {connected
                 ? <button onClick={() => { disconnect(); setCalendars(null); setOpen(false); }} style={{ ...iconBtn, fontSize: 11, padding: "6px 11px", border: `1px solid ${LINE}`, borderRadius: 999 }}>Disconnect</button>
-                : <button onClick={() => { setCalError(""); connect(); }} style={{ ...pillDark, fontSize: 11, padding: "6px 12px" }}>Connect</button>}
+                : <button onClick={grant} disabled={connecting} style={{ ...pillDark, fontSize: 11, padding: "6px 12px", opacity: connecting ? 0.55 : 1 }}>{connecting ? "Waiting for Google…" : "Grant access"}</button>}
               <a href={REVOKE_HELP_URL} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, color: MUT, textDecoration: "underline" }}>Revoke at Google</a>
             </div>
           </div>
