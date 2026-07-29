@@ -1034,6 +1034,8 @@ function useCalendarAuth(crmUser) {
                                         // state value.
   const [connected, setConnected] = useState(false);
   const [tokenSeq, setTokenSeq] = useState(0);
+  const [calendars, setCalendars] = useState(null); // lifted here so the day grid and the chip
+                                                    // share one fetch instead of racing two
   const [account, setAccount] = useState("");   // primary calendar id, i.e. the granted account
   const [calError, setCalError] = useState("");
   const [connecting, setConnecting] = useState(false);
@@ -1179,6 +1181,24 @@ function useCalendarAuth(crmUser) {
     catch (e) { return { ok: true, data: null }; }
   }, [clearToken]);
 
+  /* showHidden=true matters: calendars unticked in Google Calendar's own sidebar are omitted by
+     default. minAccessRole=reader still drops freeBusy-only calendars, which are useless here since
+     they carry no event detail. `used` applies the owner's include/exclude decisions. */
+  const loadCalendars = useCallback(async () => {
+    const r = await calFetch("/users/me/calendarList?minAccessRole=reader&showHidden=true&maxResults=100");
+    if (!r.ok) return;
+    const items = ((r.data && r.data.items) || []).map((c) => ({
+      id: c.id, name: c.summary, primary: !!c.primary, role: c.accessRole,
+      colour: c.backgroundColor || null,
+      used: !calHiddenByDefault(c.id),
+    }));
+    setCalendars(items);
+    const primary = items.find((c) => c.primary);
+    if (primary) setAccount(primary.id);
+  }, [calFetch]);
+
+  useEffect(() => { if (connected && !calendars) loadCalendars(); }, [connected, calendars, loadCalendars]);
+
   const disconnect = useCallback(() => {
     const t = tokenRef.current;
     if (t && t.value && window.google && window.google.accounts && window.google.accounts.oauth2) {
@@ -1187,10 +1207,209 @@ function useCalendarAuth(crmUser) {
     /* revoke() withdraws consent at Google, so the silent reconnect above correctly stops working
        rather than instantly undoing this. Reconnecting afterwards needs a real consent click. */
     revokedRef.current = true;
-    clearToken(); setCalError("");
+    clearToken(); setCalendars(null); setCalError("");
   }, [clearToken]);
 
-  return { connected, connecting, account, setAccount, calError, setCalError, gisReady, connect, grant, disconnect, calFetch, tokenValid, revoked: revokedRef };
+  return { connected, connecting, account, setAccount, calError, setCalError, gisReady, connect, grant, disconnect, calFetch, tokenValid, calendars, loadCalendars };
+}
+
+/* ================= DAY GRID =================
+   Step 3 of context/04-REDESIGN.md. READ ONLY: it renders today as countable half-hour cells and
+   fills in what Google already has. Nothing here writes to any calendar — dropping tasks is step 4.
+
+   Shape, per the owner's brief: today only (a week was considered and rejected as too cramped),
+   06:00 to 22:00, half-hour cells, and three faint phase bands so the day reads as morning / day /
+   night at a glance. Laid out as one horizontal strip rather than a tall vertical column because
+   HOME has to fit the grid AND the priority cards on one screen — a 32-row vertical calendar would
+   push the cards entirely below the fold and defeat the point of putting them together. */
+const DAY_START_MIN = 6 * 60;          // 06:00
+const DAY_END_MIN = 22 * 60;           // 22:00
+const SLOT_MIN = 30;
+const SLOT_COUNT = (DAY_END_MIN - DAY_START_MIN) / SLOT_MIN;   // 32
+
+/* Faint on purpose — the owner asked for "very faded, almost like very light colour", not blocky
+   bands. These read as a wash behind the cells, and the cell borders stay the dominant structure.
+   Boundaries: morning 06:00-12:00, day 12:00-19:30, night 19:30-22:00. Sums to exactly 32 slots. */
+const DAY_PHASES = [
+  { key: "morning", label: "Morning", from: 6 * 60,       to: 12 * 60,      tint: "rgba(47,163,124,0.085)", edge: "rgba(47,163,124,0.30)" },
+  { key: "day",     label: "Day",     from: 12 * 60,      to: 19 * 60 + 30, tint: "rgba(214,154,0,0.085)",  edge: "rgba(214,154,0,0.30)" },
+  { key: "night",   label: "Night",   from: 19 * 60 + 30, to: 22 * 60,      tint: "rgba(229,72,77,0.085)",  edge: "rgba(229,72,77,0.30)" },
+];
+const phaseForMin = (m) => DAY_PHASES.find((p) => m >= p.from && m < p.to) || DAY_PHASES[DAY_PHASES.length - 1];
+const slotToMin = (i) => DAY_START_MIN + i * SLOT_MIN;
+const minToLabel = (m) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+
+/* Local minutes-from-midnight for a Google event edge. Google returns dateTime as an offset-aware
+   RFC3339 string; `new Date()` parses that to the correct instant and getHours() gives the viewer's
+   local clock, which is what the grid is drawn in. Do NOT slice the string manually — that silently
+   ignores the offset and shifts every event when the calendar's zone differs from the browser's. */
+const eventEdgeMin = (edge, dayStart) => {
+  const d = new Date(edge);
+  const dayDiff = Math.floor((d - dayStart) / 86400000);
+  return d.getHours() * 60 + d.getMinutes() + (dayDiff !== 0 ? dayDiff * 1440 : 0);
+};
+
+/* Greedy lane packing so overlapping events sit side by side instead of on top of each other. */
+function packLanes(events) {
+  const lanes = [];
+  events.slice().sort((a, b) => a.startMin - b.startMin || b.endMin - a.endMin).forEach((ev) => {
+    let lane = lanes.findIndex((l) => l[l.length - 1].endMin <= ev.startMin);
+    if (lane === -1) { lanes.push([ev]); lane = lanes.length - 1; } else { lanes[lane].push(ev); }
+    ev._lane = lane;
+  });
+  return { events, laneCount: Math.max(1, lanes.length) };
+}
+
+function DayGrid({ cal }) {
+  const { connected, calFetch, calendars, account } = cal;
+  const [events, setEvents] = useState([]);
+  const [allDay, setAllDay] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [nowMin, setNowMin] = useState(() => { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); });
+
+  const today = new Date();
+  const dayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const dayKey = todayISO();
+
+  /* the "now" line only needs minute resolution */
+  useEffect(() => {
+    const id = setInterval(() => { const d = new Date(); setNowMin(d.getHours() * 60 + d.getMinutes()); }, 60000);
+    return () => clearInterval(id);
+  }, []);
+
+  const used = (calendars || []).filter((c) => c.used);
+
+  const load = useCallback(async () => {
+    if (!connected || !used.length) return;
+    setLoading(true); setLoadError("");
+    const timeMin = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0).toISOString();
+    const timeMax = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59).toISOString();
+    /* singleEvents=true expands recurring events into their individual instances, which is what we
+       want: show the occurrences, never touch the recurrence rule (explicitly out of scope). */
+    const qs = `?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}&singleEvents=true&orderBy=startTime&maxResults=250`;
+    const results = await Promise.all(used.map(async (c) => {
+      const r = await calFetch(`/calendars/${encodeURIComponent(c.id)}/events${qs}`);
+      return r.ok ? { cal: c, items: (r.data && r.data.items) || [] } : { cal: c, items: null };
+    }));
+    if (results.some((r) => r.items === null)) setLoadError("Some calendars could not be read.");
+    const timed = [], full = [];
+    results.forEach(({ cal: c, items }) => {
+      (items || []).forEach((ev) => {
+        if (ev.status === "cancelled") return;
+        const base = { id: `${c.id}::${ev.id}`, title: ev.summary || "(no title)", calId: c.id, calName: c.name, writable: c.role === "owner" || c.role === "writer" };
+        if (ev.start && ev.start.date) { full.push(base); return; }
+        if (!ev.start || !ev.start.dateTime) return;
+        const s = eventEdgeMin(ev.start.dateTime, dayStart);
+        const e = eventEdgeMin(ev.end && ev.end.dateTime ? ev.end.dateTime : ev.start.dateTime, dayStart);
+        timed.push({ ...base, startMin: s, endMin: Math.max(s + 15, e) });
+      });
+    });
+    setEvents(timed); setAllDay(full); setLoading(false);
+  }, [connected, calFetch, JSON.stringify(used.map((c) => c.id)), dayKey]);
+
+  useEffect(() => { load(); }, [load]);
+
+  /* Events wholly outside 06:00-22:00 would otherwise vanish without explanation. Count them and
+     say so, rather than pretending the day is emptier than it is. */
+  const visible = events.filter((e) => e.endMin > DAY_START_MIN && e.startMin < DAY_END_MIN);
+  const offGrid = events.length - visible.length;
+  const { laneCount } = packLanes(visible);
+
+  const takenSlots = new Set();
+  visible.forEach((e) => {
+    for (let i = 0; i < SLOT_COUNT; i++) {
+      const a = slotToMin(i), b = a + SLOT_MIN;
+      if (e.startMin < b && e.endMin > a) takenSlots.add(i);
+    }
+  });
+  const freeCount = SLOT_COUNT - takenSlots.size;
+
+  const LANE_H = 20, LANE_GAP = 3;
+  const eventsH = laneCount * LANE_H + (laneCount - 1) * LANE_GAP;
+  const pct = (m) => ((Math.min(Math.max(m, DAY_START_MIN), DAY_END_MIN) - DAY_START_MIN) / (DAY_END_MIN - DAY_START_MIN)) * 100;
+  const nowOnGrid = nowMin >= DAY_START_MIN && nowMin <= DAY_END_MIN;
+
+  if (!connected) return null;
+
+  return (
+    <div className="rounded-2xl p-4 mb-5" style={{ ...card, borderRadius: 16 }}>
+      <div className="flex items-baseline justify-between flex-wrap gap-2 mb-3">
+        <div>
+          <div style={{ fontWeight: 700, fontSize: 14 }}>{today.toLocaleDateString("en-ZA", { weekday: "long", day: "numeric", month: "long" })}</div>
+          <div style={{ fontSize: 10.5, color: MUT, marginTop: 1 }}>
+            {loading ? "Reading your calendar…" : `${freeCount} of ${SLOT_COUNT} half-hour slots free`}
+            {offGrid > 0 && ` · ${offGrid} event${offGrid === 1 ? "" : "s"} outside 06:00–22:00`}
+          </div>
+        </div>
+        <div className="flex items-center gap-3" style={{ fontSize: 9.5, color: MUT, letterSpacing: "0.06em", textTransform: "uppercase" }}>
+          {DAY_PHASES.map((p) => (
+            <span key={p.key} className="flex items-center gap-1.5">
+              <span style={{ width: 8, height: 8, borderRadius: 2, background: p.tint, border: `1px solid ${p.edge}` }} />{p.label}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {allDay.length > 0 && (
+        <div className="flex items-center gap-1.5 flex-wrap" style={{ marginBottom: 7 }}>
+          {allDay.map((e) => (
+            <span key={e.id} title={`${e.title} · ${e.calName} · all day`} style={{ fontSize: 10.5, padding: "2px 8px", borderRadius: 999, background: FILL, border: `1px solid ${LINE}`, color: MUT, maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.title}</span>
+          ))}
+        </div>
+      )}
+
+      {/* hour ruler */}
+      <div style={{ position: "relative", height: 13, marginBottom: 3 }}>
+        {Array.from({ length: (DAY_END_MIN - DAY_START_MIN) / 60 + 1 }, (_, h) => {
+          const m = DAY_START_MIN + h * 60;
+          return (
+            <span key={m} style={{ position: "absolute", left: `${pct(m)}%`, transform: h === 0 ? "none" : "translateX(-50%)", fontSize: 9, color: MUT, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
+              {String(m / 60).padStart(2, "0")}
+            </span>
+          );
+        })}
+      </div>
+
+      {/* event lanes, sitting directly above the cells they occupy */}
+      <div style={{ position: "relative", height: eventsH, marginBottom: 3 }}>
+        {visible.map((e) => (
+          <div key={e.id} title={`${e.title}\n${minToLabel(Math.max(e.startMin, DAY_START_MIN))}–${minToLabel(Math.min(e.endMin, DAY_END_MIN))}\n${e.calName}`}
+            style={{ position: "absolute", left: `${pct(e.startMin)}%`, width: `calc(${pct(e.endMin) - pct(e.startMin)}% - 2px)`,
+              top: e._lane * (LANE_H + LANE_GAP), height: LANE_H, borderRadius: 5,
+              background: e.writable ? "rgba(62,143,214,0.30)" : "rgba(255,255,255,0.13)",
+              border: `1px solid ${e.writable ? "rgba(62,143,214,0.55)" : LINE}`,
+              display: "flex", alignItems: "center", padding: "0 5px", overflow: "hidden" }}>
+            <span style={{ fontSize: 9.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: C.ink }}>{e.title}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* the cells — 32 countable half-hour squares */}
+      <div style={{ position: "relative", display: "grid", gridTemplateColumns: `repeat(${SLOT_COUNT}, 1fr)`, gap: 2 }}>
+        {Array.from({ length: SLOT_COUNT }, (_, i) => {
+          const m = slotToMin(i);
+          const ph = phaseForMin(m);
+          const taken = takenSlots.has(i);
+          const isHourStart = m % 60 === 0;
+          return (
+            <div key={i} title={`${minToLabel(m)}–${minToLabel(m + SLOT_MIN)} · ${ph.label}${taken ? " · busy" : " · free"}`}
+              style={{ height: 40, borderRadius: 4, background: taken ? "rgba(255,255,255,0.10)" : ph.tint,
+                borderTop: `1px solid ${taken ? LINE : ph.edge}`, borderBottom: `1px solid ${taken ? LINE : ph.edge}`,
+                borderLeft: `1px solid ${isHourStart ? ph.edge : "transparent"}`, borderRight: "1px solid transparent" }} />
+          );
+        })}
+        {nowOnGrid && (
+          <div aria-hidden style={{ position: "absolute", left: `${pct(nowMin)}%`, top: -4, bottom: -4, width: 2, background: C.accent, borderRadius: 2, pointerEvents: "none" }} />
+        )}
+      </div>
+
+      {loadError && <div role="alert" style={{ marginTop: 8, fontSize: 10.5, color: C.amber }}>{loadError}</div>}
+      <div style={{ marginTop: 8, fontSize: 10, color: FAINT, lineHeight: 1.45 }}>
+        Reading only — nothing here can change your calendar yet. Blue blocks are on a calendar you can write to; grey are view-only.
+      </div>
+    </div>
+  );
 }
 
 /* Human-readable causes for the Firebase auth error codes that actually happen in this app.
@@ -1796,7 +2015,7 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
               hidden behind it. */}
           <div className="scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "24px 32px", display: "flex", flexDirection: "column", alignItems: "center" }}>
             <div style={{ width: "100%", maxWidth: 1280, margin: 0, paddingBottom: 32 }}>
-              {tab === "overview" && <PersonalModule ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} q={q} navRequest={navRequest} navigateToTask={navigateToTask} completeTask={completeTask} />}
+              {tab === "overview" && <PersonalModule ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} q={q} navRequest={navRequest} navigateToTask={navigateToTask} completeTask={completeTask} cal={cal} />}
               {tab === "content" && <ContentModule data={ally} setData={setAlly} q={q} navRequest={navRequest} />}
               {tab === "music" && <MusicModule data={ally} setData={setAlly} />}
               {tab === "lifeAdmin" && <LifeAdminModule data={ally} setData={setAlly} q={q} />}
@@ -2015,30 +2234,8 @@ function CompleteCheckbox({ onComplete, size = 18, mt = 0, label = "Mark complet
    The popover is the disconnect affordance 02-GOAL.md requires. Do not promote any of this back
    into the page body. */
 function CalendarChip({ cal, crmEmail }) {
-  const { connected, connecting, account, setAccount, calError, setCalError, gisReady, connect, grant, disconnect, calFetch } = cal;
+  const { connected, connecting, account, calError, gisReady, grant, disconnect, calendars } = cal;
   const [open, setOpen] = useState(false);
-  const [calendars, setCalendars] = useState(null);
-  const [checking, setChecking] = useState(false);
-
-  /* showHidden=true matters: calendars unticked in Google Calendar's own sidebar (which is common
-     for Holidays) are omitted by default, and the owner explicitly wants Holidays to block out
-     slots. minAccessRole=reader still filters out freeBusy-only calendars, which are useless here
-     because they carry no event detail. */
-  const loadCalendars = async () => {
-    setChecking(true);
-    const r = await calFetch("/users/me/calendarList?minAccessRole=reader&showHidden=true&maxResults=100");
-    setChecking(false);
-    if (!r.ok) return;
-    const items = ((r.data && r.data.items) || []).map((c) => ({
-      id: c.id, name: c.summary, primary: !!c.primary, role: c.accessRole,
-      used: !calHiddenByDefault(c.id),
-    }));
-    setCalendars(items);
-    const primary = items.find((c) => c.primary);
-    if (primary) setAccount(primary.id);
-  };
-
-  useEffect(() => { if (connected && !calendars) loadCalendars(); }, [connected]);
 
   const mismatch = account && crmEmail && account.toLowerCase() !== crmEmail.toLowerCase();
   const dot = connected ? (mismatch ? C.amber : C.mint) : calError ? C.accent : MUT;
@@ -2095,11 +2292,9 @@ function CalendarChip({ cal, crmEmail }) {
                 </div>
               </div>
             )}
-            {checking && <div style={{ fontSize: 10.5, color: MUT, marginTop: 9 }}>Checking…</div>}
-
             <div className="flex items-center gap-2" style={{ marginTop: 11 }}>
               {connected
-                ? <button onClick={() => { disconnect(); setCalendars(null); setOpen(false); }} style={{ ...iconBtn, fontSize: 11, padding: "6px 11px", border: `1px solid ${LINE}`, borderRadius: 999 }}>Disconnect</button>
+                ? <button onClick={() => { disconnect(); setOpen(false); }} style={{ ...iconBtn, fontSize: 11, padding: "6px 11px", border: `1px solid ${LINE}`, borderRadius: 999 }}>Disconnect</button>
                 : <button onClick={grant} disabled={connecting} style={{ ...pillDark, fontSize: 11, padding: "6px 12px", opacity: connecting ? 0.55 : 1 }}>{connecting ? "Waiting for Google…" : "Grant access"}</button>}
               <a href={REVOKE_HELP_URL} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, color: MUT, textDecoration: "underline" }}>Revoke at Google</a>
             </div>
@@ -2113,9 +2308,10 @@ function CalendarChip({ cal, crmEmail }) {
 /* HOME. Life Admin used to live here as a subtab; it is now a top-level tab in its own right, so
    this no longer has any subtabs. The calendar day grid lands directly above PriorityDashboard in
    step 3 — connection state lives in the header chip, not here, so the grid gets the full width. */
-function PersonalModule({ ally, mama, setAlly, setMama, go, q, navRequest, navigateToTask, completeTask }) {
+function PersonalModule({ ally, mama, setAlly, setMama, go, q, navRequest, navigateToTask, completeTask, cal }) {
   return (
     <section style={{ width: "100%", margin: 0, textAlign: "left" }}>
+      {cal && <DayGrid cal={cal} />}
       <PriorityDashboard ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} navigateToTask={navigateToTask} completeTask={completeTask} />
     </section>
   );
