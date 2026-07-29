@@ -1830,9 +1830,9 @@ const counts = Object.fromEntries(pipelineCols.map((c) => [c, content.items.filt
 title pulls through by title only (never the script/desc box), same rule every other pillar
 follows. Both rings above stay purely score-driven regardless of what is in either list. */
 const allItems = extraItems && extraItems.length ? [...content.items, ...extraItems] : content.items;
-const toFilmDated = allItems.filter((i) => i.status === "To Film" && ((i.due && !i.dueOff) || i.scheduledFor)).sort((a, b) => daysUntil(a.due || a.scheduledFor) - daysUntil(b.due || b.scheduledFor)).slice(0, 3);
-const toEditDated = allItems.filter((i) => i.status === "To Edit" && ((i.due && !i.dueOff) || i.scheduledFor)).sort((a, b) => daysUntil(a.due || a.scheduledFor) - daysUntil(b.due || b.scheduledFor)).slice(0, 3);
-const ideasDated = allItems.filter((i) => i.status === "Ideas" && ((i.due && !i.dueOff) || i.scheduledFor)).sort((a, b) => daysUntil(a.due || a.scheduledFor) - daysUntil(b.due || b.scheduledFor)).slice(0, 3);
+const toFilmDated = allItems.filter((i) => i.status === "To Film" && !i.dueOff && (i.due || i.scheduledFor)).sort((a, b) => daysUntil(a.due || a.scheduledFor) - daysUntil(b.due || b.scheduledFor)).slice(0, 3);
+const toEditDated = allItems.filter((i) => i.status === "To Edit" && !i.dueOff && (i.due || i.scheduledFor)).sort((a, b) => daysUntil(a.due || a.scheduledFor) - daysUntil(b.due || b.scheduledFor)).slice(0, 3);
+const ideasDated = allItems.filter((i) => i.status === "Ideas" && !i.dueOff && (i.due || i.scheduledFor)).sort((a, b) => daysUntil(a.due || a.scheduledFor) - daysUntil(b.due || b.scheduledFor)).slice(0, 3);
 return (
 <div onClick={() => onNavigate && onNavigate({ navTab: "content", navSub })} className="rounded-2xl p-5" style={{ ...card, borderRadius: 18, borderLeft: "4px solid " + mod.accent, cursor: "pointer" }}>
 <div className="flex items-center justify-between mb-3">
@@ -1872,7 +1872,7 @@ return (
 <CompleteCheckbox onComplete={() => onComplete && onComplete({ id: i.id, sourceType: filmType })} label="Move to In Edit" />
 <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, cursor: "pointer" }} onClick={(e) => { e.stopPropagation(); onNavigate && onNavigate({ id: i.id, navTab: "content", navSub }); }}>
 <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{i.title}</span>
-<DueChip due={i.due || i.scheduledFor} />
+{i.scheduledFor && <span title={"Scheduled to post " + i.scheduledFor} style={{ fontSize: 11 }}>📅</span>}<DueChip due={i.due || i.scheduledFor} />
 </div>
 </div>
 ))}
@@ -1885,7 +1885,7 @@ return (
 <CompleteCheckbox onComplete={() => onComplete && onComplete({ id: i.id, sourceType: editType })} label="Ready to post" />
 <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, cursor: "pointer" }} onClick={(e) => { e.stopPropagation(); onNavigate && onNavigate({ id: i.id, navTab: "content", navSub }); }}>
 <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{i.title}</span>
-<DueChip due={i.due || i.scheduledFor} />
+{i.scheduledFor && <span title={"Scheduled to post " + i.scheduledFor} style={{ fontSize: 11 }}>📅</span>}<DueChip due={i.due || i.scheduledFor} />
 </div>
 </div>
 ))}
@@ -1897,7 +1897,7 @@ return (
 {ideasDated.map((i) => (
 <div key={i.id} onClick={(e) => { e.stopPropagation(); onNavigate && onNavigate({ id: i.id, navTab: "content", navSub }); }} className="flex items-center justify-between gap-1.5" style={{ fontSize: 12, cursor: "pointer" }}>
 <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{i.title}</span>
-<DueChip due={i.due || i.scheduledFor} />
+{i.scheduledFor && <span title={"Scheduled to post " + i.scheduledFor} style={{ fontSize: 11 }}>📅</span>}<DueChip due={i.due || i.scheduledFor} />
 </div>
 ))}
 </div>
@@ -2495,7 +2495,7 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
                   const toggleDesc = () => { if (hasTextSelection()) return; setOpenDesc((o) => ({ ...o, [i.id]: !descOpen })); };
                   return (
                   <div key={i.id} data-nav-id={i.id} draggable onDragStart={(e) => { e.dataTransfer.setData("text/plain", i.id); e.dataTransfer.effectAllowed = "move"; }} onClick={toggleDesc} className="rounded-lg" style={{ cursor: "pointer", background: "rgba(255,255,255,0.035)", border: `1px solid ${LINE}`, borderLeft: `2px solid ${CONTENT_TINT[col]}`, borderRadius: 10, padding: "11px 13px" }}>
-                    <InlineEdit value={i.title} onChange={(v) => updateItem(i.id, { title: v })} strong bubbleClicks /><button onClick={(e) => { e.stopPropagation(); setExpandedId(i.id); }} style={{ ...iconBtn, padding: 2, marginLeft: 6 }} aria-label="Expand description" title="Expand description to full screen">⤢</button>
+                    <InlineEdit value={i.title} onChange={(v) => updateItem(i.id, { title: v })} strong bubbleClicks />{i.scheduledFor && <span title={"Scheduled to post " + i.scheduledFor} style={{ marginLeft: 6, fontSize: 12 }}>📅</span>}<button onClick={(e) => { e.stopPropagation(); setExpandedId(i.id); }} style={{ ...iconBtn, padding: 2, marginLeft: 6 }} aria-label="Expand description" title="Expand description to full screen">⤢</button>
                     <ScriptBox value={i.desc || ""} isHtml={!!i.descHtml} open={descOpen} onFocus={() => openIfNot(i.id)} onChange={(v) => updateItem(i.id, { desc: v, descHtml: true })} onToggle={toggleDesc} />
                     <div className="flex items-center gap-2 mt-1.5 flex-wrap" style={{ fontSize: 10.5 }}>
                       {/* two independent dates now: a deadline for finishing the current stage's work, and a
