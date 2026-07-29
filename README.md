@@ -15,9 +15,11 @@ Everything else loads from CDNs at runtime: React 18 and ReactDOM 18 (unpkg), Ba
 Nothing to install and nothing to build — just serve the folder over HTTP:
 
 ```bash
-python3 -m http.server 8000
-# then open http://localhost:8000
+python3 -m http.server 5000
+# then open http://localhost:5000
 ```
+
+**Use port 5000, not 8000.** Google treats every port as a separate origin, and the OAuth client only authorises `http://localhost` and `http://localhost:5000`. Serving on 8000 will fail the moment anything touches Google sign-in or the Calendar API, with an `origin_mismatch` error rather than anything helpful.
 
 Use a local server rather than opening `index.html` over `file://`, because Firebase Auth needs an http(s) origin. To sign in from localhost, `localhost` must be listed under Firebase Auth authorised domains and as an authorised JavaScript origin on the Google OAuth client.
 

@@ -338,9 +338,25 @@ const AVATAR_IMG = "data:image/jpeg;base64," +
   "B5etL4j9leqwMZ9PeO9I/FF8EmPVSef5msHNbXejXqpdK9pcxtkLKjJk+YyBiitEOmbu2n1Thmf3XVoXMRPwyDmreWDR6s0epp4SkMwO6MnqKm8PcdQXVsLP" +
   "iCBSp5b2XcuP6VcWOjWV9rELaW0bo45lSCFH71KZVpr0XHClhJdLbLJn3eABnJ7nHIVuGNNWdtHZ2yQwjCr1PcnzNOGobsvGNCTSTRmkmoLBGiNA0RoBJpDU" +
   "o0hqEn//2Q==";
+/* ---------- palette ----------
+   Theme is translucent black with a single red accent (owner's call, 29 Jul 2026 — see
+   context/04-REDESIGN.md). Two rules govern edits here:
+
+   1. `card` / `soft` are deliberately SEMI-TRANSPARENT rgba, not hex. Combined with the
+      backdropFilter on the `card` style object below, that is what produces the translucent
+      black look. Swapping them back to opaque hex silently kills the whole theme.
+   2. `mint` / `amber` / `rose` are NOT decorative — urgencyTint() maps them to green/orange/red
+      for the priority rings, which must keep encoding urgency. Do not fold them into the accent.
+
+   The remaining named tints (lilac, sky, pink, peach, brown) survive because they carry meaning
+   elsewhere: kanban columns (CONTENT_TINT), task sources (SOURCE_TINT), client states
+   (CLIENT_TINT). Tabs no longer use them for identity — every module accent is now `accent`. */
 const C = {
-  canvas: "#0B0B0D", frame: "#0B0B0D", card: "#131316", soft: "#0E0E11", dark: "#F2F2F4",
+  canvas: "#08080A", frame: "#08080A",
+  card: "rgba(22,22,26,0.55)", soft: "rgba(14,14,17,0.6)", dark: "#F2F2F4",
   ink: "#F2F2F4", ink2: "rgba(242,242,244,0.72)",
+  /* the single theme accent */
+  accent: "#E5484D", accentBg: "rgba(229,72,77,0.14)", accentLine: "rgba(229,72,77,0.42)",
   /* accents */
   mint: "#2FA37C", pink: "#E0688F", yellow: "#D69A00", lilac: "#7B67E0", sky: "#3E8FD6", peach: "#E07B3E", rose: "#E5484D", brown: "#9C6B3E",
   /* soft tiles (translucent tints on dark) */
@@ -353,26 +369,51 @@ const FILL = "rgba(255,255,255,0.06)", FILL2 = "rgba(255,255,255,0.1)", LINE = "
 const AURAS = [C.lilac, C.mint, C.pink, C.sky, C.peach];
 const onTint = () => "#fff";
 
-const card = { background: C.card, border: `1px solid ${LINE}`, boxShadow: "none" };
-const cardSoft = { background: C.soft, border: `1px solid ${LINE}` };
+/* backdropFilter is what turns C.card's rgba into actual translucency rather than just a flat
+   dark grey — it blurs whatever sits behind the card. Keep them together. */
+const card = { background: C.card, border: `1px solid ${LINE}`, boxShadow: "none", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)" };
+const cardSoft = { background: C.soft, border: `1px solid ${LINE}`, backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)" };
 
-/* module identity: emoji + accent + tile bg */
+/* module identity: icon + accent + tile bg.
+   `icon` names a custom drawn glyph in NAV_ICONS (see below) — the emoji field is gone, per the
+   redesign. Every accent is now the single theme red; `bg` follows. */
 const MODULES = {
-  overview:  { emoji: "🎯", label: "PERSONAL",  accent: C.mint,  bg: C.mintBg },
-  content:   { emoji: "🎬", label: "CONTENT",   accent: C.sky,   bg: C.skyBg },
-  music:     { emoji: "🎵", label: "MUSIC",     accent: C.coral, bg: C.peachBg },
-  series:    { emoji: "📖", label: "SERIES",    accent: C.pink,  bg: C.pinkBg },
-  anchor:    { emoji: "✦", label: "ANCHOR", accent: C.lilac, bg: C.lilacBg },
-  unlocks:   { emoji: "🔓", label: "Unlocks",   accent: C.yellow, bg: C.yellowBg },
-  apartment: { emoji: "🛋️", label: "Apartment", accent: C.peach, bg: C.peachBg },
-  lifeAdmin: { emoji: "📋", label: "Life Admin", accent: C.rose,  bg: C.roseBg },
-  mama:      { emoji: "💼", label: "MAMA",      accent: C.brown, bg: C.brownBg },
-  deals:     { emoji: "🤝", label: "Deals",     accent: C.pink,  bg: C.pinkBg },
+  overview:  { icon: "home",      label: "HOME",       accent: C.accent, bg: C.accentBg },
+  mama:      { icon: "mama",      label: "MAMA",       accent: C.accent, bg: C.accentBg },
+  music:     { icon: "music",     label: "MUSIC",      accent: C.accent, bg: C.accentBg },
+  content:   { icon: "content",   label: "CONTENT",    accent: C.accent, bg: C.accentBg },
+  lifeAdmin: { icon: "lifeAdmin", label: "LIFE ADMIN", accent: C.accent, bg: C.accentBg },
+  /* not in the bottom strip; reached from cards/chains but still need identity when rendered */
+  unlocks:   { icon: "unlocks",   label: "Unlocks",    accent: C.accent, bg: C.accentBg },
+  apartment: { icon: "apartment", label: "Apartment",  accent: C.accent, bg: C.accentBg },
+  deals:     { icon: "deals",     label: "Deals",      accent: C.accent, bg: C.accentBg },
 };
 /* pseudo-module descriptor for the Music CONTENT pipeline card/subtab — deliberately not added
 to MODULES itself, since MODULES.music already means the unrelated song-roadmap tab. */
-const MUSIC_CONTENT_MOD = { emoji: "🎵", label: "MUSIC CONTENT", accent: C.lilac, bg: C.lilacBg };
-const TAB_ORDER = ["overview", "content", "mama", "music", "series", "anchor"]; // "deals" pulled for now — re-add here to bring the tab back
+const MUSIC_CONTENT_MOD = { icon: "music", label: "MUSIC CONTENT", accent: C.accent, bg: C.accentBg };
+
+/* Bottom nav strip order. HOME is deliberately the MIDDLE entry — the strip is rendered in this
+   order and HOME's centre position is the whole point of the layout, so if you add or remove a tab
+   here, keep the count odd and keep "overview" in the middle.
+   "deals" pulled for now — re-add here to bring the tab back.
+   "series" and "anchor" removed entirely (owner's call, 29 Jul 2026). Their data is untouched in
+   Firestore and still round-trips through the JSON export; only the UI is gone. */
+const TAB_ORDER = ["mama", "music", "overview", "content", "lifeAdmin"];
+
+/* ---------- custom nav glyphs ----------
+   Hand-drawn so the strip isn't emoji. Same Ico() contract as the icons above (size/color/
+   strokeWidth), keyed by MODULES[tab].icon. HOME is the odd one out: it's a filled mark rather than
+   a line drawing, so it reads as the anchor of the strip at a glance. */
+const NAV_ICONS = {
+  home: Ico(<><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.5V20a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1V9.5"/><path d="M9.5 21v-6a2.5 2.5 0 0 1 5 0v6"/></>),
+  mama: Ico(<><rect x="2.5" y="7" width="19" height="13" rx="2"/><path d="M8.5 7V5.5a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2V7"/><path d="M2.5 12.5h19"/><path d="M10.5 12.5v2h3v-2"/></>),
+  music: Ico(<><circle cx="6.5" cy="18" r="3"/><circle cx="18" cy="15.5" r="3"/><path d="M9.5 18V6.5l11.5-2.5v11.5"/></>),
+  content: Ico(<><rect x="2.5" y="5" width="14" height="14" rx="2"/><path d="M16.5 10.5l5-3v9l-5-3z"/></>),
+  lifeAdmin: Ico(<><rect x="4" y="3.5" width="16" height="17" rx="2"/><path d="M8.5 9h7"/><path d="M8.5 13h7"/><path d="M8.5 17h4"/></>),
+  unlocks: Ico(<><rect x="4" y="10.5" width="16" height="10" rx="2"/><path d="M8 10.5V7a4 4 0 0 1 7.4-2"/></>),
+  apartment: Ico(<><path d="M3 20.5V9l9-5.5L21 9v11.5"/><path d="M9.5 20.5v-6h5v6"/></>),
+  deals: Ico(<><path d="M3 12.5l4-4 3.5 3.5a2 2 0 0 0 2.8 0L17 8.5l4 4"/><path d="M3 12.5V19a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-6.5"/></>),
+};
 
 /* ---------- storage shim: window.storage in the app, localStorage in the repo ---------- */
 const store = {
@@ -897,6 +938,11 @@ const ALLY_KEY = "ally-crm-v1";
 const MAMA_KEY = "creator-strategy-hq-v1";
 
 /* ================= APP SHELL ================= */
+/* UNREACHABLE as of 29 Jul 2026. The Anchor tab was removed from TAB_ORDER and from the router, so
+   nothing renders this any more. It is kept on purpose, not by oversight: the owner's diary entries
+   still live at users/<uid>/ally/anchor/entries and this is currently the only thing that can read
+   them back. Delete this function once those entries have been exported and banked — the data
+   migration at loadAlly() should stay either way so the stored entries keep round-tripping. */
 function AnchorModule({ data, setData }) {
   const entries = (data.anchor && data.anchor.entries) || {};
   const [selectedDate, setSelectedDate] = useState(todayISO());
@@ -1411,7 +1457,6 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
   })();
   const badges = {
     content: priorityTaskCounts.content,
-    anchor: null,
     unlocks: priorityTaskCounts.unlocks,
     apartment: aptUnlocked ? ally.apartment.items.filter((i) => i.status === "Bought").length : null,
     lifeAdmin: priorityTaskCounts.lifeAdmin,
@@ -1428,94 +1473,51 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
         html, body { background: ${C.canvas}; }
         ::placeholder { color: ${FAINT}; }
         input, textarea, select { outline: none; }
-        input:focus, textarea:focus { border-color: ${C.lilac} !important; }
+        input:focus, textarea:focus { border-color: ${C.accent} !important; }
         .script-editable { outline: none; }
-        .script-editable:focus { border-color: ${C.lilac} !important; }
+        .script-editable:focus { border-color: ${C.accent} !important; }
         .script-editable:empty:before { content: attr(data-placeholder); color: ${FAINT}; }
         .script-editable * { background: transparent !important; color: inherit !important; }
-        button:focus-visible { outline: 2px solid ${C.lilac}; outline-offset: 2px; }
+        button:focus-visible { outline: 2px solid ${C.accent}; outline-offset: 2px; }
         input[type="date"]::-webkit-calendar-picker-indicator { cursor: pointer; opacity: 0.5; filter: invert(1); }
         .scroll::-webkit-scrollbar { width: 9px; }
         .scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 99px; }
         @media (prefers-reduced-motion: reduce) { .pulse-dot { animation: none !important; } }
         @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
         .pulse-dot { animation: pulse 2s ease-in-out infinite; }
-        .railbtn:hover { background: ${FILL} !important; }
+        /* ---------- bottom nav strip ----------
+           Replaces the old left sidebar rail. HOME is the centre button and is visually larger;
+           .navbtn-home carries that difference so the shared .navbtn rules stay simple. */
+        .navbtn { transition: background 0.15s, color 0.15s; }
+        .navbtn:hover { background: ${FILL} !important; }
+        .navbtn:hover .navbtn-glyph { color: ${C.ink} !important; }
 
-        /* ---------- mobile layout: hamburger sidebar + header collapse ---------- */
-        .hamburger-btn { display: none; }
-        .rail-label { display: none; }
-        @media (max-width: 768px) {
-          .hamburger-btn { display: flex !important; }
-          .sidebar-rail {
-            position: fixed !important;
-            top: 0; left: 0;
-            height: 100dvh !important;
-            width: 250px !important;
-            z-index: 60;
-            transform: translateX(-100%);
-            transition: transform 0.22s ease;
-            box-shadow: 4px 0 30px rgba(0,0,0,0.55);
-            align-items: stretch !important;
-            padding: 18px 12px !important;
-          }
-          .sidebar-rail.nav-open { transform: translateX(0); }
-          .sidebar-rail .railbtn {
-            width: 100% !important;
-            height: auto !important;
-            flex-direction: row !important;
-            justify-content: flex-start !important;
-            gap: 14px;
-            padding: 11px 12px !important;
-            font-size: 15px !important;
-          }
-          .sidebar-rail .rail-label { display: inline-block; font-size: 14.5px; font-weight: 600; font-family: 'Outfit', sans-serif; }
-          .sidebar-rail .rail-logo, .sidebar-rail .rail-avatar { align-self: center; }
+        /* ---------- sizing ----------
+           Every page shares one type scale so nothing needs manual browser zoom. The old dashboard
+           used clamp(28px,4.5vw,38px) headings which blew up on a wide monitor while other pages
+           stayed put; page-h1 is now the single source of truth for a page heading. */
+        .page-h1 { font-size: 26px; line-height: 1.15; letter-spacing: -0.02em; margin: 0; }
+
+        @media (max-width: 900px) {
           .app-header { padding: 10px 14px !important; flex-wrap: wrap; row-gap: 8px; }
           .header-search { display: none !important; }
           .header-savestate { display: none !important; }
           .page-subtitle { display: none !important; }
           .page-title { font-size: 17px !important; }
+          .page-h1 { font-size: 21px; }
           .btn-label { display: none; }
           .scroll { padding: 16px 14px !important; }
+          .navbtn-label { display: none !important; }
         }
       `}</style>
 
       <div className="flex" style={{ height: "100%", fontFamily: "'Bricolage Grotesque', sans-serif", color: C.ink }}>
 
-        {/* mobile-only backdrop behind the drawer; only ever mountable via the hamburger button,
-            which itself only renders (via CSS) below the 768px breakpoint */}
-        {navOpen && <div onClick={() => setNavOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 55 }} />}
-
-        {/* ===== sidebar rail (fixed, does not scroll with page content).
-            Desktop: static icon rail. Mobile (<=768px, see .sidebar-rail CSS): becomes a fixed,
-            off-canvas drawer that slides in from the left when navOpen, with icon+label rows. ===== */}
-        <aside className={`flex flex-col items-center sidebar-rail${navOpen ? " nav-open" : ""}`} style={{ width: 104, flexShrink: 0, borderRight: `1px solid ${LINE}`, padding: "22px 0", gap: 8, background: "#0E0E11", height: "100%", overflowY: "auto" }}>
-          {TAB_ORDER.map((t) => {
-            const on = tab === t; const info = MODULES[t];
-            const locked = t === "apartment" && !aptUnlocked;
-            return (
-              <button key={t} className="railbtn" onClick={() => (t === "mama" ? goMamaDashboard() : go(t))} title={info.label} aria-label={info.label}
-                style={{ width: 88, height: 44, borderRadius: 12, border: on ? `1px solid ${LINE}` : "1px solid transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", position: "relative",
-                  background: on ? "rgba(255,255,255,0.1)" : "transparent", transition: "background 0.15s" }}>
-                <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 11.5, letterSpacing: "0.09em", color: on ? C.ink : MUT, opacity: locked ? 0.4 : 1, whiteSpace: "nowrap" }}>{info.label}</span>
-                {locked && <span style={{ position: "absolute", top: 6, right: 8, fontSize: 11 }}>🔒</span>}
-                {badges[t] ? <span style={{ position: "absolute", top: 5, right: 5, minWidth: 18, height: 18, borderRadius: 99, background: info.accent, color: "#fff", fontSize: 10.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 5px" }}>{badges[t]}</span> : null}
-              </button>
-            );
-          })}
-          <div style={{ flex: 1 }} />
-          <div className="rail-avatar" style={{ width: 48, height: 48, borderRadius: 99, overflow: "hidden" }} title="Ally"><img src={AVATAR_IMG} alt="Ally" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} /></div>
-        </aside>
-
-        {/* ===== main column ===== */}
+        {/* ===== main column — full width now that the sidebar is gone. The bottom strip is a
+            sibling of the scroll area, not an overlay, so page content can never sit under it. ===== */}
         <div className="flex flex-col" style={{ flex: 1, minWidth: 0, height: "100%" }}>
           {/* top bar (persistent) */}
           <header className="flex items-center gap-3 app-header" style={{ padding: "14px 24px", borderBottom: `1px solid ${LINE}`, flexShrink: 0 }}>
-            <button onClick={() => setNavOpen(true)} className="hamburger-btn" aria-label="Open menu"
-              style={{ width: 32, height: 32, borderRadius: 9, border: `1px solid ${LINE}`, background: C.card, cursor: "pointer", alignItems: "center", justifyContent: "center", color: C.ink, flexShrink: 0 }}>
-              <MenuIcon size={16} />
-            </button>
             <button onClick={back} disabled={!history.length} aria-label="Back"
               style={{ width: 32, height: 32, borderRadius: 9, border: `1px solid ${LINE}`, background: history.length ? C.card : "transparent", cursor: history.length ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", color: history.length ? C.ink : FAINT, flexShrink: 0 }}>
               <ChevronLeft size={16} />
@@ -1561,28 +1563,46 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
               </button>
               <input ref={importInputRef} type="file" accept="application/json" onChange={handleImportFile} style={{ display: "none" }} />
             </div>
+            <div style={{ width: 30, height: 30, borderRadius: 99, overflow: "hidden", flexShrink: 0 }} title="Ally"><img src={AVATAR_IMG} alt="Ally" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} /></div>
           </header>
 
-          {/* scroll area — the only part of the page that scrolls; sidebar and header stay put.
-              inner wrapper uses vertical auto-margins: short pages center in the available space
-              (no dead strip at the bottom), long pages (Unlocks, long chains) just scroll normally
-              since auto-margins collapse to 0 once content is taller than the viewport.
-              Exception: Mama and Deals are pinned to top (margin: 0) instead, since both are
-              subtab-driven — without this, switching between subtabs of very different lengths
-              (e.g. Deals' four tabs) would jump the nav pills to mid-screen every time a shorter
-              subtab's content doesn't fill the viewport. */}
-          <div className="scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "28px 36px", display: "flex", flexDirection: "column", alignItems: "center" }}>
-            <div style={{ width: "100%", maxWidth: 1360, margin: 0, paddingBottom: 44 }}>
+          {/* scroll area — the only part of the page that scrolls; the header above and the nav
+              strip below stay put. paddingBottom clears the strip so the last card is never
+              hidden behind it. */}
+          <div className="scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "24px 32px", display: "flex", flexDirection: "column", alignItems: "center" }}>
+            <div style={{ width: "100%", maxWidth: 1280, margin: 0, paddingBottom: 32 }}>
               {tab === "overview" && <PersonalModule ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} q={q} navRequest={navRequest} navigateToTask={navigateToTask} completeTask={completeTask} />}
               {tab === "content" && <ContentModule data={ally} setData={setAlly} q={q} navRequest={navRequest} />}
-              {tab === "anchor" && <AnchorModule data={ally} setData={setAlly} />}
               {tab === "music" && <MusicModule data={ally} setData={setAlly} />}
-              {tab === "series" && <SeriesModule data={ally} setData={setAlly} />}
               {tab === "lifeAdmin" && <LifeAdminModule data={ally} setData={setAlly} q={q} />}
               {tab === "deals" && <DealsModule data={ally} setData={setAlly} q={q} navRequest={navRequest} />}
               {tab === "mama" && <MamaModule data={mama} setData={setMama} q={q} navRequest={navRequest} navigateToTask={navigateToTask} completeTask={completeTask} />}
             </div>
           </div>
+
+          {/* ===== bottom nav strip =====
+              Renders TAB_ORDER in order, so HOME lands in the middle by construction (see the
+              comment on TAB_ORDER). HOME gets a larger, accent-ringed button; the rest are equal.
+              Badge counts sit top-right of each button exactly as they did on the old rail. */}
+          <nav style={{ flexShrink: 0, borderTop: `1px solid ${LINE}`, background: "rgba(10,10,12,0.82)", backdropFilter: "blur(18px)", WebkitBackdropFilter: "blur(18px)", padding: "8px 16px 10px", display: "flex", alignItems: "flex-end", justifyContent: "center", gap: 6 }}>
+            {TAB_ORDER.map((t) => {
+              const on = tab === t;
+              const info = MODULES[t];
+              const isHome = t === "overview";
+              const Glyph = NAV_ICONS[info.icon];
+              return (
+                <button key={t} className={`navbtn${isHome ? " navbtn-home" : ""}`} onClick={() => (t === "mama" ? goMamaDashboard() : go(t))} title={info.label} aria-label={info.label} aria-current={on ? "page" : undefined}
+                  style={{ width: isHome ? 84 : 76, padding: isHome ? "8px 0 6px" : "7px 0 6px", borderRadius: 14, cursor: "pointer", position: "relative",
+                    display: "flex", flexDirection: "column", alignItems: "center", gap: 4, fontFamily: "inherit",
+                    border: `1px solid ${on ? (isHome ? C.accentLine : LINE) : "transparent"}`,
+                    background: on ? (isHome ? C.accentBg : "rgba(255,255,255,0.07)") : "transparent" }}>
+                  <Glyph className="navbtn-glyph" size={isHome ? 25 : 21} color={on ? (isHome ? C.accent : C.ink) : MUT} strokeWidth={on ? 2.2 : 1.8} style={{ transition: "color 0.15s" }} />
+                  <span className="navbtn-label" style={{ fontWeight: 700, fontSize: isHome ? 9.5 : 9, letterSpacing: "0.08em", whiteSpace: "nowrap", color: on ? (isHome ? C.accent : C.ink) : MUT }}>{info.label}</span>
+                  {badges[t] ? <span style={{ position: "absolute", top: 3, right: isHome ? 10 : 7, minWidth: 17, height: 17, borderRadius: 99, background: C.accent, color: "#fff", fontSize: 10, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 5px" }}>{badges[t]}</span> : null}
+                </button>
+              );
+            })}
+          </nav>
         </div>
       </div>
     </div>
@@ -1750,24 +1770,13 @@ function CompleteCheckbox({ onComplete, size = 18, mt = 0, label = "Mark complet
    the summary rings first, your own life admin board second. Life Admin tasks navigate here via
    navRequest.navSub, and the dashboard's own Life Admin card just flips this subtab rather than
    trying to jump to a rail tab that no longer exists. */
+/* HOME. Life Admin used to live here as a subtab; it is now a top-level tab in its own right, so
+   this no longer has any subtabs and is a thin wrapper around the dashboard. The calendar day grid
+   lands above PriorityDashboard in a later step — this is the component it goes into. */
 function PersonalModule({ ally, mama, setAlly, setMama, go, q, navRequest, navigateToTask, completeTask }) {
-  const [sub, setSub] = useState("summary");
-  const reqSeq = navRequest ? navRequest.seq : null;
-  useEffect(() => {
-    if (navRequest && navRequest.navTab === "overview" && navRequest.navSub) setSub(navRequest.navSub);
-  }, [reqSeq]);
-  const subs = [{ id: "summary", label: "Summary" }, { id: "lifeAdmin", label: "Life Admin" }];
-  const goFrom = (k) => (k === "lifeAdmin" ? setSub("lifeAdmin") : go(k));
   return (
     <section style={{ width: "100%", margin: 0, textAlign: "left" }}>
-      <nav className="flex gap-2 mb-6 flex-wrap w-full" style={{ justifyContent: "flex-start" }}>
-        {subs.map((t) => (
-          <button key={t.id} onClick={() => setSub(t.id)} className="rounded-full px-4 py-2"
-            style={{ background: sub === t.id ? C.dark : C.card, border: `1px solid ${sub === t.id ? C.dark : LINE}`, color: sub === t.id ? C.canvas : C.ink, cursor: "pointer", fontSize: 14, fontWeight: sub === t.id ? 600 : 400, fontFamily: "inherit" }}>{t.label}</button>
-        ))}
-      </nav>
-      {sub === "summary" && <PriorityDashboard ally={ally} mama={mama} go={goFrom} setAlly={setAlly} setMama={setMama} navigateToTask={navigateToTask} completeTask={completeTask} />}
-      {sub === "lifeAdmin" && <LifeAdminModule data={ally} setData={setAlly} q={q} />}
+      <PriorityDashboard ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} navigateToTask={navigateToTask} completeTask={completeTask} />
     </section>
   );
 }
@@ -1790,15 +1799,15 @@ const onDropPriority = (pillar, id, patch) => setPillarItemPriority(setAlly, set
 
 return (
 <section>
-<div style={{ marginBottom: 20 }}>
-<h1 style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: "clamp(28px,4.5vw,38px)", margin: 0, letterSpacing: "-0.02em" }}>Priorities right now 🎯</h1>
+<div style={{ marginBottom: 16 }}>
+<h1 className="page-h1" style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700 }}>Priorities right now</h1>
 </div>
 
 {/* every pillar gets its own independent ring, ranked left to right by how full it is.
-min-width 360 (vs the 280 other grids in the app use) keeps this specific grid at 3
-per row instead of 4 on a full-width screen, still auto-fit so it still reflows down
-to fewer columns on narrower windows. */}
-<div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))" }}>
+minmax 320 (down from 360) is part of the sizing pass — at 360 these cards forced a wider
+layout than the rest of the app and were the main reason the dashboard read as zoomed-in
+compared to every other page. Still auto-fit, so it reflows to fewer columns when narrow. */}
+<div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))" }}>
 {ranked.map((k) => (
 k === "content"
 ? <ContentPillarCard key={k} content={ally.content} pipelineKey="content" mod={MODULES.content} go={go} rank={rankOf[k]} taskPct={contentTaskPct} postPct={contentPostUrgency.pct} onNavigate={navigateToTask} onComplete={completeTask} extraItems={ally.brandContent.items} />
@@ -1838,7 +1847,7 @@ return (
 <div className="flex items-center justify-between mb-3">
 <div className="flex items-center gap-2 min-w-0">
 <span style={{ width: 28, height: 28, borderRadius: 99, background: mod.accent, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 14, flexShrink: 0 }}>{rank}</span>
-<span style={{ fontSize: 17, flexShrink: 0 }}>{mod.emoji}</span>
+{(() => { const G = NAV_ICONS[mod.icon]; return G ? <G size={17} color={MUT} strokeWidth={1.9} style={{ flexShrink: 0 }} /> : null; })()}
 <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 16, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{mod.label}</span>
 </div>
 <ArrowUpRight size={16} color={MUT} />
@@ -1932,7 +1941,7 @@ function PriorityPillarCard({ pillarKey, tasks, go, rank, onDropPriority, pct, o
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2 min-w-0">
           <span style={{ width: 28, height: 28, borderRadius: 99, background: mod.accent, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 14, flexShrink: 0 }}>{rank}</span>
-          <span style={{ fontSize: 17, flexShrink: 0 }}>{mod.emoji}</span>
+          {(() => { const G = NAV_ICONS[mod.icon]; return G ? <G size={17} color={MUT} strokeWidth={1.9} style={{ flexShrink: 0 }} /> : null; })()}
           <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 16, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{mod.label}</span>
         </div>
         <ArrowUpRight size={16} color={MUT} />
@@ -2721,6 +2730,9 @@ function MusicModule({ data, setData }) {
 /* ================= SERIES (Adam Thal Project) =================
    A single long writing surface for the screenplay. Same rich-text box as the script fields, so
    pasted formatting survives, and it saves as you type like everything else here. */
+/* UNREACHABLE as of 29 Jul 2026 — same situation as AnchorModule above. The Series tab is gone from
+   the nav and the router, but data.series still holds the screenplay draft and this is the only view
+   that can read it. Delete once that draft has been exported and banked. */
 function SeriesModule({ data, setData }) {
   const series = data.series || { title: "The Adam Thal Project", doc: "", docHtml: false };
   const patch = (p) => setData((d) => ({ ...d, series: { ...(d.series || {}), ...p } }));
