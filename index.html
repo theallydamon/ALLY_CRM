@@ -1161,25 +1161,30 @@ function useCalendarAuth(crmUser) {
   /* Single funnel for every Calendar API call. Keeps the token private, turns expiry into a
      reconnect prompt rather than a silent failure, and never echoes the token in an error. */
   const calFetch = useCallback(async (path, options = {}) => {
-    if (!tokenValid()) { clearToken(); setCalError("Your calendar connection expired. Reconnect to carry on."); return { ok: false, expired: true }; }
+    /* `quiet` suppresses the on-screen error for calls where a failure is expected and meaningful
+       rather than exceptional — chiefly the sync check, where a 404 means "you deleted this event",
+       which is normal and must not be reported as a fault. It is stripped before fetch sees it. */
+    const { quiet, ...init } = options;
+    const shout = (msg) => { if (!quiet) setCalError(msg); };
+    if (!tokenValid()) { clearToken(); shout("Your calendar connection expired. Reconnect to carry on."); return { ok: false, expired: true }; }
     let res;
     try {
       res = await fetch(`${CAL_API}${path}`, {
-        ...options,
-        headers: { Authorization: `Bearer ${tokenRef.current.value}`, "Content-Type": "application/json", ...(options.headers || {}) },
+        ...init,
+        headers: { Authorization: `Bearer ${tokenRef.current.value}`, "Content-Type": "application/json", ...(init.headers || {}) },
       });
     } catch (e) {
-      setCalError("Could not reach Google Calendar. Check your connection.");
+      shout("Could not reach Google Calendar. Check your connection.");
       return { ok: false, network: true };
     }
     if (res.status === 401 || res.status === 403) {
       clearToken();
-      setCalError(res.status === 401
+      shout(res.status === 401
         ? "Your calendar connection expired. Reconnect to carry on."
         : "Google refused that calendar request. The permission may have been revoked.");
       return { ok: false, expired: true, status: res.status };
     }
-    if (!res.ok) { setCalError(`Google Calendar returned an error (${res.status}).`); return { ok: false, status: res.status }; }
+    if (!res.ok) { shout(`Google Calendar returned an error (${res.status}).`); return { ok: false, status: res.status }; }
     if (res.status === 204) return { ok: true, data: null };
     try { return { ok: true, data: await res.json() }; }
     catch (e) { return { ok: true, data: null }; }
@@ -1284,7 +1289,7 @@ function packLanes(items) {
   return Math.max(1, laneEnds.length);
 }
 
-function DayGrid({ cal, onSchedule }) {
+function DayGrid({ cal, onSchedule, syncTick }) {
   const { connected, calFetch, calendars } = cal;
   const [dropTarget, setDropTarget] = useState(null);   // "dayIndex:slotIndex" being hovered
   const [dropping, setDropping] = useState(null);       // same, while the event is being created
@@ -1339,7 +1344,10 @@ function DayGrid({ cal, onSchedule }) {
       });
     });
     setRaw(out); setLoading(false);
-  }, [connected, calFetch, usedKey, spanKey]);
+    /* syncTick is in the deps on purpose: it is what makes the grid re-read Google on focus and on
+       the timer, so the blocks drawn here stay in step with the chip labels that reconcileSchedule
+       maintains. Without it the two could disagree after an edit made elsewhere. */
+  }, [connected, calFetch, usedKey, spanKey, syncTick]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -1604,6 +1612,71 @@ function AllyCRM() {
     }));
     return true;
   };
+
+  /* ---------- Google -> CRM: pick up moves and deletions ----------
+     One-way remains the rule for CONTENT (titles, what a task is). This is narrower: the TIME of a
+     block lives in Google and nowhere else, so Google is simply the source of truth for it and there
+     is nothing to conflict. Move a block in Google Calendar and the chip follows; delete it and the
+     task becomes unscheduled again.
+
+     Deliberately checks each stored event BY ID rather than scanning the visible window. A block
+     dragged to next month would be absent from a 4-day fetch and would look deleted, which would
+     silently un-schedule work that is very much still scheduled. An events.get per stored event is a
+     handful of cheap calls and cannot make that mistake.
+
+     Uses quiet: true because 404 and 410 here are the expected, meaningful outcomes, not errors.
+
+     LIMITATION, and it is inherent rather than laziness: with no server there is nothing to receive
+     Google's push notifications, so this can only run while the app is open — on load, on tab focus,
+     and on a slow timer. A change made on the phone lands the next time the CRM is opened. */
+  const syncingRef = useRef(false);
+  const reconcileSchedule = useCallback(async () => {
+    if (!cal.connected || !ally || syncingRef.current) return;
+    const entries = Object.entries(ally.schedule || {});
+    if (!entries.length) return;
+    syncingRef.current = true;
+    try {
+      const changes = {};
+      const removals = [];
+      await Promise.all(entries.map(async ([taskId, s]) => {
+        if (!s || !s.eventId) return;
+        const r = await cal.calFetch(`/calendars/${encodeURIComponent(s.calendarId || "primary")}/events/${encodeURIComponent(s.eventId)}`, { quiet: true });
+        /* gone for good: deleted (404), permanently removed (410), or tombstoned by Google */
+        if (r.status === 404 || r.status === 410 || (r.ok && r.data && r.data.status === "cancelled")) { removals.push(taskId); return; }
+        if (!r.ok || !r.data || !r.data.start) return;   // transient failure: change nothing
+        const startISO = r.data.start.dateTime || (r.data.start.date ? `${r.data.start.date}T00:00:00` : null);
+        const endISO = r.data.end && (r.data.end.dateTime || (r.data.end.date ? `${r.data.end.date}T00:00:00` : null));
+        if (!startISO) return;
+        const moved = new Date(startISO).getTime() !== new Date(s.startISO).getTime();
+        if (!moved) return;
+        const d = new Date(startISO);
+        changes[taskId] = { ...s, startISO, endISO: endISO || s.endISO,
+          label: `${d.toLocaleDateString("en-ZA", { weekday: "short", day: "numeric" })} ${minToLabel(d.getHours() * 60 + d.getMinutes())}` };
+      }));
+      if (!removals.length && !Object.keys(changes).length) return;
+      setAlly((d) => {
+        const next = { ...(d.schedule || {}), ...changes };
+        removals.forEach((id) => { delete next[id]; });
+        return { ...d, schedule: next };
+      });
+    } finally {
+      syncingRef.current = false;
+    }
+  }, [cal.connected, cal.calFetch, ally && ally.schedule]);
+
+  /* syncTick drives both the reconcile above and the day grid's own refetch, so the chips and the
+     grid never disagree about what Google currently says. */
+  const [syncTick, setSyncTick] = useState(0);
+  useEffect(() => {
+    if (!cal.connected) return;
+    const bump = () => setSyncTick((n) => n + 1);
+    const onFocus = () => { if (document.visibilityState === "visible") bump(); };
+    const id = setInterval(bump, 60000);
+    window.addEventListener("visibilitychange", onFocus);
+    window.addEventListener("focus", onFocus);
+    return () => { clearInterval(id); window.removeEventListener("visibilitychange", onFocus); window.removeEventListener("focus", onFocus); };
+  }, [cal.connected]);
+  useEffect(() => { reconcileSchedule(); }, [syncTick, cal.connected]);
   const cloudLoadedFor = useRef(null); // uid a reconcile is/was in flight for
   const reconcileDone = useRef(false); // true only once that reconcile has FULLY resolved (fixes a
     // real race: signing in on a new device used to let the ongoing-save effect below fire in the
@@ -2187,7 +2260,7 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
               hidden behind it. */}
           <div className="scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "24px 32px", display: "flex", flexDirection: "column", alignItems: "center" }}>
             <div style={{ width: "100%", maxWidth: 1280, margin: 0, paddingBottom: 32 }}>
-              {tab === "overview" && <PersonalModule ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} q={q} navRequest={navRequest} navigateToTask={navigateToTask} completeTask={completeTask} cal={cal} onSchedule={scheduleTask} />}
+              {tab === "overview" && <PersonalModule ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} q={q} navRequest={navRequest} navigateToTask={navigateToTask} completeTask={completeTask} cal={cal} onSchedule={scheduleTask} syncTick={syncTick} />}
               {tab === "content" && <ContentModule data={ally} setData={setAlly} q={q} navRequest={navRequest} />}
               {tab === "lifeAdmin" && <LifeAdminModule data={ally} setData={setAlly} q={q} />}
               {tab === "deals" && <DealsModule data={ally} setData={setAlly} q={q} navRequest={navRequest} />}
@@ -2479,10 +2552,10 @@ function CalendarChip({ cal, crmEmail }) {
 /* HOME. Life Admin used to live here as a subtab; it is now a top-level tab in its own right, so
    this no longer has any subtabs. The calendar day grid lands directly above PriorityDashboard in
    step 3 — connection state lives in the header chip, not here, so the grid gets the full width. */
-function PersonalModule({ ally, mama, setAlly, setMama, go, q, navRequest, navigateToTask, completeTask, cal, onSchedule }) {
+function PersonalModule({ ally, mama, setAlly, setMama, go, q, navRequest, navigateToTask, completeTask, cal, onSchedule, syncTick }) {
   return (
     <section style={{ width: "100%", margin: 0, textAlign: "left" }}>
-      {cal && <DayGrid cal={cal} onSchedule={onSchedule} />}
+      {cal && <DayGrid cal={cal} onSchedule={onSchedule} syncTick={syncTick} />}
       <PriorityDashboard ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} navigateToTask={navigateToTask} completeTask={completeTask} schedule={ally.schedule || {}} />
     </section>
   );
