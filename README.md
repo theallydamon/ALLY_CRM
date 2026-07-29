@@ -1,31 +1,34 @@
 # ALLY CRM
 
-Personal life-management dashboard: content pipeline, song roadmap, life unlocks, apartment furnishing, brand deals, and the Mama work HQ. Single-page React app. Data persists in the browser via localStorage (no backend).
+Personal life-management dashboard: content pipeline, song roadmap, life unlocks, apartment furnishing, brand deals, and the Mama work HQ.
+
+Single-page React app with no build step. Markup, styles and the entire app live in `index.html`, and JSX is compiled in the browser by Babel standalone. There is no `package.json`, no `node_modules` and no `src/` directory.
+
+## Structure
+
+`index.html` is the whole app (~3,800 lines) — every React component sits inside a single `<script type="text/babel">` block, and this is the file you edit. `index-CHATGPT.html` is a separate standalone variant kept in the repo and is not the live entry point. `manifest.json`, `favicon-32.png`, `apple-touch-icon.png`, `icon-192.png` and `icon-512.png` are PWA / homescreen assets. `robots.txt` plus a `noindex` meta tag keep the deployed site out of search results. `.github/workflows/deploy.yml` handles deployment.
+
+Everything else loads from CDNs at runtime: React 18 and ReactDOM 18 (unpkg), Babel standalone, Tailwind CSS (cdn.tailwindcss.com), and the Firebase compat SDKs for app, auth and firestore (gstatic).
 
 ## Run locally
+
+Nothing to install and nothing to build — just serve the folder over HTTP:
+
 ```bash
-npm install
-npm run dev
+python3 -m http.server 8000
+# then open http://localhost:8000
 ```
 
-## Build for Netlify
-```bash
-npm run build
-```
-Publish directory: `dist`. Build command: `npm run build`.
+Use a local server rather than opening `index.html` over `file://`, because Firebase Auth needs an http(s) origin. To sign in from localhost, `localhost` must be listed under Firebase Auth authorised domains and as an authorised JavaScript origin on the Google OAuth client.
 
-## Push this into the repo
-From inside this folder:
-```bash
-git init
-git add .
-git commit -m "ALLY CRM v3: sidebar nav, charts, gated apartment"
-git branch -M main
-git remote add origin https://github.com/theallydamon/ALLY_CRM.git
-git push -u origin main
-```
-If the repo already has commits, use `git pull --rebase origin main` before pushing, or force with `git push -u origin main --force` if you want this to replace it.
+## Deploy
 
-## Notes
-- `src/App.jsx` is the whole app. It also runs as a Claude artifact unchanged: it detects `window.storage` and falls back to `localStorage` outside it.
-- Tailwind is loaded via CDN in `index.html` for zero-config styling.
+Pushing to `main` triggers `.github/workflows/deploy.yml`, which uploads the repo root as-is and publishes it to GitHub Pages. There is no build command and no publish directory — the repo root is the site.
+
+## Data and auth
+
+Google sign-in through Firebase Auth gates access to the app. State is held in the browser via `localStorage` and synced to Firestore at `users/<uid>`, one document per signed-in user. The app also runs as a Claude artifact unchanged: it detects `window.storage` and falls back to `localStorage` outside it.
+
+## Working on it
+
+Branch off `main`, commit, and open a pull request. Because the app is one very large file, prefer small targeted edits — reformatting or whitespace churn makes diffs unreadable.
