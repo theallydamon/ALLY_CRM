@@ -1278,6 +1278,17 @@ function eventOnDay(ev, day) {
   return { sMin, eMin: Math.max(eMin, sMin + 15) };
 }
 
+/* Event colour by which calendar it came from, so it is obvious at a glance whose commitment a block
+   is without reading it. Owner's call 29 Jul 2026: ally@mama.co.za is yellow.
+   Matched on calendar id rather than name, because a calendar's display name is editable in Google
+   and would silently break the colouring the moment it were renamed. */
+const CAL_TINTS = [
+  { test: (id) => /^ally@mama\.co\.za$/i.test(id), fill: "rgba(214,154,0,0.30)", line: "rgba(214,154,0,0.62)", bar: C.amber },
+];
+const CAL_TINT_OWN     = { fill: "rgba(62,143,214,0.32)", line: "rgba(62,143,214,0.60)", bar: C.sky };
+const CAL_TINT_READONLY = { fill: "rgba(255,255,255,0.12)", line: LINE, bar: MUT };
+const eventTint = (calId, writable) => CAL_TINTS.find((t) => t.test(calId || "")) || (writable ? CAL_TINT_OWN : CAL_TINT_READONLY);
+
 /* Greedy lane packing so overlapping events sit side by side rather than on top of each other. */
 function packLanes(items) {
   const laneEnds = [];
@@ -1334,12 +1345,12 @@ function DayGrid({ cal, onSchedule, syncTick }) {
         if (ev.status === "cancelled" || !ev.start) return;
         const writable = c.role === "owner" || c.role === "writer";
         if (ev.start.date) {
-          out.push({ id: `${c.id}::${ev.id}`, title: ev.summary || "(no title)", calName: c.name, writable, allDay: true,
+          out.push({ id: `${c.id}::${ev.id}`, title: ev.summary || "(no title)", calId: c.id, calName: c.name, writable, allDay: true,
             start: new Date(`${ev.start.date}T00:00:00`), end: new Date(`${(ev.end && ev.end.date) || ev.start.date}T00:00:00`) });
           return;
         }
         if (!ev.start.dateTime) return;
-        out.push({ id: `${c.id}::${ev.id}`, title: ev.summary || "(no title)", calName: c.name, writable, allDay: false,
+        out.push({ id: `${c.id}::${ev.id}`, title: ev.summary || "(no title)", calId: c.id, calName: c.name, writable, allDay: false,
           start: new Date(ev.start.dateTime), end: new Date((ev.end && ev.end.dateTime) || ev.start.dateTime) });
       });
     });
@@ -1474,13 +1485,12 @@ function DayGrid({ cal, onSchedule, syncTick }) {
                 const top = topOf(e.sMin);
                 const h = Math.max(ROW_H - 2, topOf(e.eMin) - top - 1);
                 const w = 100 / laneCount;
+                const t = eventTint(e.calId, e.writable);
                 return (
                   <div key={e.id} className="dayevent" title={`${e.title}\n${minToLabel(Math.max(e.sMin, DAY_START_MIN))} – ${minToLabel(Math.min(e.eMin, DAY_END_MIN))}\n${e.calName}`}
                     style={{ position: "absolute", top, height: h, left: `calc(${e.lane * w}% + 2px)`, width: `calc(${w}% - 4px)`,
                       borderRadius: 5, padding: "1px 4px", overflow: "hidden",
-                      background: e.writable ? "rgba(62,143,214,0.32)" : "rgba(255,255,255,0.12)",
-                      border: `1px solid ${e.writable ? "rgba(62,143,214,0.6)" : LINE}`,
-                      borderLeft: `2px solid ${e.writable ? C.sky : MUT}` }}>
+                      background: t.fill, border: `1px solid ${t.line}`, borderLeft: `2px solid ${t.bar}` }}>
                     <div style={{ fontSize: 9.5, fontWeight: 600, lineHeight: 1.2, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: h < 26 ? "nowrap" : "normal" }}>{e.title}</div>
                     {h >= 34 && <div style={{ fontSize: 8.5, color: MUT, lineHeight: 1.2 }}>{minToLabel(Math.max(e.sMin, DAY_START_MIN))}</div>}
                   </div>
@@ -1499,7 +1509,9 @@ function DayGrid({ cal, onSchedule, syncTick }) {
 
       {loadError && <div role="alert" style={{ marginTop: 8, fontSize: 10.5, color: C.amber }}>{loadError}</div>}
       <div style={{ marginTop: 8, fontSize: 10, color: FAINT, lineHeight: 1.45 }}>
-        Drag a task from a card below onto a slot to schedule it. Blue blocks sit on a calendar you can write to; grey are view-only.
+        Drag a task from a card below onto a slot to schedule it — the page scrolls itself as you go.
+        <span style={{ color: C.sky }}> Blue</span> is your own calendar,
+        <span style={{ color: C.amber }}> yellow</span> is ally@mama.co.za, grey is view-only.
       </div>
     </div>
   );
@@ -1629,6 +1641,59 @@ function AllyCRM() {
      LIMITATION, and it is inherent rather than laziness: with no server there is nothing to receive
      Google's push notifications, so this can only run while the app is open — on load, on tab focus,
      and on a slow timer. A change made on the phone lands the next time the CRM is opened. */
+  /* ---------- auto-scroll while dragging ----------
+     The calendar sits above the pillar cards, and on most screens the two do not both fit. Without
+     this, a task picked up from a card simply cannot reach a cell: you are holding the mouse button
+     down, so you cannot scroll, and the page has no reason to move.
+
+     Two details matter and the naive version gets both wrong:
+
+     1. It runs on requestAnimationFrame, NOT on the dragover event. dragover stops firing when the
+        pointer holds still, so scrolling driven by it stalls the moment you stop moving — which is
+        exactly when you are hovering near the edge waiting for the page to come to you. The rAF loop
+        keeps scrolling from the last known pointer position.
+     2. Speed ramps with how close to the edge you are, rather than being a fixed jump. A constant
+        speed either crawls or overshoots straight past the grid.
+
+     Listeners are on `document` because a drag can leave the chip and the scroll container entirely,
+     and dragend still needs to be heard so the loop is guaranteed to stop. */
+  const scrollRef = useRef(null);
+  useEffect(() => {
+    const EDGE = 130;        // px from an edge where scrolling begins
+    const MAX_SPEED = 24;    // px per frame at the very edge
+    let pointerY = null, raf = null;
+    const step = () => {
+      const el = scrollRef.current;
+      if (el && pointerY != null) {
+        const r = el.getBoundingClientRect();
+        let v = 0;
+        if (pointerY < r.top + EDGE) v = -MAX_SPEED * Math.min(1, (r.top + EDGE - pointerY) / EDGE);
+        else if (pointerY > r.bottom - EDGE) v = MAX_SPEED * Math.min(1, (pointerY - (r.bottom - EDGE)) / EDGE);
+        if (v) el.scrollTop += v;
+      }
+      raf = requestAnimationFrame(step);
+    };
+    const stop = () => { if (raf != null) cancelAnimationFrame(raf); raf = null; pointerY = null; };
+    const onDragStart = (e) => {
+      /* only for task drags — the app has other drags (pipeline cards, priority columns) that are
+         within a single view and do not want the page moving under them */
+      if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes(SCHED_MIME)) return;
+      if (raf == null) raf = requestAnimationFrame(step);
+    };
+    const onDragOver = (e) => { if (raf != null) pointerY = e.clientY; };
+    document.addEventListener("dragstart", onDragStart);
+    document.addEventListener("dragover", onDragOver);
+    document.addEventListener("dragend", stop);
+    document.addEventListener("drop", stop);
+    return () => {
+      stop();
+      document.removeEventListener("dragstart", onDragStart);
+      document.removeEventListener("dragover", onDragOver);
+      document.removeEventListener("dragend", stop);
+      document.removeEventListener("drop", stop);
+    };
+  }, []);
+
   const syncingRef = useRef(false);
   const reconcileSchedule = useCallback(async () => {
     if (!cal.connected || !ally || syncingRef.current) return;
@@ -2258,7 +2323,7 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
           {/* scroll area — the only part of the page that scrolls; the header above and the nav
               strip below stay put. paddingBottom clears the strip so the last card is never
               hidden behind it. */}
-          <div className="scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "24px 32px", display: "flex", flexDirection: "column", alignItems: "center" }}>
+          <div ref={scrollRef} className="scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "24px 32px", display: "flex", flexDirection: "column", alignItems: "center" }}>
             <div style={{ width: "100%", maxWidth: 1280, margin: 0, paddingBottom: 32 }}>
               {tab === "overview" && <PersonalModule ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} q={q} navRequest={navRequest} navigateToTask={navigateToTask} completeTask={completeTask} cal={cal} onSchedule={scheduleTask} syncTick={syncTick} />}
               {tab === "content" && <ContentModule data={ally} setData={setAlly} q={q} navRequest={navRequest} />}
