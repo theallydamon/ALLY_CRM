@@ -946,120 +946,6 @@ const ALLY_KEY = "ally-crm-v1";
 const MAMA_KEY = "creator-strategy-hq-v1";
 
 /* ================= APP SHELL ================= */
-/* UNREACHABLE as of 29 Jul 2026. The Anchor tab was removed from TAB_ORDER and from the router, so
-   nothing renders this any more. It is kept on purpose, not by oversight: the owner's diary entries
-   still live at users/<uid>/ally/anchor/entries and this is currently the only thing that can read
-   them back. Delete this function once those entries have been exported and banked — the data
-   migration at loadAlly() should stay either way so the stored entries keep round-tripping. */
-function AnchorModule({ data, setData }) {
-  const entries = (data.anchor && data.anchor.entries) || {};
-  const [selectedDate, setSelectedDate] = useState(todayISO());
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [cursor, setCursor] = useState(() => { const d = new Date(selectedDate + "T00:00:00"); return new Date(d.getFullYear(), d.getMonth(), 1); });
-  const anchorInputRef = useRef(null);
-  const dateBtnRef = useRef(null);
-  const [popoverPos, setPopoverPos] = useState({ top: 0, left: 0 });
-  const text = entries[selectedDate] || "";
-  const today = todayISO();
-  const isToday = selectedDate === today;
-
-  const updateEntry = (value) => setData((current) => ({
-    ...current,
-    anchor: { ...(current.anchor || {}), entries: { ...(((current.anchor || {}).entries) || {}), [selectedDate]: value } },
-  }));
-  const goDay = (delta) => setSelectedDate((d) => { const next = shiftISO(d, delta); return next > today ? d : next; });
-  /* popover is fixed-positioned (viewport coords via the trigger's own rect) rather than absolute,
-     so it can render outside this card's overflow:hidden — needed to keep the decorative blurred
-     glow circles clipped to the rounded corners without also clipping the calendar popup. */
-  const openPicker = () => {
-    const d = new Date(selectedDate + "T00:00:00"); setCursor(new Date(d.getFullYear(), d.getMonth(), 1));
-    const rect = dateBtnRef.current && dateBtnRef.current.getBoundingClientRect();
-    if (rect) setPopoverPos({ top: rect.bottom + 8, left: rect.left });
-    setPickerOpen(true);
-  };
-  const pickDate = (iso) => { setSelectedDate(iso); setPickerOpen(false); };
-  const changeMonth = (amount) => setCursor((d) => new Date(d.getFullYear(), d.getMonth() + amount, 1));
-
-  const resizeAnchor = () => {
-    const el = anchorInputRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = Math.max(150, el.scrollHeight) + "px";
-  };
-  useLayoutEffect(resizeAnchor, [text, selectedDate]);
-
-  /* 6-week grid (42 cells) guarantees full month coverage regardless of month length/start day —
-     same slotting approach as the Content Calendar, just for a date-picker popover instead of a
-     full-page view. */
-  const monthStart = new Date(cursor.getFullYear(), cursor.getMonth(), 1 - ((cursor.getDay() + 6) % 7));
-  const monthDays = Array.from({ length: 42 }, (_, i) => { const d = new Date(monthStart.getFullYear(), monthStart.getMonth(), monthStart.getDate() + i); return { d, key: isoDate(d) }; });
-
-  return (
-    <div className="w-full flex items-center justify-center" style={{ minHeight: "calc(100vh - 190px)", padding: "20px 0" }}>
-      <div style={{ width: "min(760px, 100%)", minHeight: 430, position: "relative", overflow: "hidden", borderRadius: 28, border: `1px solid ${LINE}`, background: "linear-gradient(135deg, rgba(123,103,224,0.16), rgba(19,19,22,0.98) 48%, rgba(47,163,124,0.10))", boxShadow: "0 28px 80px rgba(0,0,0,0.32)", padding: "clamp(34px, 7vw, 76px)" }}>
-        <div style={{ position: "absolute", width: 260, height: 260, borderRadius: 999, background: "rgba(123,103,224,0.16)", filter: "blur(56px)", top: -110, right: -90, pointerEvents: "none" }} />
-        <div style={{ position: "absolute", width: 210, height: 210, borderRadius: 999, background: "rgba(47,163,124,0.10)", filter: "blur(56px)", bottom: -110, left: -70, pointerEvents: "none" }} />
-        <div style={{ position: "absolute", top: 34, right: 38, opacity: 0.5, pointerEvents: "none", transform: "rotate(12deg)" }}><Sparkles size={44} color={C.lilac} strokeWidth={1.2} /></div>
-        <div style={{ position: "absolute", bottom: 38, right: 48, width: 54, height: 54, borderRadius: 18, border: "1px solid rgba(242,242,244,0.18)", transform: "rotate(18deg)", pointerEvents: "none" }} />
-        <div style={{ position: "absolute", top: 126, left: 34, width: 8, height: 8, borderRadius: 999, background: C.mint, boxShadow: "0 0 24px rgba(47,163,124,0.9)", pointerEvents: "none" }} />
-        <div style={{ position: "relative", zIndex: 1, height: "100%", display: "flex", flexDirection: "column" }}>
-
-          <div className="flex items-center gap-2 flex-wrap" style={{ position: "relative" }}>
-            <button onClick={() => goDay(-1)} aria-label="Previous day" style={{ ...iconBtn, width: 30, height: 30, borderRadius: 9, border: `1px solid ${LINE}`, background: "rgba(255,255,255,0.04)" }}>←</button>
-            <button ref={dateBtnRef} onClick={openPicker} style={{ ...iconBtn, fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 14.5, letterSpacing: "-0.01em", color: C.ink, padding: "6px 12px", borderRadius: 10, border: `1px solid ${LINE}`, background: "rgba(255,255,255,0.04)", cursor: "pointer" }} title="Open a date">
-              {new Date(selectedDate + "T00:00:00").toLocaleDateString("en-ZA", { weekday: "short", day: "numeric", month: "long", year: "numeric" })}
-              {isToday && <span style={{ marginLeft: 8, fontSize: 10, fontWeight: 700, color: C.mint, letterSpacing: "0.05em", textTransform: "uppercase" }}>Today</span>}
-            </button>
-            <button onClick={() => goDay(1)} disabled={isToday} aria-label="Next day" style={{ ...iconBtn, width: 30, height: 30, borderRadius: 9, border: `1px solid ${LINE}`, background: "rgba(255,255,255,0.04)", opacity: isToday ? 0.35 : 1, cursor: isToday ? "default" : "pointer" }}>→</button>
-            {!text.trim() && <span style={{ fontSize: 11, color: MUT }}>No entry yet</span>}
-
-            {pickerOpen && (
-              <>
-                <div onClick={() => setPickerOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 15 }} />
-                <div style={{ position: "fixed", top: popoverPos.top, left: popoverPos.left, zIndex: 20, width: 296, borderRadius: 16, border: `1px solid ${LINE}`, background: C.card, boxShadow: "0 20px 50px rgba(0,0,0,0.45)", padding: 14 }}>
-                  <div className="flex items-center justify-between mb-2">
-                    <button onClick={() => changeMonth(-1)} aria-label="Previous month" style={{ ...iconBtn, fontSize: 15 }}>←</button>
-                    <div style={{ fontSize: 12.5, fontWeight: 700 }}>{cursor.toLocaleDateString("en-ZA", { month: "long", year: "numeric" })}</div>
-                    <button onClick={() => changeMonth(1)} aria-label="Next month" style={{ ...iconBtn, fontSize: 15 }}>→</button>
-                  </div>
-                  <div className="grid" style={{ gridTemplateColumns: "repeat(7, 1fr)", gap: 2, fontSize: 9.5, color: MUT, textAlign: "center", marginBottom: 4 }}>
-                    {["M", "T", "W", "T", "F", "S", "S"].map((n, i) => <span key={i}>{n}</span>)}
-                  </div>
-                  <div className="grid" style={{ gridTemplateColumns: "repeat(7, 1fr)", gap: 3 }}>
-                    {monthDays.map(({ d, key }) => {
-                      const has = !!(entries[key] && entries[key].trim());
-                      const isFuture = key > today;
-                      const isSel = key === selectedDate;
-                      const inMonth = d.getMonth() === cursor.getMonth();
-                      return (
-                        <button key={key} disabled={isFuture} onClick={() => pickDate(key)} title={has ? "Has an entry" : "No entry"}
-                          style={{ ...iconBtn, aspectRatio: "1", borderRadius: 8, fontSize: 11, opacity: isFuture ? 0.25 : inMonth ? 1 : 0.4, cursor: isFuture ? "default" : "pointer", background: isSel ? C.lilac : has ? `${C.mint}22` : "transparent", color: isSel ? "#fff" : C.ink, border: key === today ? `1px solid ${C.lilac}` : "1px solid transparent", fontWeight: isSel ? 700 : 400 }}>
-                          {d.getDate()}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <div className="flex items-center gap-3 mt-2.5" style={{ fontSize: 10, color: MUT }}>
-                    <span className="flex items-center gap-1"><span style={{ width: 7, height: 7, borderRadius: 2, background: `${C.mint}55` }} /> has entry</span>
-                    <span className="flex items-center gap-1"><span style={{ width: 7, height: 7, borderRadius: 2, border: `1px solid ${LINE}` }} /> empty</span>
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
-
-          <div style={{ flex: 1, display: "flex", alignItems: "center", padding: "24px 0 30px" }}>
-            <textarea ref={anchorInputRef} aria-label="Diary entry" value={text} onChange={(e) => updateEntry(e.target.value)} onInput={resizeAnchor}
-              placeholder="Write the idea, slogan, or feeling you want to embody today."
-              rows={1}
-              style={{ width: "100%", background: "transparent", border: "none", outline: "none", resize: "none", overflow: "hidden", color: C.ink, fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 500, fontSize: "clamp(25px, 3.6vw, 39px)", lineHeight: 1.22, letterSpacing: "-0.03em", padding: 0, minHeight: 150, boxSizing: "border-box" }} />
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 /* ================= GOOGLE CALENDAR AUTHORISATION =================
    Step 2 of context/04-REDESIGN.md. This file grants the app permission to read and write the
    owner's Google Calendar. It does NOT render any calendar UI — that is step 3.
@@ -1099,12 +985,32 @@ const CAL_API = "https://www.googleapis.com/calendar/v3";
 const CAL_EXPIRY_MARGIN_MS = 120000;
 const REVOKE_HELP_URL = "https://myaccount.google.com/permissions";
 
+/* A boolean hint that consent was granted at some point on this browser. This is NOT the token and
+   NOT a credential — it holds no secret and grants nothing. Its only job is to tell us it is safe
+   to attempt a SILENT token request on load: with an existing grant, Google returns a token with no
+   popup and no clicking, which is what makes the connection feel persistent even though the token
+   itself is deliberately never stored. Without the hint we would have to either pop a window on
+   every page load (awful) or make the owner click Connect every time (also awful).
+   If access is revoked externally, the silent request fails and we simply clear the hint. */
+const CAL_GRANT_HINT_KEY = "ally-crm-cal-granted";
+
+/* Calendars that should never contribute busy slots, decided by the owner 29 Jul 2026:
+   Birthdays off, Holidays ON, adamon@amplified.community off. Matched by pattern rather than by
+   raw id because Google's generated ids are opaque (e.g. addressbook#contacts@group.v.calendar...)
+   and differ per locale. */
+const CAL_HIDE_PATTERNS = [/addressbook#contacts/i, /^adamon@amplified\.community$/i];
+const calHiddenByDefault = (id) => CAL_HIDE_PATTERNS.some((re) => re.test(id || ""));
+
 /* Hook owning the calendar connection. Returns everything the UI needs and nothing it doesn't —
    note there is no getter that exposes the raw token to callers; the only way to use it is
    calFetch, which keeps the token inside this closure. */
 function useCalendarAuth(crmUser) {
   const tokenRef = useRef(null);        // { value, expiresAt } — memory only, by design
   const clientRef = useRef(null);       // the GIS token client, created once
+  const silentRef = useRef(false);      // true while an auto-reconnect is in flight, so its
+                                        // failures stay quiet. A ref, not state, because the GIS
+                                        // callbacks are created once and would close over a stale
+                                        // state value.
   const [connected, setConnected] = useState(false);
   const [account, setAccount] = useState("");   // primary calendar id, i.e. the granted account
   const [calError, setCalError] = useState("");
@@ -1138,10 +1044,11 @@ function useCalendarAuth(crmUser) {
     return !!(t && t.value && Date.now() < t.expiresAt - CAL_EXPIRY_MARGIN_MS);
   };
 
-  const connect = useCallback(() => {
-    setCalError("");
-    if (!gisReady) { setCalError("Still loading Google's authorisation library — try again in a moment."); return; }
-    setConnecting(true);
+  /* silent==true means "do not show any UI"; used by the auto-reconnect on load. */
+  const connect = useCallback((silent) => {
+    if (!silent) setCalError("");
+    if (!gisReady) { if (!silent) setCalError("Still loading Google's authorisation library — try again in a moment."); return; }
+    if (!silent) setConnecting(true);
     if (!clientRef.current) {
       clientRef.current = window.google.accounts.oauth2.initTokenClient({
         client_id: GOOGLE_CLIENT_ID,
@@ -1164,11 +1071,18 @@ function useCalendarAuth(crmUser) {
           }
           tokenRef.current = { value: resp.access_token, expiresAt: Date.now() + (Number(resp.expires_in) || 3600) * 1000 };
           setConnected(true);
+          try { localStorage.setItem(CAL_GRANT_HINT_KEY, "1"); } catch (e) {}
           if (!granted.includes(CAL_SCOPE_LIST)) setCalError("Connected, but permission to list your calendars was not granted, so only your main calendar will be available.");
         },
         error_callback: (err) => {
           setConnecting(false);
           const type = (err && err.type) || "";
+          /* A silent attempt failing is expected and normal — access may have been revoked, or the
+             browser blocked the hidden window. Clear the hint and stay quiet; the chip will just
+             read "not connected" and one click fixes it. Shouting about it on every page load
+             would be worse than the problem. */
+          try { localStorage.removeItem(CAL_GRANT_HINT_KEY); } catch (e) {}
+          if (silentRef.current) return;
           setCalError(type === "popup_closed"
             ? "The Google permission window was closed before finishing."
             : type === "popup_failed_to_open"
@@ -1177,9 +1091,22 @@ function useCalendarAuth(crmUser) {
         },
       });
     }
-    /* consent on first connect so the scope list is visible; empty afterwards to avoid nagging */
-    clientRef.current.requestAccessToken({ prompt: connected ? "" : "consent" });
+    silentRef.current = !!silent;
+    /* prompt "consent" on a genuine first connect so the scope list is visible and reviewable;
+       empty string otherwise, which is what lets an existing grant resolve with no UI at all. */
+    let hinted = false;
+    try { hinted = localStorage.getItem(CAL_GRANT_HINT_KEY) === "1"; } catch (e) {}
+    clientRef.current.requestAccessToken({ prompt: (connected || hinted || silent) ? "" : "consent" });
   }, [gisReady, connected]);
+
+  /* Auto-reconnect on load. Only ever attempted when signed into the CRM and only when the hint
+     says consent already exists, so this cannot surprise the owner with a popup out of nowhere. */
+  useEffect(() => {
+    if (!gisReady || !crmUser || connected) return;
+    let hinted = false;
+    try { hinted = localStorage.getItem(CAL_GRANT_HINT_KEY) === "1"; } catch (e) {}
+    if (hinted) connect(true);
+  }, [gisReady, crmUser, connected, connect]);
 
   /* Single funnel for every Calendar API call. Keeps the token private, turns expiry into a
      reconnect prompt rather than a silent failure, and never echoes the token in an error. */
@@ -1213,6 +1140,8 @@ function useCalendarAuth(crmUser) {
     if (t && t.value && window.google && window.google.accounts && window.google.accounts.oauth2) {
       try { window.google.accounts.oauth2.revoke(t.value); } catch (e) {}
     }
+    /* Clear the hint too, or the auto-reconnect above would immediately undo the disconnect. */
+    try { localStorage.removeItem(CAL_GRANT_HINT_KEY); } catch (e) {}
     clearToken(); setCalError("");
   }, [clearToken]);
 
@@ -1813,6 +1742,7 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
               </button>
               <input ref={importInputRef} type="file" accept="application/json" onChange={handleImportFile} style={{ display: "none" }} />
             </div>
+            {user && <CalendarChip cal={cal} crmEmail={user.email || ""} />}
             <div style={{ width: 30, height: 30, borderRadius: 99, overflow: "hidden", flexShrink: 0 }} title="Ally"><img src={AVATAR_IMG} alt="Ally" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} /></div>
           </header>
 
@@ -1821,7 +1751,7 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
               hidden behind it. */}
           <div className="scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "24px 32px", display: "flex", flexDirection: "column", alignItems: "center" }}>
             <div style={{ width: "100%", maxWidth: 1280, margin: 0, paddingBottom: 32 }}>
-              {tab === "overview" && <PersonalModule ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} q={q} navRequest={navRequest} navigateToTask={navigateToTask} completeTask={completeTask} cal={cal} crmEmail={user ? user.email : ""} />}
+              {tab === "overview" && <PersonalModule ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} q={q} navRequest={navRequest} navigateToTask={navigateToTask} completeTask={completeTask} />}
               {tab === "content" && <ContentModule data={ally} setData={setAlly} q={q} navRequest={navRequest} />}
               {tab === "music" && <MusicModule data={ally} setData={setAlly} />}
               {tab === "lifeAdmin" && <LifeAdminModule data={ally} setData={setAlly} q={q} />}
@@ -2028,98 +1958,109 @@ function CompleteCheckbox({ onComplete, size = 18, mt = 0, label = "Mark complet
    The "Check the connection" action is not decoration — it proves the whole chain end to end
    (token -> Google -> a real calendar list) and captures which account was actually granted,
    which is the one thing a token alone cannot tell you. */
-function CalendarPanel({ cal, crmEmail }) {
+function CalendarChip({ cal, crmEmail }) {
   const { connected, connecting, account, setAccount, calError, setCalError, gisReady, connect, disconnect, calFetch } = cal;
-  const [checking, setChecking] = useState(false);
+  const [open, setOpen] = useState(false);
   const [calendars, setCalendars] = useState(null);
+  const [checking, setChecking] = useState(false);
 
-  const check = async () => {
-    setChecking(true); setCalError(""); setCalendars(null);
-    const r = await calFetch("/users/me/calendarList?minAccessRole=reader&maxResults=50");
+  /* showHidden=true matters: calendars unticked in Google Calendar's own sidebar (which is common
+     for Holidays) are omitted by default, and the owner explicitly wants Holidays to block out
+     slots. minAccessRole=reader still filters out freeBusy-only calendars, which are useless here
+     because they carry no event detail. */
+  const loadCalendars = async () => {
+    setChecking(true);
+    const r = await calFetch("/users/me/calendarList?minAccessRole=reader&showHidden=true&maxResults=100");
     setChecking(false);
     if (!r.ok) return;
     const items = ((r.data && r.data.items) || []).map((c) => ({
       id: c.id, name: c.summary, primary: !!c.primary, role: c.accessRole,
+      used: !calHiddenByDefault(c.id),
     }));
     setCalendars(items);
     const primary = items.find((c) => c.primary);
     if (primary) setAccount(primary.id);
   };
 
+  useEffect(() => { if (connected && !calendars) loadCalendars(); }, [connected]);
+
   const mismatch = account && crmEmail && account.toLowerCase() !== crmEmail.toLowerCase();
+  const dot = connected ? (mismatch ? C.amber : C.mint) : calError ? C.accent : MUT;
 
   return (
-    <div className="rounded-2xl p-4 mb-5" style={{ ...card, borderRadius: 16, borderLeft: `3px solid ${connected ? C.mint : C.accent}` }}>
-      <div className="flex items-center gap-3 flex-wrap">
-        <div style={{ flex: 1, minWidth: 220 }}>
-          <div style={{ fontWeight: 700, fontSize: 14 }}>
-            Google Calendar {connected ? <span style={{ color: C.mint, fontWeight: 600 }}>· connected</span> : <span style={{ color: MUT, fontWeight: 400 }}>· not connected</span>}
-          </div>
-          <div style={{ fontSize: 11.5, color: MUT, marginTop: 2 }}>
-            {connected
-              ? (account ? `Granted on ${account}` : "Permission granted. Check the connection to confirm which account.")
-              : "Needed before tasks can be dropped onto a day. Access lasts about an hour, then asks again."}
-          </div>
-        </div>
-        {!connected ? (
-          <button onClick={connect} disabled={connecting || !gisReady} style={{ ...pillDark, padding: "8px 14px", fontSize: 12.5, opacity: connecting || !gisReady ? 0.55 : 1 }}>
-            {connecting ? "Waiting for Google…" : gisReady ? "Connect" : "Loading…"}
-          </button>
-        ) : (
-          <div className="flex items-center gap-2 flex-wrap">
-            <button onClick={check} disabled={checking} style={{ ...pillGhost, padding: "7px 12px", fontSize: 12 }}>{checking ? "Checking…" : "Check the connection"}</button>
-            <button onClick={disconnect} style={{ ...iconBtn, fontSize: 12, padding: "7px 12px", border: `1px solid ${LINE}`, borderRadius: 999 }}>Disconnect</button>
-          </div>
-        )}
-      </div>
+    <div style={{ position: "relative", flexShrink: 0 }}>
+      <button onClick={() => (connected || calError ? setOpen((o) => !o) : connect())} disabled={connecting || (!gisReady && !connected)}
+        title={connected ? `Google Calendar connected${account ? ` · ${account}` : ""}` : "Connect Google Calendar"}
+        aria-label={connected ? "Google Calendar connected" : "Connect Google Calendar"}
+        className="flex items-center gap-1.5"
+        style={{ ...iconBtn, fontSize: 11, padding: "5px 9px", border: `1px solid ${connected ? LINE : C.accentLine}`, borderRadius: 8, background: connected ? "transparent" : C.accentBg, cursor: "pointer" }}>
+        <span style={{ width: 7, height: 7, borderRadius: 99, background: dot, flexShrink: 0 }} className={connecting ? "pulse-dot" : ""} />
+        <span className="btn-label" style={{ whiteSpace: "nowrap", color: connected ? MUT : C.ink }}>
+          {connecting ? "Connecting…" : connected ? "Calendar" : "Connect calendar"}
+        </span>
+      </button>
 
-      {calError && (
-        <div role="alert" style={{ marginTop: 11, padding: "8px 10px", borderRadius: 9, background: C.accentBg, border: `1px solid ${C.accentLine}`, fontSize: 11.5, lineHeight: 1.45 }}>
-          {calError}
-          {!connected && <button onClick={connect} style={{ ...iconBtn, fontSize: 11.5, color: C.accent, padding: "4px 0 0", textDecoration: "underline" }}>Try connecting again</button>}
-        </div>
-      )}
+      {open && (
+        <>
+          <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
+          <div style={{ position: "absolute", right: 0, top: "calc(100% + 7px)", zIndex: 41, width: 310, ...card, borderRadius: 13, padding: 13, boxShadow: "0 18px 44px rgba(0,0,0,0.6)" }}>
+            <div style={{ fontWeight: 700, fontSize: 12.5, marginBottom: 2 }}>
+              Google Calendar {connected ? <span style={{ color: C.mint, fontWeight: 600 }}>· connected</span> : <span style={{ color: MUT, fontWeight: 400 }}>· not connected</span>}
+            </div>
+            <div style={{ fontSize: 10.5, color: MUT, lineHeight: 1.45 }}>
+              {connected
+                ? (account ? `Granted on ${account}. Reconnects itself on reload.` : "Permission granted.")
+                : "Not connected."}
+            </div>
 
-      {mismatch && (
-        <div role="alert" style={{ marginTop: 11, padding: "8px 10px", borderRadius: 9, background: `${C.amber}14`, border: `1px solid ${C.amber}55`, fontSize: 11.5, lineHeight: 1.45 }}>
-          Careful: you are signed into the CRM as <strong>{crmEmail}</strong> but granted calendar access on <strong>{account}</strong>. Blocks would be written to the wrong calendar. Disconnect and reconnect, picking {crmEmail}.
-        </div>
-      )}
+            {calError && (
+              <div role="alert" style={{ marginTop: 9, padding: "7px 9px", borderRadius: 8, background: C.accentBg, border: `1px solid ${C.accentLine}`, fontSize: 10.5, lineHeight: 1.45 }}>{calError}</div>
+            )}
 
-      {calendars && (
-        <div style={{ marginTop: 11 }}>
-          <div style={{ fontSize: 10.5, letterSpacing: "0.08em", textTransform: "uppercase", color: MUT, marginBottom: 5 }}>
-            {calendars.length} calendar{calendars.length === 1 ? "" : "s"} reachable
-          </div>
-          <div className="flex flex-col" style={{ gap: 3 }}>
-            {calendars.map((c) => {
-              const writable = c.role === "owner" || c.role === "writer";
-              return (
-                <div key={c.id} className="flex items-center gap-2" style={{ fontSize: 12 }}>
-                  <span style={{ width: 6, height: 6, borderRadius: 99, background: writable ? C.mint : MUT, flexShrink: 0 }} />
-                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</span>
-                  {c.primary && <span style={{ fontSize: 9.5, color: MUT, letterSpacing: "0.06em" }}>MAIN</span>}
-                  <span style={{ fontSize: 10, color: writable ? C.mint : MUT }}>{writable ? "can add events" : "view only"}</span>
+            {mismatch && (
+              <div role="alert" style={{ marginTop: 9, padding: "7px 9px", borderRadius: 8, background: `${C.amber}14`, border: `1px solid ${C.amber}55`, fontSize: 10.5, lineHeight: 1.45 }}>
+                Signed into the CRM as <strong>{crmEmail}</strong> but calendar access was granted on <strong>{account}</strong>. Blocks would land on the wrong calendar — disconnect and reconnect picking {crmEmail}.
+              </div>
+            )}
+
+            {calendars && (
+              <div style={{ marginTop: 10 }}>
+                <div style={{ fontSize: 9.5, letterSpacing: "0.08em", textTransform: "uppercase", color: MUT, marginBottom: 5 }}>Used for busy slots</div>
+                <div className="flex flex-col" style={{ gap: 3 }}>
+                  {calendars.map((c) => {
+                    const writable = c.role === "owner" || c.role === "writer";
+                    return (
+                      <div key={c.id} className="flex items-center gap-1.5" style={{ fontSize: 11, opacity: c.used ? 1 : 0.4 }}>
+                        <span style={{ width: 5, height: 5, borderRadius: 99, background: c.used ? (writable ? C.mint : C.sky) : MUT, flexShrink: 0 }} />
+                        <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</span>
+                        <span style={{ fontSize: 9, color: MUT, whiteSpace: "nowrap" }}>{!c.used ? "ignored" : c.primary ? "writes here" : writable ? "read" : "read"}</span>
+                      </div>
+                    );
+                  })}
                 </div>
-              );
-            })}
+              </div>
+            )}
+            {checking && <div style={{ fontSize: 10.5, color: MUT, marginTop: 9 }}>Checking…</div>}
+
+            <div className="flex items-center gap-2" style={{ marginTop: 11 }}>
+              {connected
+                ? <button onClick={() => { disconnect(); setCalendars(null); setOpen(false); }} style={{ ...iconBtn, fontSize: 11, padding: "6px 11px", border: `1px solid ${LINE}`, borderRadius: 999 }}>Disconnect</button>
+                : <button onClick={() => { setCalError(""); connect(); }} style={{ ...pillDark, fontSize: 11, padding: "6px 12px" }}>Connect</button>}
+              <a href={REVOKE_HELP_URL} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, color: MUT, textDecoration: "underline" }}>Revoke at Google</a>
+            </div>
           </div>
-          <div style={{ fontSize: 10.5, color: FAINT, marginTop: 7, lineHeight: 1.45 }}>
-            Nothing has been written to any calendar. Revoke access any time at <a href={REVOKE_HELP_URL} target="_blank" rel="noopener noreferrer" style={{ color: MUT, textDecoration: "underline" }}>your Google permissions page</a>.
-          </div>
-        </div>
+        </>
       )}
     </div>
   );
 }
 
 /* HOME. Life Admin used to live here as a subtab; it is now a top-level tab in its own right, so
-   this no longer has any subtabs. The calendar day grid lands between CalendarPanel and
-   PriorityDashboard in step 3. */
-function PersonalModule({ ally, mama, setAlly, setMama, go, q, navRequest, navigateToTask, completeTask, cal, crmEmail }) {
+   this no longer has any subtabs. The calendar day grid lands directly above PriorityDashboard in
+   step 3 — connection state lives in the header chip, not here, so the grid gets the full width. */
+function PersonalModule({ ally, mama, setAlly, setMama, go, q, navRequest, navigateToTask, completeTask }) {
   return (
     <section style={{ width: "100%", margin: 0, textAlign: "left" }}>
-      {cal && <CalendarPanel cal={cal} crmEmail={crmEmail} />}
       <PriorityDashboard ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} navigateToTask={navigateToTask} completeTask={completeTask} />
     </section>
   );
@@ -3066,29 +3007,6 @@ function MusicModule({ data, setData }) {
             </div>
           );
         })}
-      </div>
-    </section>
-  );
-}
-
-/* ================= SERIES (Adam Thal Project) =================
-   A single long writing surface for the screenplay. Same rich-text box as the script fields, so
-   pasted formatting survives, and it saves as you type like everything else here. */
-/* UNREACHABLE as of 29 Jul 2026 — same situation as AnchorModule above. The Series tab is gone from
-   the nav and the router, but data.series still holds the screenplay draft and this is the only view
-   that can read it. Delete once that draft has been exported and banked. */
-function SeriesModule({ data, setData }) {
-  const series = data.series || { title: "The Adam Thal Project", doc: "", docHtml: false };
-  const patch = (p) => setData((d) => ({ ...d, series: { ...(d.series || {}), ...p } }));
-  const words = (series.doc || "").replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").trim().split(/\s+/).filter(Boolean).length;
-  return (
-    <section>
-      <SectionHead title="Adam Thal Project" sub="The screenplay. Write straight into the page — it saves as you type." action={<span style={{ fontSize: 11.5, color: MUT, whiteSpace: "nowrap" }}>{words} words</span>} />
-      <div className="rounded-2xl" style={{ ...card, borderRadius: 18, padding: "26px 28px", minHeight: "calc(100vh - 250px)" }}>
-        <div style={{ fontSize: 24, fontWeight: 700, marginBottom: 16, fontFamily: "'Bricolage Grotesque', sans-serif" }}>
-          <InlineEdit value={series.title || ""} onChange={(v) => patch({ title: v })} placeholder="Working title…" strong />
-        </div>
-        <ScriptBox value={series.doc || ""} isHtml={!!series.docHtml} placeholder="Start writing the screenplay…" open big onFocus={() => {}} onChange={(v) => patch({ doc: v, docHtml: true })} onToggle={() => {}} />
       </div>
     </section>
   );
