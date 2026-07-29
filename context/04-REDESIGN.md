@@ -107,9 +107,21 @@ This matters because the three Google allowlists are currently inconsistent:
 live page origin against the OAuth client's authorised JavaScript origins. As configured, requesting
 a calendar token from the real app will fail with `origin_mismatch`.
 
-**Fix:** add `https://www.theallydamon.com` and `https://theallydamon.com` to the OAuth 2.0 web
-client's Authorised JavaScript origins. Keep `theallydamon.github.io` — harmless, and it costs
-nothing if the custom domain is ever removed.
+**RESOLVED 29 July 2026.** `https://www.theallydamon.com` and `https://theallydamon.com` were added
+to the OAuth 2.0 web client's Authorised JavaScript origins (URIs 5 and 6) and verified to persist
+after a page reload. `theallydamon.github.io` was left in place — harmless, and it keeps working if
+the custom domain is ever removed. The full list is now:
+
+```
+http://localhost
+http://localhost:5000
+https://ally-crm-cbdd1.firebaseapp.com
+https://theallydamon.github.io
+https://www.theallydamon.com      <- the origin that actually matters
+https://theallydamon.com
+```
+
+Note `www` and non-`www` are distinct origins to Google, which is why both are listed.
 
 ### Why localhost sign-in fails
 
