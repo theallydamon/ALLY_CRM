@@ -88,6 +88,58 @@ Alternative if we want to avoid a second scope: hardcode the calendar IDs (`prim
 `ally@mama.co.za`) and skip discovery. Cheaper on permissions, but no calendar-picker UI and it
 breaks silently if a calendar is renamed or added.
 
+### The production origin is www.theallydamon.com, NOT theallydamon.github.io
+
+Verified 29 July 2026 by loading the live app. `https://theallydamon.github.io/ALLY_CRM/` **redirects**
+to `https://www.theallydamon.com/ALLY_CRM/` — GitHub Pages has a custom domain attached, so github.io
+is only the redirect source. The origin the browser actually reports, and the one every Google
+security check is evaluated against, is `https://www.theallydamon.com`.
+
+This matters because the three Google allowlists are currently inconsistent:
+
+| List | Contains the real origin? |
+| --- | --- |
+| Firebase Auth authorised domains | Yes — `theallydamon.com` is present |
+| API key website restrictions | Yes — `theallydamon.com/*`, `www.theallydamon.com/*` |
+| **OAuth client authorised JS origins** | **No** — has `theallydamon.github.io`, not `theallydamon.com` |
+
+**This is a blocker for the calendar work.** The Google Identity Services token client validates the
+live page origin against the OAuth client's authorised JavaScript origins. As configured, requesting
+a calendar token from the real app will fail with `origin_mismatch`.
+
+**Fix:** add `https://www.theallydamon.com` and `https://theallydamon.com` to the OAuth 2.0 web
+client's Authorised JavaScript origins. Keep `theallydamon.github.io` — harmless, and it costs
+nothing if the custom domain is ever removed.
+
+### Why localhost sign-in fails
+
+The Firebase browser API key ("Browser key (auto created by Firebase)") has **website restrictions**
+limited to `theallydamon.com/*` and `www.theallydamon.com/*`. Those restrictions are good practice
+and should stay. But they are a third allowlist, separate from Firebase authorised domains and from
+the OAuth client origins, and localhost is not on it.
+
+The result is `auth/requests-from-referer-http://localhost:5000/-are-blocked`. Confirmed to affect
+the pre-redesign code identically, so it is not a regression.
+
+To test locally, add `http://localhost:5000/*` to that key's website restrictions. If local testing
+is not wanted, leave the key alone and verify on the live origin instead.
+
+The same key also has **API restrictions**: Cloud Firestore API, Identity Toolkit API, Token Service
+API. Google Calendar API is deliberately not among them and does not need to be, because calendar
+requests will authenticate with an OAuth access token rather than the API key. Do not pass `key=` on
+Calendar requests, or this becomes a problem.
+
+### Sign-in used to fail silently
+
+`signInGoogle` caught every error and discarded it, on the assumption that the only realistic failure
+was the user closing the popup. Every other failure — blocked popup, unauthorised domain, restricted
+API key — therefore looked like a dead button. Worse, `signInWithPopup` can hang without ever
+settling, which no catch block can see.
+
+Fixed: real causes are now mapped to readable messages and shown on the gate screen, a stall timer
+covers the hang case, and a redirect-based fallback is offered when the popup route is unavailable.
+The failing origin is printed alongside, since every one of these faults is origin-specific.
+
 ### Local development port
 
 `03-WORKFLOW.md` and the README say to serve on port 8000. The OAuth client only authorises

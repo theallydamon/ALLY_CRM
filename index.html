@@ -1052,6 +1052,19 @@ function AnchorModule({ data, setData }) {
   );
 }
 
+/* Human-readable causes for the Firebase auth error codes that actually happen in this app.
+   Module scope on purpose: it is a constant lookup, and signInGoogle plus the redirect-result
+   handler both need it. Empty string means "benign, say nothing". */
+const AUTH_ERRORS = {
+  "auth/popup-blocked": "Your browser blocked the sign-in popup. Retrying with a full-page redirect…",
+  "auth/popup-closed-by-user": "Sign-in window was closed before finishing. Tap to try again.",
+  "auth/cancelled-popup-request": "",
+  "auth/unauthorized-domain": "This address is not on the Firebase authorised domains list, so Google sign-in is refused here. Add this exact origin in Firebase Auth settings.",
+  "auth/operation-not-allowed": "Google sign-in is not enabled for this Firebase project.",
+  "auth/network-request-failed": "Could not reach Google. Check your connection and try again.",
+  "auth/internal-error": "Google returned an internal error. Usually transient — try again.",
+};
+
 function AllyCRM() {
   const [ally, setAlly] = useState(null);
   const [mama, setMama] = useState(null);
@@ -1060,6 +1073,8 @@ function AllyCRM() {
   const [q, setQ] = useState("");
   const [saveState, setSaveState] = useState("idle");
   const [navOpen, setNavOpen] = useState(false);
+  const [authError, setAuthError] = useState("");
+  const [authStalled, setAuthStalled] = useState(false);
   const loaded = useRef(false);
   const timers = useRef({});
   const [localLoaded, setLocalLoaded] = useState(false);
@@ -1106,13 +1121,61 @@ function AllyCRM() {
   useEffect(() => {
     if (!fbAuth) { setAuthReady(true); return; }
     const unsub = fbAuth.onAuthStateChanged((u) => { setUser(u); setAuthReady(true); });
+    /* If signInGoogle fell back to a redirect, the answer arrives on the NEXT page load rather than
+       as a resolved promise, so it has to be collected here or the failure is invisible again. */
+    fbAuth.getRedirectResult().catch((e) => {
+      const code = (e && e.code) || "";
+      if (code) setAuthError(AUTH_ERRORS[code] || `Sign-in failed (${code}). Try again, or reload the page.`);
+    });
     return unsub;
   }, []);
 
-  const signInGoogle = async () => {
+  /* Sign-in errors used to be swallowed whole, on the theory that the only realistic failure was
+     the user closing the popup. That was wrong and actively harmful: a blocked popup, an
+     unauthorised domain, or a disabled provider all fail here too, and every one of them looked
+     identical to a dead button with no feedback at all. Now the real cause is surfaced.
+
+     signInWithPopup is also fragile in some contexts (popup blockers, embedded webviews). When the
+     failure is specifically a popup problem we fall back to a full-page redirect, which does not
+     need a popup at all. Note: never put `e` itself on screen — Firebase error objects can carry
+     request detail we do not want rendered. Only the mapped code and message go out. */
+  /* Verified 29 Jul 2026: on localhost, signInWithPopup neither resolves NOR rejects — it just
+     hangs, with no popup and no error. Reproduced on the pre-redesign code too, so it is not a
+     regression. It is the well-known interaction between popup-based Firebase auth and browser
+     restrictions on third-party storage; the live GitHub Pages origin is unaffected.
+
+     A promise that never settles cannot be caught, so a catch block alone leaves a dead button.
+     Hence the stall timer: if the popup has not produced an answer in STALL_MS, we say so and
+     offer the redirect flow, which does not depend on a popup at all. */
+  const STALL_MS = 9000;
+  const signInRedirect = async () => {
     if (!fbAuth) return;
-    try { await fbAuth.signInWithPopup(new window.firebase.auth.GoogleAuthProvider()); }
-    catch (e) { /* popup closed/blocked — nothing to surface, user can just try again */ }
+    setAuthError(""); setAuthStalled(false);
+    try { await fbAuth.signInWithRedirect(new window.firebase.auth.GoogleAuthProvider()); }
+    catch (e) {
+      const code = (e && e.code) || "";
+      setAuthError(AUTH_ERRORS[code] || `Full-page sign-in failed${code ? ` (${code})` : ""}.`);
+    }
+  };
+  const signInGoogle = async () => {
+    if (!fbAuth) { setAuthError("Firebase failed to load, so sign-in is unavailable. Check your connection and reload."); return; }
+    setAuthError(""); setAuthStalled(false);
+    const provider = new window.firebase.auth.GoogleAuthProvider();
+    const stall = setTimeout(() => {
+      setAuthStalled(true);
+      setAuthError("The Google popup did not come back. This usually means the browser blocked it, or is blocking third-party storage for the sign-in window.");
+    }, STALL_MS);
+    try {
+      await fbAuth.signInWithPopup(provider);
+      clearTimeout(stall);
+    } catch (e) {
+      clearTimeout(stall);
+      const code = (e && e.code) || "";
+      if (code === "auth/popup-blocked") { setAuthError(AUTH_ERRORS[code]); await signInRedirect(); return; }
+      const known = AUTH_ERRORS[code];
+      if (known === "") return; // benign: a second popup superseded the first
+      setAuthError(known || `Sign-in failed${code ? ` (${code})` : ""}. Try again, or reload the page.`);
+    }
   };
   const signOutGoogle = async () => {
     if (!fbAuth) return;
@@ -1439,6 +1502,17 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
           <button onClick={signInGoogle} className="flex items-center justify-center gap-2 w-full" style={{ ...pillDark, padding: "11px 16px", fontSize: 14 }}>
             <CloudIcon size={15} /> Sign in with Google
           </button>
+          {authError && (
+            <div role="alert" style={{ marginTop: 14, padding: "9px 11px", borderRadius: 10, background: C.accentBg, border: `1px solid ${C.accentLine}`, fontSize: 11.5, lineHeight: 1.45, color: C.ink, textAlign: "left" }}>
+              {authError}
+              {authStalled && (
+                <button onClick={signInRedirect} style={{ ...pillDark, marginTop: 9, padding: "7px 12px", fontSize: 12, width: "100%" }}>
+                  Sign in without a popup
+                </button>
+              )}
+              <div style={{ marginTop: 6, color: MUT, fontSize: 10.5 }}>Origin: {window.location.origin}</div>
+            </div>
+          )}
         </div>
       </div>
     );
