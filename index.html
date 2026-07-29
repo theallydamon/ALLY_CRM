@@ -1214,132 +1214,161 @@ function useCalendarAuth(crmUser) {
 }
 
 /* ================= DAY GRID =================
-   Step 3 of context/04-REDESIGN.md. READ ONLY: it renders today as countable half-hour cells and
-   fills in what Google already has. Nothing here writes to any calendar — dropping tasks is step 4.
+   Step 3 of context/04-REDESIGN.md. READ ONLY: renders the next four days as countable half-hour
+   cells and fills in what Google already has. There is no POST/PATCH/PUT/DELETE anywhere in here,
+   so nothing can alter a calendar. Dropping tasks is step 4.
 
-   Shape, per the owner's brief: today only (a week was considered and rejected as too cramped),
-   06:00 to 22:00, half-hour cells, and three faint phase bands so the day reads as morning / day /
-   night at a glance. Laid out as one horizontal strip rather than a tall vertical column because
-   HOME has to fit the grid AND the priority cards on one screen — a 32-row vertical calendar would
-   push the cards entirely below the fold and defeat the point of putting them together. */
+   LAYOUT — vertical time axis, four day columns, matching the owner's reference (29 Jul 2026).
+   An earlier version drew a single day as a horizontal strip. Rejected: the owner wants four days
+   at once, and a horizontal axis cannot show four days without becoming unreadable.
+
+   ROW HEIGHT IS LOAD-BEARING. ROW_H is kept deliberately tight so the whole grid plus the top of
+   the pillar cards fit one screen. Step 4 drags a task from a card UP into a cell, and a drag that
+   has to cross a scroll boundary is miserable. If you increase ROW_H, you break that drag. */
 const DAY_START_MIN = 6 * 60;          // 06:00
 const DAY_END_MIN = 22 * 60;           // 22:00
 const SLOT_MIN = 30;
 const SLOT_COUNT = (DAY_END_MIN - DAY_START_MIN) / SLOT_MIN;   // 32
+const GRID_DAYS = 4;
+const ROW_H = 21;
+const TIME_COL_W = 62;
 
-/* Faint on purpose — the owner asked for "very faded, almost like very light colour", not blocky
-   bands. These read as a wash behind the cells, and the cell borders stay the dominant structure.
-   Boundaries: morning 06:00-12:00, day 12:00-19:30, night 19:30-22:00. Sums to exactly 32 slots. */
+/* Faint on purpose — "very faded, almost like very light colour", not blocky bands. These sit
+   behind the cells; the cell borders stay the dominant structure.
+   Boundaries tile 06:00-22:00 exactly and sum to 32 slots. Verified in the build check. */
 const DAY_PHASES = [
-  { key: "morning", label: "Morning", from: 6 * 60,       to: 12 * 60,      tint: "rgba(47,163,124,0.085)", edge: "rgba(47,163,124,0.30)" },
-  { key: "day",     label: "Day",     from: 12 * 60,      to: 19 * 60 + 30, tint: "rgba(214,154,0,0.085)",  edge: "rgba(214,154,0,0.30)" },
-  { key: "night",   label: "Night",   from: 19 * 60 + 30, to: 22 * 60,      tint: "rgba(229,72,77,0.085)",  edge: "rgba(229,72,77,0.30)" },
+  { key: "morning", label: "Morning", from: 6 * 60,       to: 12 * 60,      tint: "rgba(47,163,124,0.085)", edge: "rgba(47,163,124,0.28)" },
+  { key: "day",     label: "Day",     from: 12 * 60,      to: 19 * 60 + 30, tint: "rgba(214,154,0,0.085)",  edge: "rgba(214,154,0,0.28)" },
+  { key: "night",   label: "Night",   from: 19 * 60 + 30, to: 22 * 60,      tint: "rgba(229,72,77,0.085)",  edge: "rgba(229,72,77,0.28)" },
 ];
 const phaseForMin = (m) => DAY_PHASES.find((p) => m >= p.from && m < p.to) || DAY_PHASES[DAY_PHASES.length - 1];
 const slotToMin = (i) => DAY_START_MIN + i * SLOT_MIN;
-const minToLabel = (m) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
-
-/* Local minutes-from-midnight for a Google event edge. Google returns dateTime as an offset-aware
-   RFC3339 string; `new Date()` parses that to the correct instant and getHours() gives the viewer's
-   local clock, which is what the grid is drawn in. Do NOT slice the string manually — that silently
-   ignores the offset and shifts every event when the calendar's zone differs from the browser's. */
-const eventEdgeMin = (edge, dayStart) => {
-  const d = new Date(edge);
-  const dayDiff = Math.floor((d - dayStart) / 86400000);
-  return d.getHours() * 60 + d.getMinutes() + (dayDiff !== 0 ? dayDiff * 1440 : 0);
+const minToLabel = (m) => {
+  const h24 = Math.floor(m / 60), mm = m % 60;
+  const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
+  return `${h12}:${String(mm).padStart(2, "0")} ${h24 < 12 ? "AM" : "PM"}`;
 };
+const midnight = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+const sameDay = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 
-/* Greedy lane packing so overlapping events sit side by side instead of on top of each other. */
-function packLanes(events) {
-  const lanes = [];
-  events.slice().sort((a, b) => a.startMin - b.startMin || b.endMin - a.endMin).forEach((ev) => {
-    let lane = lanes.findIndex((l) => l[l.length - 1].endMin <= ev.startMin);
-    if (lane === -1) { lanes.push([ev]); lane = lanes.length - 1; } else { lanes[lane].push(ev); }
-    ev._lane = lane;
+/* Where an event sits on one particular day column, in local minutes from that day's midnight.
+   Events are kept as real Date objects and projected per column, which is what makes a block that
+   spans midnight render correctly on both days instead of only the first.
+
+   Google's dateTime is an offset-aware RFC3339 string. new Date() parses it to the right instant
+   and getHours() then gives the viewer's local clock, which is what the grid is drawn in. Never
+   slice the string by hand — that ignores the offset and shifts every event the moment a calendar's
+   zone differs from the browser's. */
+function eventOnDay(ev, day) {
+  const dStart = midnight(day);
+  const dEnd = new Date(dStart.getTime() + 86400000);
+  if (ev.end <= dStart || ev.start >= dEnd) return null;
+  const sMin = ev.start < dStart ? 0 : ev.start.getHours() * 60 + ev.start.getMinutes();
+  const eMin = ev.end > dEnd ? 1440 : ev.end.getHours() * 60 + ev.end.getMinutes();
+  if (eMin <= DAY_START_MIN || sMin >= DAY_END_MIN) return null;   // wholly outside the visible window
+  return { sMin, eMin: Math.max(eMin, sMin + 15) };
+}
+
+/* Greedy lane packing so overlapping events sit side by side rather than on top of each other. */
+function packLanes(items) {
+  const laneEnds = [];
+  items.slice().sort((a, b) => a.sMin - b.sMin || b.eMin - a.eMin).forEach((it) => {
+    let lane = laneEnds.findIndex((end) => end <= it.sMin);
+    if (lane === -1) { laneEnds.push(it.eMin); lane = laneEnds.length - 1; } else { laneEnds[lane] = it.eMin; }
+    it.lane = lane;
   });
-  return { events, laneCount: Math.max(1, lanes.length) };
+  return Math.max(1, laneEnds.length);
 }
 
 function DayGrid({ cal }) {
-  const { connected, calFetch, calendars, account } = cal;
-  const [events, setEvents] = useState([]);
-  const [allDay, setAllDay] = useState([]);
+  const { connected, calFetch, calendars } = cal;
+  const [raw, setRaw] = useState([]);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [nowMin, setNowMin] = useState(() => { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); });
+  const [today, setToday] = useState(() => new Date());
 
-  const today = new Date();
-  const dayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  const dayKey = todayISO();
+  const days = Array.from({ length: GRID_DAYS }, (_, i) => new Date(today.getFullYear(), today.getMonth(), today.getDate() + i));
 
-  /* the "now" line only needs minute resolution */
+  /* the now-line needs minute resolution; re-reading the date also rolls the grid over at midnight */
   useEffect(() => {
-    const id = setInterval(() => { const d = new Date(); setNowMin(d.getHours() * 60 + d.getMinutes()); }, 60000);
+    const id = setInterval(() => {
+      const d = new Date();
+      setNowMin(d.getHours() * 60 + d.getMinutes());
+      setToday((prev) => (sameDay(prev, d) ? prev : d));
+    }, 60000);
     return () => clearInterval(id);
   }, []);
 
   const used = (calendars || []).filter((c) => c.used);
+  const usedKey = used.map((c) => c.id).join("|");
+  const spanKey = midnight(days[0]).getTime();
 
   const load = useCallback(async () => {
     if (!connected || !used.length) return;
     setLoading(true); setLoadError("");
-    const timeMin = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0).toISOString();
-    const timeMax = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59).toISOString();
-    /* singleEvents=true expands recurring events into their individual instances, which is what we
-       want: show the occurrences, never touch the recurrence rule (explicitly out of scope). */
-    const qs = `?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}&singleEvents=true&orderBy=startTime&maxResults=250`;
+    const from = midnight(days[0]);
+    const to = new Date(midnight(days[GRID_DAYS - 1]).getTime() + 86400000);
+    /* singleEvents=true expands recurring events into instances: show occurrences, never touch a
+       recurrence rule (explicitly out of scope in 02-GOAL.md). */
+    const qs = `?timeMin=${encodeURIComponent(from.toISOString())}&timeMax=${encodeURIComponent(to.toISOString())}&singleEvents=true&orderBy=startTime&maxResults=500`;
     const results = await Promise.all(used.map(async (c) => {
       const r = await calFetch(`/calendars/${encodeURIComponent(c.id)}/events${qs}`);
-      return r.ok ? { cal: c, items: (r.data && r.data.items) || [] } : { cal: c, items: null };
+      return { cal: c, items: r.ok ? ((r.data && r.data.items) || []) : null };
     }));
     if (results.some((r) => r.items === null)) setLoadError("Some calendars could not be read.");
-    const timed = [], full = [];
+    const out = [];
     results.forEach(({ cal: c, items }) => {
       (items || []).forEach((ev) => {
-        if (ev.status === "cancelled") return;
-        const base = { id: `${c.id}::${ev.id}`, title: ev.summary || "(no title)", calId: c.id, calName: c.name, writable: c.role === "owner" || c.role === "writer" };
-        if (ev.start && ev.start.date) { full.push(base); return; }
-        if (!ev.start || !ev.start.dateTime) return;
-        const s = eventEdgeMin(ev.start.dateTime, dayStart);
-        const e = eventEdgeMin(ev.end && ev.end.dateTime ? ev.end.dateTime : ev.start.dateTime, dayStart);
-        timed.push({ ...base, startMin: s, endMin: Math.max(s + 15, e) });
+        if (ev.status === "cancelled" || !ev.start) return;
+        const writable = c.role === "owner" || c.role === "writer";
+        if (ev.start.date) {
+          out.push({ id: `${c.id}::${ev.id}`, title: ev.summary || "(no title)", calName: c.name, writable, allDay: true,
+            start: new Date(`${ev.start.date}T00:00:00`), end: new Date(`${(ev.end && ev.end.date) || ev.start.date}T00:00:00`) });
+          return;
+        }
+        if (!ev.start.dateTime) return;
+        out.push({ id: `${c.id}::${ev.id}`, title: ev.summary || "(no title)", calName: c.name, writable, allDay: false,
+          start: new Date(ev.start.dateTime), end: new Date((ev.end && ev.end.dateTime) || ev.start.dateTime) });
       });
     });
-    setEvents(timed); setAllDay(full); setLoading(false);
-  }, [connected, calFetch, JSON.stringify(used.map((c) => c.id)), dayKey]);
+    setRaw(out); setLoading(false);
+  }, [connected, calFetch, usedKey, spanKey]);
 
   useEffect(() => { load(); }, [load]);
 
-  /* Events wholly outside 06:00-22:00 would otherwise vanish without explanation. Count them and
-     say so, rather than pretending the day is emptier than it is. */
-  const visible = events.filter((e) => e.endMin > DAY_START_MIN && e.startMin < DAY_END_MIN);
-  const offGrid = events.length - visible.length;
-  const { laneCount } = packLanes(visible);
-
-  const takenSlots = new Set();
-  visible.forEach((e) => {
-    for (let i = 0; i < SLOT_COUNT; i++) {
-      const a = slotToMin(i), b = a + SLOT_MIN;
-      if (e.startMin < b && e.endMin > a) takenSlots.add(i);
-    }
+  /* per-column projection */
+  const columns = days.map((day) => {
+    const timed = [];
+    raw.filter((e) => !e.allDay).forEach((e) => {
+      const pos = eventOnDay(e, day);
+      if (pos) timed.push({ ...e, ...pos });
+    });
+    const laneCount = packLanes(timed);
+    const taken = new Set();
+    timed.forEach((e) => {
+      for (let i = 0; i < SLOT_COUNT; i++) {
+        const a = slotToMin(i), b = a + SLOT_MIN;
+        if (e.sMin < b && e.eMin > a) taken.add(i);
+      }
+    });
+    const allDayHere = raw.filter((e) => e.allDay && midnight(day) >= midnight(e.start) && midnight(day) < midnight(e.end));
+    return { day, timed, laneCount, taken, allDay: allDayHere };
   });
-  const freeCount = SLOT_COUNT - takenSlots.size;
 
-  const LANE_H = 20, LANE_GAP = 3;
-  const eventsH = laneCount * LANE_H + (laneCount - 1) * LANE_GAP;
-  const pct = (m) => ((Math.min(Math.max(m, DAY_START_MIN), DAY_END_MIN) - DAY_START_MIN) / (DAY_END_MIN - DAY_START_MIN)) * 100;
-  const nowOnGrid = nowMin >= DAY_START_MIN && nowMin <= DAY_END_MIN;
+  const topOf = (m) => ((Math.min(Math.max(m, DAY_START_MIN), DAY_END_MIN) - DAY_START_MIN) / SLOT_MIN) * ROW_H;
+  const bodyH = SLOT_COUNT * ROW_H;
+  const totalFree = columns.reduce((n, c) => n + (SLOT_COUNT - c.taken.size), 0);
 
   if (!connected) return null;
 
   return (
-    <div className="rounded-2xl p-4 mb-5" style={{ ...card, borderRadius: 16 }}>
-      <div className="flex items-baseline justify-between flex-wrap gap-2 mb-3">
+    <div className="rounded-2xl daygrid" style={{ ...card, borderRadius: 16, padding: 13, marginBottom: 16 }}>
+      <div className="flex items-baseline justify-between flex-wrap gap-2" style={{ marginBottom: 9 }}>
         <div>
-          <div style={{ fontWeight: 700, fontSize: 14 }}>{today.toLocaleDateString("en-ZA", { weekday: "long", day: "numeric", month: "long" })}</div>
+          <div style={{ fontWeight: 700, fontSize: 13.5 }}>Next {GRID_DAYS} days</div>
           <div style={{ fontSize: 10.5, color: MUT, marginTop: 1 }}>
-            {loading ? "Reading your calendar…" : `${freeCount} of ${SLOT_COUNT} half-hour slots free`}
-            {offGrid > 0 && ` · ${offGrid} event${offGrid === 1 ? "" : "s"} outside 06:00–22:00`}
+            {loading ? "Reading your calendar…" : `${totalFree} half-hour slots free across ${GRID_DAYS} days`}
           </div>
         </div>
         <div className="flex items-center gap-3" style={{ fontSize: 9.5, color: MUT, letterSpacing: "0.06em", textTransform: "uppercase" }}>
@@ -1351,62 +1380,88 @@ function DayGrid({ cal }) {
         </div>
       </div>
 
-      {allDay.length > 0 && (
-        <div className="flex items-center gap-1.5 flex-wrap" style={{ marginBottom: 7 }}>
-          {allDay.map((e) => (
-            <span key={e.id} title={`${e.title} · ${e.calName} · all day`} style={{ fontSize: 10.5, padding: "2px 8px", borderRadius: 999, background: FILL, border: `1px solid ${LINE}`, color: MUT, maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.title}</span>
-          ))}
+      {/* column headers */}
+      <div style={{ display: "grid", gridTemplateColumns: `${TIME_COL_W}px repeat(${GRID_DAYS}, 1fr)`, gap: 0 }}>
+        <div style={{ fontSize: 9, color: MUT, letterSpacing: "0.08em", textTransform: "uppercase", paddingBottom: 6 }}>Time</div>
+        {columns.map(({ day, allDay }, ci) => {
+          const isToday = sameDay(day, new Date());
+          return (
+            <div key={ci} style={{ textAlign: "center", paddingBottom: 6, borderLeft: `1px solid ${LINE}` }}>
+              <div style={{ fontSize: 9.5, color: MUT, letterSpacing: "0.1em", textTransform: "uppercase" }}>{day.toLocaleDateString("en-ZA", { weekday: "short" })}</div>
+              <div style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 24, height: 24, borderRadius: 99, marginTop: 2,
+                fontSize: 14, fontWeight: 700, background: isToday ? C.accent : "transparent", color: isToday ? "#fff" : C.ink }}>{day.getDate()}</div>
+              {allDay.length > 0 && (
+                <div className="flex flex-col" style={{ gap: 2, padding: "3px 3px 0" }}>
+                  {allDay.map((e) => (
+                    <span key={e.id} title={`${e.title} · ${e.calName} · all day`}
+                      style={{ fontSize: 9, padding: "1px 5px", borderRadius: 4, background: FILL, border: `1px solid ${LINE}`, color: MUT, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.title}</span>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* body: time labels + one column per day */}
+      <div style={{ display: "grid", gridTemplateColumns: `${TIME_COL_W}px repeat(${GRID_DAYS}, 1fr)`, gap: 0, borderTop: `1px solid ${LINE}` }}>
+        <div>
+          {Array.from({ length: SLOT_COUNT }, (_, i) => {
+            const m = slotToMin(i);
+            return (
+              <div key={i} style={{ height: ROW_H, fontSize: 9.5, color: m % 60 === 0 ? MUT : FAINT, textAlign: "right", paddingRight: 7, lineHeight: `${ROW_H}px`, fontVariantNumeric: "tabular-nums" }}>
+                {minToLabel(m)}
+              </div>
+            );
+          })}
         </div>
-      )}
 
-      {/* hour ruler */}
-      <div style={{ position: "relative", height: 13, marginBottom: 3 }}>
-        {Array.from({ length: (DAY_END_MIN - DAY_START_MIN) / 60 + 1 }, (_, h) => {
-          const m = DAY_START_MIN + h * 60;
+        {columns.map(({ day, timed, laneCount, taken }, ci) => {
+          const isToday = sameDay(day, new Date());
           return (
-            <span key={m} style={{ position: "absolute", left: `${pct(m)}%`, transform: h === 0 ? "none" : "translateX(-50%)", fontSize: 9, color: MUT, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
-              {String(m / 60).padStart(2, "0")}
-            </span>
+            <div key={ci} style={{ position: "relative", height: bodyH, borderLeft: `1px solid ${LINE}` }}>
+              {Array.from({ length: SLOT_COUNT }, (_, i) => {
+                const m = slotToMin(i);
+                const ph = phaseForMin(m);
+                const busy = taken.has(i);
+                return (
+                  <div key={i} className="daycell" data-day={ci} data-slot={i}
+                    title={`${day.toLocaleDateString("en-ZA", { weekday: "short", day: "numeric" })} ${minToLabel(m)} · ${ph.label}${busy ? " · busy" : " · free"}`}
+                    style={{ height: ROW_H, background: busy ? "rgba(255,255,255,0.05)" : ph.tint,
+                      borderTop: `1px solid ${m % 60 === 0 ? ph.edge : "rgba(255,255,255,0.045)"}` }} />
+                );
+              })}
+
+              {timed.map((e) => {
+                const top = topOf(e.sMin);
+                const h = Math.max(ROW_H - 2, topOf(e.eMin) - top - 1);
+                const w = 100 / laneCount;
+                return (
+                  <div key={e.id} className="dayevent" title={`${e.title}\n${minToLabel(Math.max(e.sMin, DAY_START_MIN))} – ${minToLabel(Math.min(e.eMin, DAY_END_MIN))}\n${e.calName}`}
+                    style={{ position: "absolute", top, height: h, left: `calc(${e.lane * w}% + 2px)`, width: `calc(${w}% - 4px)`,
+                      borderRadius: 5, padding: "1px 4px", overflow: "hidden",
+                      background: e.writable ? "rgba(62,143,214,0.32)" : "rgba(255,255,255,0.12)",
+                      border: `1px solid ${e.writable ? "rgba(62,143,214,0.6)" : LINE}`,
+                      borderLeft: `2px solid ${e.writable ? C.sky : MUT}` }}>
+                    <div style={{ fontSize: 9.5, fontWeight: 600, lineHeight: 1.2, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: h < 26 ? "nowrap" : "normal" }}>{e.title}</div>
+                    {h >= 34 && <div style={{ fontSize: 8.5, color: MUT, lineHeight: 1.2 }}>{minToLabel(Math.max(e.sMin, DAY_START_MIN))}</div>}
+                  </div>
+                );
+              })}
+
+              {isToday && nowMin >= DAY_START_MIN && nowMin <= DAY_END_MIN && (
+                <div aria-hidden style={{ position: "absolute", left: 0, right: 0, top: topOf(nowMin), height: 2, background: C.accent, pointerEvents: "none", zIndex: 3 }}>
+                  <span style={{ position: "absolute", left: -3, top: -3, width: 8, height: 8, borderRadius: 99, background: C.accent }} />
+                </div>
+              )}
+            </div>
           );
         })}
-      </div>
-
-      {/* event lanes, sitting directly above the cells they occupy */}
-      <div style={{ position: "relative", height: eventsH, marginBottom: 3 }}>
-        {visible.map((e) => (
-          <div key={e.id} title={`${e.title}\n${minToLabel(Math.max(e.startMin, DAY_START_MIN))}–${minToLabel(Math.min(e.endMin, DAY_END_MIN))}\n${e.calName}`}
-            style={{ position: "absolute", left: `${pct(e.startMin)}%`, width: `calc(${pct(e.endMin) - pct(e.startMin)}% - 2px)`,
-              top: e._lane * (LANE_H + LANE_GAP), height: LANE_H, borderRadius: 5,
-              background: e.writable ? "rgba(62,143,214,0.30)" : "rgba(255,255,255,0.13)",
-              border: `1px solid ${e.writable ? "rgba(62,143,214,0.55)" : LINE}`,
-              display: "flex", alignItems: "center", padding: "0 5px", overflow: "hidden" }}>
-            <span style={{ fontSize: 9.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: C.ink }}>{e.title}</span>
-          </div>
-        ))}
-      </div>
-
-      {/* the cells — 32 countable half-hour squares */}
-      <div style={{ position: "relative", display: "grid", gridTemplateColumns: `repeat(${SLOT_COUNT}, 1fr)`, gap: 2 }}>
-        {Array.from({ length: SLOT_COUNT }, (_, i) => {
-          const m = slotToMin(i);
-          const ph = phaseForMin(m);
-          const taken = takenSlots.has(i);
-          const isHourStart = m % 60 === 0;
-          return (
-            <div key={i} title={`${minToLabel(m)}–${minToLabel(m + SLOT_MIN)} · ${ph.label}${taken ? " · busy" : " · free"}`}
-              style={{ height: 40, borderRadius: 4, background: taken ? "rgba(255,255,255,0.10)" : ph.tint,
-                borderTop: `1px solid ${taken ? LINE : ph.edge}`, borderBottom: `1px solid ${taken ? LINE : ph.edge}`,
-                borderLeft: `1px solid ${isHourStart ? ph.edge : "transparent"}`, borderRight: "1px solid transparent" }} />
-          );
-        })}
-        {nowOnGrid && (
-          <div aria-hidden style={{ position: "absolute", left: `${pct(nowMin)}%`, top: -4, bottom: -4, width: 2, background: C.accent, borderRadius: 2, pointerEvents: "none" }} />
-        )}
       </div>
 
       {loadError && <div role="alert" style={{ marginTop: 8, fontSize: 10.5, color: C.amber }}>{loadError}</div>}
       <div style={{ marginTop: 8, fontSize: 10, color: FAINT, lineHeight: 1.45 }}>
-        Reading only — nothing here can change your calendar yet. Blue blocks are on a calendar you can write to; grey are view-only.
+        Reading only — nothing here can change your calendar yet. Blue blocks sit on a calendar you can write to; grey are view-only.
       </div>
     </div>
   );
@@ -1941,6 +1996,46 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
            stayed put; page-h1 is now the single source of truth for a page heading. */
         .page-h1 { font-size: 26px; line-height: 1.15; letter-spacing: -0.02em; margin: 0; }
 
+        /* four pillar cards on one row — see the comment at the grid itself for why this is fixed
+           rather than auto-fit. Collapses on narrow screens, where dragging is not the use case. */
+        .pillar-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+        @media (max-width: 1180px) { .pillar-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+        @media (max-width: 640px)  { .pillar-grid { grid-template-columns: 1fr; } }
+
+        /* ---------- hover / motion ----------
+           One shared easing and duration so the whole app feels like one object. Everything here is
+           transform/opacity/colour only — never width, height or top, which force layout and make
+           hover feel sticky. All of it is disabled under prefers-reduced-motion at the bottom. */
+        .navbtn, .navbtn-glyph, .daycell, .dayevent, .pillar-card, .lift, button, a {
+          transition: background-color 0.16s ease, border-color 0.16s ease, color 0.16s ease,
+                      transform 0.16s cubic-bezier(0.2,0.8,0.3,1), box-shadow 0.16s ease, opacity 0.16s ease;
+        }
+        .navbtn:hover { transform: translateY(-2px); }
+        .navbtn:active { transform: translateY(0) scale(0.97); }
+
+        /* cards lift slightly and pick up an accent edge, so it is obvious which one you are about
+           to grab a task from */
+        .pillar-card:hover {
+          transform: translateY(-3px);
+          border-color: rgba(229,72,77,0.4) !important;
+          box-shadow: 0 10px 26px rgba(0,0,0,0.45);
+        }
+
+        /* calendar cells respond individually — this is also the groundwork for step 4's drop
+           target, which needs a per-cell hover state to point at */
+        .daycell:hover { background: rgba(255,255,255,0.13) !important; box-shadow: inset 0 0 0 1px rgba(229,72,77,0.45); }
+        .dayevent:hover { transform: scale(1.015); filter: brightness(1.18); z-index: 4; }
+
+        /* generic affordances */
+        button:not(:disabled):hover { opacity: 0.92; }
+        button:not(:disabled):active { transform: scale(0.98); }
+        .lift:hover { transform: translateY(-1px); }
+
+        @media (prefers-reduced-motion: reduce) {
+          .navbtn, .navbtn-glyph, .daycell, .dayevent, .pillar-card, .lift, button, a { transition: none !important; }
+          .navbtn:hover, .navbtn:active, .pillar-card:hover, .dayevent:hover, .lift:hover, button:active { transform: none !important; }
+        }
+
         @media (max-width: 900px) {
           .app-header { padding: 10px 14px !important; flex-wrap: wrap; row-gap: 8px; }
           .header-search { display: none !important; }
@@ -1961,10 +2056,10 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
         <div className="flex flex-col" style={{ flex: 1, minWidth: 0, height: "100%" }}>
           {/* top bar (persistent) */}
           <header className="flex items-center gap-3 app-header" style={{ padding: "14px 24px", borderBottom: `1px solid ${LINE}`, flexShrink: 0 }}>
-            <button onClick={back} disabled={!history.length} aria-label="Back"
-              style={{ width: 32, height: 32, borderRadius: 9, border: `1px solid ${LINE}`, background: history.length ? C.card : "transparent", cursor: history.length ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", color: history.length ? C.ink : FAINT, flexShrink: 0 }}>
-              <ChevronLeft size={16} />
-            </button>
+            {/* The back arrow was removed 29 Jul 2026: the bottom strip is now the only way to
+                navigate, so a second, competing navigation control was just noise. `back` and the
+                `history` stack are kept — navigateToTask still pushes onto them when a dashboard
+                card jumps you into a pillar, and browser-level back should hook into that later. */}
             <div style={{ width: 6, height: 30, borderRadius: 3, background: mod.accent, flexShrink: 0 }} />
             <div style={{ minWidth: 0 }}>
               <div className="page-title" style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 21, lineHeight: 1.1, letterSpacing: "-0.01em" }}>{mod.label}</div>
@@ -2339,11 +2434,13 @@ return (
 <h1 className="page-h1" style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700 }}>Priorities right now</h1>
 </div>
 
-{/* every pillar gets its own independent ring, ranked left to right by how full it is.
-minmax 320 (down from 360) is part of the sizing pass — at 360 these cards forced a wider
-layout than the rest of the app and were the main reason the dashboard read as zoomed-in
-compared to every other page. Still auto-fit, so it reflows to fewer columns when narrow. */}
-<div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))" }}>
+{/* ALL FOUR PILLARS ON ONE ROW, deliberately a fixed 4-up rather than auto-fit.
+auto-fit used to wrap to 3 + 1, which puts the fourth card on a second line — and in step 4 a task
+is dragged from a card UP into the calendar, so a card on a lower row would force the drag to
+travel across two other cards to get there. Fixed columns keep every card the same distance from
+the grid. The class (not inline style) is so the media queries below can collapse it on narrow
+screens, where a 4-up would be unusable and there is no dragging anyway. */}
+<div className="grid gap-3 pillar-grid">
 {ranked.map((k) => (
 k === "content"
 ? <ContentPillarCard key={k} content={ally.content} pipelineKey="content" mod={MODULES.content} go={go} rank={rankOf[k]} taskPct={contentTaskPct} postPct={contentPostUrgency.pct} onNavigate={navigateToTask} onComplete={completeTask} extraItems={ally.brandContent.items} />
@@ -2379,7 +2476,7 @@ const toFilmDated = allItems.filter((i) => i.status === "To Film" && !i.dueOff &
 const toEditDated = allItems.filter((i) => i.status === "To Edit" && !i.dueOff && (i.due || i.scheduledFor)).sort((a, b) => daysUntil(a.due || a.scheduledFor) - daysUntil(b.due || b.scheduledFor)).slice(0, 3);
 const ideasDated = allItems.filter((i) => i.status === "Ideas" && !i.dueOff && (i.due || i.scheduledFor)).sort((a, b) => daysUntil(a.due || a.scheduledFor) - daysUntil(b.due || b.scheduledFor)).slice(0, 3);
 return (
-<div onClick={() => onNavigate && onNavigate({ navTab: "content", navSub })} className="rounded-2xl p-5" style={{ ...card, borderRadius: 18, borderLeft: "4px solid " + mod.accent, cursor: "pointer" }}>
+<div onClick={() => onNavigate && onNavigate({ navTab: "content", navSub })} className="rounded-2xl p-4 pillar-card" style={{ ...card, borderRadius: 16, borderLeft: "4px solid " + mod.accent, cursor: "pointer" }}>
 <div className="flex items-center justify-between mb-3">
 <div className="flex items-center gap-2 min-w-0">
 <span style={{ width: 28, height: 28, borderRadius: 99, background: mod.accent, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 14, flexShrink: 0 }}>{rank}</span>
@@ -2473,7 +2570,7 @@ function PriorityPillarCard({ pillarKey, tasks, go, rank, onDropPriority, pct, o
     onDropPriority(pillarKey, payload.id, dropPatchFor(col));
   };
   return (
-    <div onClick={() => go(pillarKey)} className="rounded-2xl p-5" style={{ ...card, borderRadius: 18, borderLeft: `4px solid ${mod.accent}`, cursor: "pointer" }}>
+    <div onClick={() => go(pillarKey)} className="rounded-2xl p-4 pillar-card" style={{ ...card, borderRadius: 16, borderLeft: `4px solid ${mod.accent}`, cursor: "pointer" }}>
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2 min-w-0">
           <span style={{ width: 28, height: 28, borderRadius: 99, background: mod.accent, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 14, flexShrink: 0 }}>{rank}</span>
