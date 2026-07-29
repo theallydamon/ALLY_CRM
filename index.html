@@ -388,8 +388,10 @@ const cardSoft = { background: C.soft, border: `1px solid ${LINE}`, backdropFilt
 const MODULES = {
   overview:  { icon: "home",      label: "HOME",       accent: C.accent, bg: C.accentBg },
   mama:      { icon: "mama",      label: "MAMA",       accent: C.accent, bg: C.accentBg },
-  music:     { icon: "music",     label: "MUSIC",      accent: C.accent, bg: C.accentBg },
   content:   { icon: "content",   label: "CONTENT",    accent: C.accent, bg: C.accentBg },
+  /* "music" is no longer a tab, but PRIORITY_PILLARS still has a "music" pillar for the MUSIC
+     CONTENT card on HOME. That card uses MUSIC_CONTENT_MOD below and navigates into Content's
+     Music subtab, so it needs no entry here. */
   lifeAdmin: { icon: "lifeAdmin", label: "LIFE ADMIN", accent: C.accent, bg: C.accentBg },
   /* not in the bottom strip; reached from cards/chains but still need identity when rendered */
   unlocks:   { icon: "unlocks",   label: "Unlocks",    accent: C.accent, bg: C.accentBg },
@@ -400,13 +402,14 @@ const MODULES = {
 to MODULES itself, since MODULES.music already means the unrelated song-roadmap tab. */
 const MUSIC_CONTENT_MOD = { icon: "music", label: "MUSIC CONTENT", accent: C.accent, bg: C.accentBg };
 
-/* Bottom nav strip order. HOME is deliberately the MIDDLE entry — the strip is rendered in this
-   order and HOME's centre position is the whole point of the layout, so if you add or remove a tab
-   here, keep the count odd and keep "overview" in the middle.
-   "deals" pulled for now — re-add here to bring the tab back.
-   "series" and "anchor" removed entirely (owner's call, 29 Jul 2026). Their data is untouched in
-   Firestore and still round-trips through the JSON export; only the UI is gone. */
-const TAB_ORDER = ["mama", "music", "overview", "content", "lifeAdmin"];
+/* Bottom nav strip order, set explicitly by the owner 29 Jul 2026: HOME second from the left, with
+   Life Admin to its left and Mama and Content to its right. HOME stays the visually dominant entry.
+   With four tabs there is no true centre slot, and this asymmetry is the owner's deliberate choice
+   rather than an accident — do not "fix" it by reordering.
+   Removed entirely, data untouched in Firestore and still in the JSON export: "series" and "anchor",
+   and "music" (the song-roadmap tab — music work now lives under Content's Music subtab).
+   "deals" pulled earlier; re-add here to bring the tab back. */
+const TAB_ORDER = ["lifeAdmin", "overview", "mama", "content"];
 
 /* ---------- custom nav glyphs ----------
    Hand-drawn so the strip isn't emoji. Same Ico() contract as the icons above (size/color/
@@ -840,6 +843,7 @@ const ALLY_SEED = {
   brandContent: { items: [] },
 musicContent: { lastPosted: null, cadence: 4, items: [] },
   anchor: { entries: {} },
+  schedule: {},   // dashboard taskId -> { eventId, calendarId, startISO, endISO, label }
   song: {
     stages: [
       { id: uid(), kind: "plain", name: "Sing test", desc: "Fully sing one of your own songs. Honest call: is the voice release-ready right now?", status: "active", note: "" },
@@ -1280,8 +1284,10 @@ function packLanes(items) {
   return Math.max(1, laneEnds.length);
 }
 
-function DayGrid({ cal }) {
+function DayGrid({ cal, onSchedule }) {
   const { connected, calFetch, calendars } = cal;
+  const [dropTarget, setDropTarget] = useState(null);   // "dayIndex:slotIndex" being hovered
+  const [dropping, setDropping] = useState(null);       // same, while the event is being created
   const [raw, setRaw] = useState([]);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
@@ -1424,11 +1430,35 @@ function DayGrid({ cal }) {
                 const m = slotToMin(i);
                 const ph = phaseForMin(m);
                 const busy = taken.has(i);
+                const key = `${ci}:${i}`;
+                const isTarget = dropTarget === key;
+                const isDropping = dropping === key;
                 return (
                   <div key={i} className="daycell" data-day={ci} data-slot={i}
                     title={`${day.toLocaleDateString("en-ZA", { weekday: "short", day: "numeric" })} ${minToLabel(m)} · ${ph.label}${busy ? " · busy" : " · free"}`}
-                    style={{ height: ROW_H, background: busy ? "rgba(255,255,255,0.05)" : ph.tint,
-                      borderTop: `1px solid ${m % 60 === 0 ? ph.edge : "rgba(255,255,255,0.045)"}` }} />
+                    /* dragover must preventDefault on EVERY event or the browser refuses the drop */
+                    onDragOver={(e) => {
+                      if (!Array.from(e.dataTransfer.types).includes(SCHED_MIME)) return;
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = "copy";
+                      setDropTarget(key);
+                    }}
+                    onDragLeave={() => setDropTarget((t) => (t === key ? null : t))}
+                    onDrop={async (e) => {
+                      e.preventDefault();
+                      setDropTarget(null);
+                      let payload;
+                      try { payload = JSON.parse(e.dataTransfer.getData(SCHED_MIME)); } catch (err) { return; }
+                      if (!payload || !payload.taskId) return;
+                      setDropping(key);
+                      await onSchedule(payload, day, m);
+                      setDropping(null);
+                    }}
+                    style={{ height: ROW_H,
+                      background: isTarget || isDropping ? "rgba(47,163,124,0.34)" : busy ? "rgba(255,255,255,0.05)" : ph.tint,
+                      borderTop: `1px solid ${m % 60 === 0 ? ph.edge : "rgba(255,255,255,0.045)"}`,
+                      boxShadow: isTarget ? `inset 0 0 0 2px ${C.mint}` : isDropping ? `inset 0 0 0 2px ${C.mint}` : "none",
+                      transform: isTarget ? "scaleY(1.12)" : "none", zIndex: isTarget ? 2 : "auto", position: "relative" }} />
                 );
               })}
 
@@ -1461,7 +1491,7 @@ function DayGrid({ cal }) {
 
       {loadError && <div role="alert" style={{ marginTop: 8, fontSize: 10.5, color: C.amber }}>{loadError}</div>}
       <div style={{ marginTop: 8, fontSize: 10, color: FAINT, lineHeight: 1.45 }}>
-        Reading only — nothing here can change your calendar yet. Blue blocks sit on a calendar you can write to; grey are view-only.
+        Drag a task from a card below onto a slot to schedule it. Blue blocks sit on a calendar you can write to; grey are view-only.
       </div>
     </div>
   );
@@ -1505,6 +1535,9 @@ function AllyCRM() {
       if (!a.unlocks.chains) a.unlocks.chains = ALLY_SEED.unlocks.chains;
       if (!a.lifeAdmin) a.lifeAdmin = ALLY_SEED.lifeAdmin;
       if (!a.anchor) a.anchor = ALLY_SEED.anchor;
+      /* map of dashboard taskId -> the Google Calendar event created for it. Backed in on load so
+         saved data from before scheduling existed does not read as undefined everywhere. */
+      if (!a.schedule || typeof a.schedule !== "object") a.schedule = {};
       a = migrateAlly(a);
       m = { ...m, creators: (m.creators || []).map((c) => c.goals ? c : { ...c, goals: c.goal ? [{ id: uid(), text: c.goal }] : [] }) };
       m = { ...m, creators: (m.creators || []).map((c) => ({ ...c, bio: c.bio || "", nextSteps: c.nextSteps || "", notes: typeof c.notes === "string" ? c.notes : Array.isArray(c.notes) ? c.notes.map((n) => typeof n === "string" ? n : (n && n.text) || "").filter(Boolean).join("\n") : "" })) };
@@ -1527,6 +1560,50 @@ function AllyCRM() {
      whether the app may touch your calendar (Google Identity Services). Passing `user` in lets the
      hook drop the token the moment you sign out of the CRM. */
   const cal = useCalendarAuth(user);
+
+  /* ---------- scheduling a task onto the calendar ----------
+     THE ONLY PLACE IN THIS APP THAT WRITES TO GOOGLE CALENDAR. Keep it that way: one funnel means
+     one place to reason about what can be created, and one place to get the write target right.
+
+     Writes go to "primary" — the owner's own gmail calendar — never to ally@mama.co.za, even though
+     that calendar is writable. Decided 29 Jul 2026: the mama calendar is shared with
+     adamon@amplified.community, so personal time-blocking there would leak. Mama events are still
+     READ so a drop cannot double-book. Do not "helpfully" change this to the task's own pillar.
+
+     Default duration is one slot (30 min). Resizing is a later step.
+     Firestore is only touched after Google confirms the event, so a failed write cannot leave the
+     CRM claiming something is scheduled when it is not. */
+  const scheduleTask = async (payload, day, startMin) => {
+    if (!cal.connected) { cal.setCalError("Connect your calendar before scheduling."); return false; }
+    const start = new Date(day.getFullYear(), day.getMonth(), day.getDate(), Math.floor(startMin / 60), startMin % 60, 0);
+    const end = new Date(start.getTime() + SLOT_MIN * 60000);
+    const r = await cal.calFetch("/calendars/primary/events", {
+      method: "POST",
+      body: JSON.stringify({
+        summary: payload.title,
+        description: "Scheduled from ALLY CRM",
+        start: { dateTime: start.toISOString() },
+        end: { dateTime: end.toISOString() },
+        /* a stable marker so these are identifiable later without guessing from the title */
+        extendedProperties: { private: { allyCrmTaskId: String(payload.taskId) } },
+      }),
+    });
+    if (!r.ok || !r.data || !r.data.id) return false;
+    setAlly((d) => ({
+      ...d,
+      schedule: {
+        ...(d.schedule || {}),
+        [payload.taskId]: {
+          eventId: r.data.id,
+          calendarId: "primary",
+          startISO: start.toISOString(),
+          endISO: end.toISOString(),
+          label: `${start.toLocaleDateString("en-ZA", { weekday: "short", day: "numeric" })} ${minToLabel(startMin)}`,
+        },
+      },
+    }));
+    return true;
+  };
   const cloudLoadedFor = useRef(null); // uid a reconcile is/was in flight for
   const reconcileDone = useRef(false); // true only once that reconcile has FULLY resolved (fixes a
     // real race: signing in on a new device used to let the ongoing-save effect below fire in the
@@ -2110,9 +2187,8 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
               hidden behind it. */}
           <div className="scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "24px 32px", display: "flex", flexDirection: "column", alignItems: "center" }}>
             <div style={{ width: "100%", maxWidth: 1280, margin: 0, paddingBottom: 32 }}>
-              {tab === "overview" && <PersonalModule ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} q={q} navRequest={navRequest} navigateToTask={navigateToTask} completeTask={completeTask} cal={cal} />}
+              {tab === "overview" && <PersonalModule ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} q={q} navRequest={navRequest} navigateToTask={navigateToTask} completeTask={completeTask} cal={cal} onSchedule={scheduleTask} />}
               {tab === "content" && <ContentModule data={ally} setData={setAlly} q={q} navRequest={navRequest} />}
-              {tab === "music" && <MusicModule data={ally} setData={setAlly} />}
               {tab === "lifeAdmin" && <LifeAdminModule data={ally} setData={setAlly} q={q} />}
               {tab === "deals" && <DealsModule data={ally} setData={setAlly} q={q} navRequest={navRequest} />}
               {tab === "mama" && <MamaModule data={mama} setData={setMama} q={q} navRequest={navRequest} navigateToTask={navigateToTask} completeTask={completeTask} />}
@@ -2403,17 +2479,17 @@ function CalendarChip({ cal, crmEmail }) {
 /* HOME. Life Admin used to live here as a subtab; it is now a top-level tab in its own right, so
    this no longer has any subtabs. The calendar day grid lands directly above PriorityDashboard in
    step 3 — connection state lives in the header chip, not here, so the grid gets the full width. */
-function PersonalModule({ ally, mama, setAlly, setMama, go, q, navRequest, navigateToTask, completeTask, cal }) {
+function PersonalModule({ ally, mama, setAlly, setMama, go, q, navRequest, navigateToTask, completeTask, cal, onSchedule }) {
   return (
     <section style={{ width: "100%", margin: 0, textAlign: "left" }}>
-      {cal && <DayGrid cal={cal} />}
-      <PriorityDashboard ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} navigateToTask={navigateToTask} completeTask={completeTask} />
+      {cal && <DayGrid cal={cal} onSchedule={onSchedule} />}
+      <PriorityDashboard ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} navigateToTask={navigateToTask} completeTask={completeTask} schedule={ally.schedule || {}} />
     </section>
   );
 }
 
 /* ================= PRIORITY DASHBOARD ================= */
-function PriorityDashboard({ ally, mama, go, setAlly, setMama, navigateToTask, completeTask }) {
+function PriorityDashboard({ ally, mama, go, setAlly, setMama, navigateToTask, completeTask, schedule }) {
 const tasks = collectPriorityTasks(ally, mama);
 const byPillar = Object.fromEntries(PRIORITY_PILLARS.map((k) => [k, tasks.filter((t) => t.pillar === k)]));
 const contentPostUrgency = computeContentUrgency(ally.content);
@@ -2443,10 +2519,10 @@ screens, where a 4-up would be unusable and there is no dragging anyway. */}
 <div className="grid gap-3 pillar-grid">
 {ranked.map((k) => (
 k === "content"
-? <ContentPillarCard key={k} content={ally.content} pipelineKey="content" mod={MODULES.content} go={go} rank={rankOf[k]} taskPct={contentTaskPct} postPct={contentPostUrgency.pct} onNavigate={navigateToTask} onComplete={completeTask} extraItems={ally.brandContent.items} />
+? <ContentPillarCard key={k} content={ally.content} pipelineKey="content" mod={MODULES.content} go={go} rank={rankOf[k]} taskPct={contentTaskPct} postPct={contentPostUrgency.pct} onNavigate={navigateToTask} onComplete={completeTask} extraItems={ally.brandContent.items} schedule={schedule} />
 : k === "music"
-? <ContentPillarCard key={k} content={ally.musicContent} pipelineKey="musicContent" mod={MUSIC_CONTENT_MOD} go={go} rank={rankOf[k]} taskPct={musicTaskPct} postPct={musicPostUrgency.pct} onNavigate={navigateToTask} onComplete={completeTask} />
-: <PriorityPillarCard key={k} pillarKey={k} tasks={byPillar[k]} go={go} rank={rankOf[k]} onDropPriority={onDropPriority} pct={fillPct[k]} onNavigate={navigateToTask} onComplete={completeTask} />
+? <ContentPillarCard key={k} content={ally.musicContent} pipelineKey="musicContent" mod={MUSIC_CONTENT_MOD} go={go} rank={rankOf[k]} taskPct={musicTaskPct} postPct={musicPostUrgency.pct} onNavigate={navigateToTask} onComplete={completeTask} schedule={schedule} />
+: <PriorityPillarCard key={k} pillarKey={k} tasks={byPillar[k]} go={go} rank={rankOf[k]} onDropPriority={onDropPriority} pct={fillPct[k]} onNavigate={navigateToTask} onComplete={completeTask} schedule={schedule} />
 ))}
 </div>
 </section>
@@ -2455,10 +2531,89 @@ k === "content"
 
 const PRIORITY_COL_TINT = { Urgent: C.rose, Medium: C.amber, Low: C.sky };
 
+/* ================= TASK CHIPS: DRAG A TASK ONTO THE CALENDAR =================
+   Step 4. A chip can be picked up from any pillar card and dropped on a half-hour cell in the day
+   grid, which creates a real Google Calendar event. The chip STAYS on the card — it is not moved
+   away — and turns green to show it now has a time.
+
+   TWO DRAG PAYLOADS, ON PURPOSE. The pillar cards already had their own internal drag for moving a
+   task between the Urgent/Medium/Low columns, using "application/json". The calendar needs its own
+   type so the two cannot be confused: dropping on a column must never try to schedule, and dropping
+   on a cell must never try to re-prioritise. Both are set on the same drag, and each drop target
+   reads only the type it understands. Do not collapse them into one.
+
+   WHERE THE SCHEDULE LIVES: ally.schedule, a flat map of taskId -> { eventId, calendarId, ... }.
+   Deliberately NOT stored on the individual pipeline items. Tasks reaching the dashboard come from
+   half a dozen different shapes (content items, mama tasks, life-admin items, deal sub-tasks), and
+   some are synthetic — a content item with both a deadline and a post date produces two task rows,
+   one with an id of `<id>-sched`. One flat map keyed by the dashboard's own task id sidesteps all of
+   that, and means scheduling never has to reach into a pillar's data shape. */
+const SCHED_MIME = "application/x-ally-schedule";
+
+function TaskChip({ taskId, title, pillar, due, scheduled, onOpen }) {
+  const [dragging, setDragging] = useState(false);
+  return (
+    <div
+      draggable
+      onDragStart={(e) => {
+        setDragging(true);
+        e.dataTransfer.setData(SCHED_MIME, JSON.stringify({ taskId, title, pillar }));
+        /* keep the legacy payload so the within-card column drop still works */
+        e.dataTransfer.setData("application/json", JSON.stringify({ id: taskId, pillar }));
+        e.dataTransfer.effectAllowed = "copyMove";
+      }}
+      onDragEnd={() => setDragging(false)}
+      onClick={(e) => { e.stopPropagation(); onOpen && onOpen(); }}
+      title={`${title}${scheduled ? `\nScheduled ${scheduled.label}` : ""}\nDrag onto the calendar to give it a time`}
+      className="lift"
+      style={{
+        minWidth: 0, cursor: "grab", opacity: dragging ? 0.45 : 1,
+        borderRadius: 7, padding: "4px 6px", fontSize: 10.5, lineHeight: 1.25,
+        background: scheduled ? "rgba(47,163,124,0.20)" : FILL,
+        border: `1px solid ${scheduled ? "rgba(47,163,124,0.60)" : LINE}`,
+        color: C.ink,
+      }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
+        {scheduled && <span aria-hidden style={{ width: 5, height: 5, borderRadius: 99, background: C.mint, flexShrink: 0 }} />}
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{title}</span>
+      </div>
+      <div style={{ fontSize: 8.5, color: scheduled ? C.mint : MUT, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+        {scheduled ? scheduled.label : due ? dueLabel(due) : "no date"}
+      </div>
+    </div>
+  );
+}
+
+/* One bordered group per column, laid out horizontally with its tasks underneath, three across
+   before wrapping — the owner's layout, so a card reads as grouped blocks rather than tall columns. */
+function TaskGroup({ label, tint, count, children, empty }) {
+  return (
+    <div style={{ border: `1px solid ${LINE}`, borderRadius: 9, padding: "6px 7px 7px", background: "rgba(255,255,255,0.02)" }}>
+      <div className="flex items-center justify-between" style={{ marginBottom: 5 }}>
+        <span style={{ fontSize: 8.5, letterSpacing: "0.09em", textTransform: "uppercase", color: tint || MUT, fontWeight: 700 }}>{label}</span>
+        {count != null && <span style={{ fontSize: 8.5, color: FAINT }}>{count}</span>}
+      </div>
+      {children ? (
+        <div className="grid" style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 4 }}>{children}</div>
+      ) : <div style={{ fontSize: 9, color: FAINT }}>{empty || "—"}</div>}
+    </div>
+  );
+}
+
+/* short human label for a due date, used on the chips */
+function dueLabel(iso) {
+  const d = daysUntil(iso);
+  if (d === null || d === undefined) return "";
+  if (d < 0) return `${Math.abs(d)}d overdue`;
+  if (d === 0) return "today";
+  if (d === 1) return "tomorrow";
+  return `${d}d`;
+}
+
 /* Content's card doesn't show Urgent/Medium/Low task columns like the other pillars — content has no
    individual priorities anymore, just one master signal (days since last post, entirely independent
    of the pipeline) rendered as its own fill ring, plus a glance at where ideas sit in the pipeline. */
-function ContentPillarCard({ content, pipelineKey, mod, go, rank, taskPct, postPct, onNavigate, onComplete, extraItems }) {
+function ContentPillarCard({ content, pipelineKey, mod, go, rank, taskPct, postPct, onNavigate, onComplete, extraItems, schedule }) {
 const since = daysSince(content.lastPosted);
 const taskTint = urgencyTint(taskPct);
 const postTint = urgencyTint(postPct);
@@ -2472,6 +2627,10 @@ const counts = Object.fromEntries(pipelineCols.map((c) => [c, content.items.filt
 title pulls through by title only (never the script/desc box), same rule every other pillar
 follows. Both rings above stay purely score-driven regardless of what is in either list. */
 const allItems = extraItems && extraItems.length ? [...content.items, ...extraItems] : content.items;
+/* TO POST is the Ready-to-Post stage. Unlike the other feeds it deliberately does NOT require a
+date: something finished and waiting to go out is actionable regardless, and needing a date first
+was why this stage never appeared as a task list at all. */
+const toPostDated = allItems.filter((i) => i.status === "Ready to Post" && !i.dueOff).sort((a, b) => daysUntil(a.scheduledFor || a.due) - daysUntil(b.scheduledFor || b.due)).slice(0, 6);
 const toFilmDated = allItems.filter((i) => i.status === "To Film" && !i.dueOff && (i.due || i.scheduledFor)).sort((a, b) => daysUntil(a.due || a.scheduledFor) - daysUntil(b.due || b.scheduledFor)).slice(0, 3);
 const toEditDated = allItems.filter((i) => i.status === "To Edit" && !i.dueOff && (i.due || i.scheduledFor)).sort((a, b) => daysUntil(a.due || a.scheduledFor) - daysUntil(b.due || b.scheduledFor)).slice(0, 3);
 const ideasDated = allItems.filter((i) => i.status === "Ideas" && !i.dueOff && (i.due || i.scheduledFor)).sort((a, b) => daysUntil(a.due || a.scheduledFor) - daysUntil(b.due || b.scheduledFor)).slice(0, 3);
@@ -2505,47 +2664,37 @@ return (
 </div>
 ))}
 </div>
-{(toFilmDated.length > 0 || toEditDated.length > 0 || ideasDated.length > 0) && (
-<div className="grid gap-3 mt-3 pt-3" style={{ gridTemplateColumns: ideasDated.length > 0 ? "1fr 1fr 1fr" : "1fr 1fr", borderTop: "1px solid " + LINE }}>
-<div className="flex flex-col gap-1.5" style={{ minWidth: 0 }}>
-<div style={{ fontSize: 10, letterSpacing: "0.06em", textTransform: "uppercase", color: MUT }}>To Film</div>
-{toFilmDated.map((i) => (
-<div key={i.id} onClick={(e) => e.stopPropagation()} className="flex items-center gap-1.5" style={{ fontSize: 12 }}>
-<CompleteCheckbox onComplete={() => onComplete && onComplete({ id: i.id, sourceType: filmType })} label="Move to In Edit" />
-<div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, cursor: "pointer" }} onClick={(e) => { e.stopPropagation(); onNavigate && onNavigate({ id: i.id, navTab: "content", navSub }); }}>
-<span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{i.title}</span>
-{i.scheduledFor && <span title={"Scheduled to post " + i.scheduledFor} style={{ fontSize: 11 }}>📅</span>}<DueChip due={i.due || i.scheduledFor} />
-</div>
-</div>
-))}
-{toFilmDated.length === 0 && <div style={{ fontSize: 11.5, color: FAINT }}>—</div>}
-</div>
-<div className="flex flex-col gap-1.5" style={{ minWidth: 0 }}>
-<div style={{ fontSize: 10, letterSpacing: "0.06em", textTransform: "uppercase", color: MUT }}>To Edit</div>
-{toEditDated.map((i) => (
-<div key={i.id} onClick={(e) => e.stopPropagation()} className="flex items-center gap-1.5" style={{ fontSize: 12 }}>
-<CompleteCheckbox onComplete={() => onComplete && onComplete({ id: i.id, sourceType: editType })} label="Ready to post" />
-<div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, cursor: "pointer" }} onClick={(e) => { e.stopPropagation(); onNavigate && onNavigate({ id: i.id, navTab: "content", navSub }); }}>
-<span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{i.title}</span>
-{i.scheduledFor && <span title={"Scheduled to post " + i.scheduledFor} style={{ fontSize: 11 }}>📅</span>}<DueChip due={i.due || i.scheduledFor} />
-</div>
-</div>
-))}
-{toEditDated.length === 0 && <div style={{ fontSize: 11.5, color: FAINT }}>—</div>}
-</div>
+<div className="flex flex-col gap-2 mt-3 pt-3" style={{ borderTop: "1px solid " + LINE }}>
+{/* Columns run horizontally as bordered groups with their tasks underneath, three across before
+wrapping — the owner's layout, so a card reads as grouped blocks rather than tall thin columns.
+TO POST is new: it is the "Ready to Post" stage, which previously only appeared as a count. */}
+<TaskGroup label="To Post" tint={CONTENT_TINT["Ready to Post"]} count={toPostDated.length || null} empty="nothing ready">
+{toPostDated.length ? toPostDated.map((i) => (
+<TaskChip key={i.id} taskId={i.id} title={i.title} pillar={pipelineKey} due={i.scheduledFor || i.due}
+scheduled={schedule && schedule[i.id]} onOpen={() => onNavigate && onNavigate({ id: i.id, navTab: "content", navSub })} />
+)) : null}
+</TaskGroup>
+<TaskGroup label="To Edit" tint={CONTENT_TINT["To Edit"]} count={toEditDated.length || null} empty="nothing waiting">
+{toEditDated.length ? toEditDated.map((i) => (
+<TaskChip key={i.id} taskId={i.id} title={i.title} pillar={pipelineKey} due={i.due || i.scheduledFor}
+scheduled={schedule && schedule[i.id]} onOpen={() => onNavigate && onNavigate({ id: i.id, navTab: "content", navSub })} />
+)) : null}
+</TaskGroup>
+<TaskGroup label="To Film" tint={CONTENT_TINT["To Film"]} count={toFilmDated.length || null} empty="nothing waiting">
+{toFilmDated.length ? toFilmDated.map((i) => (
+<TaskChip key={i.id} taskId={i.id} title={i.title} pillar={pipelineKey} due={i.due || i.scheduledFor}
+scheduled={schedule && schedule[i.id]} onOpen={() => onNavigate && onNavigate({ id: i.id, navTab: "content", navSub })} />
+)) : null}
+</TaskGroup>
 {ideasDated.length > 0 && (
-<div className="flex flex-col gap-1.5" style={{ minWidth: 0 }}>
-<div style={{ fontSize: 10, letterSpacing: "0.06em", textTransform: "uppercase", color: MUT }}>Ideas</div>
+<TaskGroup label="Ideas" tint={CONTENT_TINT.Ideas} count={ideasDated.length}>
 {ideasDated.map((i) => (
-<div key={i.id} onClick={(e) => { e.stopPropagation(); onNavigate && onNavigate({ id: i.id, navTab: "content", navSub }); }} className="flex items-center justify-between gap-1.5" style={{ fontSize: 12, cursor: "pointer" }}>
-<span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{i.title}</span>
-{i.scheduledFor && <span title={"Scheduled to post " + i.scheduledFor} style={{ fontSize: 11 }}>📅</span>}<DueChip due={i.due || i.scheduledFor} />
-</div>
+<TaskChip key={i.id} taskId={i.id} title={i.title} pillar={pipelineKey} due={i.due || i.scheduledFor}
+scheduled={schedule && schedule[i.id]} onOpen={() => onNavigate && onNavigate({ id: i.id, navTab: "content", navSub })} />
 ))}
-</div>
+</TaskGroup>
 )}
 </div>
-)}
 </div>
 );
 }
@@ -2555,7 +2704,7 @@ return (
    dragging across cards (e.g. Deals into Mama) is a strict no-op by design. */
 const DROP_PRIORITY = { Urgent: "High", Medium: "Medium", Low: "Low" }; /* dropping onto a column also sets a matching due date: Urgent -> due today, Medium -> due tomorrow, Low -> due in a week. */ const DROP_DUE_OFFSET = { Urgent: 0, Medium: 1, Low: 7 }; const dropPatchFor = (col) => ({ priority: DROP_PRIORITY[col], due: shiftISO(todayISO(), DROP_DUE_OFFSET[col]) });
 
-function PriorityPillarCard({ pillarKey, tasks, go, rank, onDropPriority, pct, onNavigate, onComplete }) {
+function PriorityPillarCard({ pillarKey, tasks, go, rank, onDropPriority, pct, onNavigate, onComplete, schedule }) {
   const mod = MODULES[pillarKey];
   const cols = ["Urgent", "Medium", "Low"];
   const [dragOverCol, setDragOverCol] = useState(null);
@@ -2583,30 +2732,39 @@ function PriorityPillarCard({ pillarKey, tasks, go, rank, onDropPriority, pct, o
         <Ring pct={Math.min(1, pct / 100)} tint={tint} size={148} thick={16} label={`${Math.round(pct)}%`} />
         {critical && <span style={{ fontSize: 10.5, fontWeight: 700, color: C.rose, letterSpacing: "0.03em", marginTop: 10 }}>⚠ CRITICAL — overloaded</span>}
       </div>
-      <div className="grid gap-2.5" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+      {/* Same shape as the Content card: each bucket is a bordered group laid out horizontally with
+          its tasks underneath, three across before wrapping. The group is still a drop target for the
+          existing within-card priority drag, which reads "application/json"; the chips additionally
+          carry SCHED_MIME for the calendar. The two never collide because each target only reads its
+          own type. */}
+      <div className="flex flex-col gap-2">
         {cols.map((col) => {
           const items = tasks.filter((t) => t.bucket === col).sort((a, b) => b.score - a.score);
+          const over = dragOverCol === col;
           return (
             <div key={col}
-              onDragOver={(e) => { e.preventDefault(); if (dragOverCol !== col) setDragOverCol(col); }}
+              onDragOver={(e) => {
+                /* only react to the priority drag — a calendar drag passing over must not light this up */
+                if (!Array.from(e.dataTransfer.types).includes("application/json")) return;
+                e.preventDefault();
+                if (!over) setDragOverCol(col);
+              }}
               onDragLeave={() => setDragOverCol((c) => (c === col ? null : c))}
               onDrop={(e) => handleDrop(e, col)}
-              style={{ minWidth: 0, borderRadius: 10, padding: 4, margin: -4, background: dragOverCol === col ? `${PRIORITY_COL_TINT[col]}14` : "transparent", outline: dragOverCol === col ? `1px dashed ${PRIORITY_COL_TINT[col]}` : "none", transition: "background 0.1s" }}>
-              <div style={{ fontSize: 11, letterSpacing: "0.04em", textTransform: "uppercase", color: PRIORITY_COL_TINT[col], fontWeight: 700, marginBottom: 6 }}>{col} <span style={{ color: MUT, fontWeight: 400 }}>{items.length}</span></div>
-              <div className="flex flex-col gap-1.5">
-                {items.map((t) => (
-                  <div key={t.id} draggable onDragStart={(e) => { e.dataTransfer.setData("application/json", JSON.stringify({ id: t.id, pillar: pillarKey })); e.dataTransfer.effectAllowed = "move"; }}
-                    onClick={(e) => e.stopPropagation()} className="rounded-lg px-2 py-1.5 flex items-start gap-1.5"
-                    style={{ background: C.soft, border: `1px solid ${LINE}`, borderLeft: `2px solid ${PRIORITY_COL_TINT[col]}`, cursor: "grab" }}>
-                    <CompleteCheckbox onComplete={() => onComplete(t)} mt={2} />
-                    <div style={{ flex: 1, minWidth: 0, cursor: "pointer" }} onClick={(e) => { e.stopPropagation(); onNavigate(t); }}>
-                      <div style={{ fontSize: 12.5, lineHeight: 1.3 }}>{t.title}</div>
-                      {t.daysUntilDue !== null && <div style={{ fontSize: 11, color: PRIORITY_COL_TINT[col], marginTop: 2 }}>{t.daysUntilDue < 0 ? `${-t.daysUntilDue}d overdue` : t.daysUntilDue === 0 ? "today" : `${t.daysUntilDue}d`}</div>}
-                    </div>
-                  </div>
-                ))}
-                {items.length === 0 && <div style={{ fontSize: 12, color: FAINT, padding: "4px 0" }}>—</div>}
+              style={{ border: `1px solid ${over ? PRIORITY_COL_TINT[col] : LINE}`, borderRadius: 9, padding: "6px 7px 7px",
+                background: over ? `${PRIORITY_COL_TINT[col]}14` : "rgba(255,255,255,0.02)" }}>
+              <div className="flex items-center justify-between" style={{ marginBottom: 5 }}>
+                <span style={{ fontSize: 8.5, letterSpacing: "0.09em", textTransform: "uppercase", color: PRIORITY_COL_TINT[col], fontWeight: 700 }}>{col}</span>
+                <span style={{ fontSize: 8.5, color: FAINT }}>{items.length}</span>
               </div>
+              {items.length ? (
+                <div className="grid" style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 4 }}>
+                  {items.map((t) => (
+                    <TaskChip key={t.id} taskId={t.id} title={t.title} pillar={pillarKey} due={t.due}
+                      scheduled={schedule && schedule[t.id]} onOpen={() => onNavigate(t)} />
+                  ))}
+                </div>
+              ) : <div style={{ fontSize: 9, color: FAINT }}>—</div>}
             </div>
           );
         })}
@@ -2933,26 +3091,6 @@ function ScriptBox({ value, isHtml, open, onFocus, onChange, onToggle, big, plac
   );
 }
 
-function ContentCalendar({ scheduled, onOpen }) {
-const [cursor, setCursor] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
-const changeMonth = (amount) => setCursor((d) => new Date(d.getFullYear(), d.getMonth() + amount, 1));
-const goToday = () => setCursor(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
-/* 6-week (42 cell) grid guarantees full month coverage regardless of month length/start day —
-a 4-week grid could run out before the month (or today) did, which is why today sometimes
-wasn't showing up at all. Same fix the Anchor date-picker already uses. */
-const start = new Date(cursor.getFullYear(), cursor.getMonth(), 1 - ((cursor.getDay() + 6) % 7));
-const days = Array.from({ length: 42 }, (_, i) => { const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i); return { d, key: d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0") }; });
-const slots = scheduled.reduce((all, item) => { (all[item.scheduledFor] || (all[item.scheduledFor] = [])).push(item); return all; }, {});
-const today = todayISO();
-return <div style={{ minHeight: "calc(100vh - 190px)", display: "flex", flexDirection: "column", gap: 16 }}>
-<div className="flex items-center justify-between"><button aria-label="Previous month" onClick={() => changeMonth(-1)} style={{ ...iconBtn, fontSize: 22 }}>←</button><div style={{ textAlign: "center" }}><div style={{ fontSize: 30, fontWeight: 700 }}>{cursor.toLocaleDateString("en-ZA", { month: "long", year: "numeric" })}</div><div className="flex items-center justify-center gap-2" style={{ fontSize: 11, color: MUT }}><span>Content calendar</span><button onClick={goToday} style={{ ...iconBtn, fontSize: 10.5, padding: "2px 8px", borderRadius: 999, border: "1px solid " + LINE }}>Today</button></div></div><button aria-label="Next month" onClick={() => changeMonth(1)} style={{ ...iconBtn, fontSize: 22 }}>→</button></div>
-<div className="flex items-center gap-4 flex-wrap" style={{ fontSize: 11, color: MUT }}>
-{Object.keys(PIPELINE_TINT).map((k) => <span key={k} className="flex items-center gap-1.5"><span style={{ width: 7, height: 7, borderRadius: 2, background: PIPELINE_TINT[k] }} />{PIPELINE_LABEL[k]}</span>)}
-</div>
-<div style={{ flex: 1, display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gridTemplateRows: "auto repeat(6, minmax(112px, 1fr))", gap: 1, background: LINE, border: "1px solid " + LINE, borderRadius: 18, overflow: "hidden" }}>{["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((n) => <div key={n} style={{ padding: 10, background: C.canvas, color: MUT, fontSize: 10, fontWeight: 700 }}>{n}</div>)}{days.map(({ d, key }) => <div key={key} style={{ padding: 10, background: key === today ? C.lilac + "18" : C.canvas, boxShadow: key === today ? "inset 0 0 0 2px " + C.lilac : "none", opacity: d.getMonth() === cursor.getMonth() ? 1 : .4 }}><div style={{ textAlign: "right", color: key === today ? C.lilac : MUT, fontSize: 12, fontWeight: key === today ? 800 : 500, marginBottom: 8 }}>{d.toLocaleDateString("en-ZA", { weekday: "short", day: "numeric" })}</div>{(slots[key] || []).map((item) => { const tint = PIPELINE_TINT[item.pipelineKey] || C.sky; return <button key={item.pipelineKey + item.id} onClick={() => onOpen(item)} title={item.title} style={{ width: "100%", textAlign: "left", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", padding: "6px 7px", marginBottom: 5, borderRadius: 8, border: "1px solid " + tint + "55", background: tint + (item.status === "Posted" ? "0d" : "19"), color: C.ink, cursor: "pointer", fontFamily: "inherit", fontSize: 11, opacity: item.status === "Posted" ? 0.6 : 1 }}>{item.status === "Posted" ? "✓ " : ""}{item.title}</button>; })}</div>)}</div>
-</div>;
-}
-
 function ContentModule({ data, setData, q, navRequest }) {
 const [subtab, setSubtab] = useState("content");
 const [calendarFocus, setCalendarFocus] = useState(null);
@@ -2963,15 +3101,12 @@ const tabs = [
 { id: "content", label: "Board" },
 { id: "brandDeals", label: "Brand Deals" },
 { id: "musicContent", label: "Music" },
-{ id: "calendar", label: "Content Calendar" },
+/* "Content Calendar" removed 29 Jul 2026: HOME's 4-day grid is now the scheduling surface, so a
+   second month-grid calendar was a duplicate. ContentCalendar and the scheduled list it consumed
+   are gone with it; `scheduledFor` on an item is untouched and still drives the dashboard nag. */
 ];
-const calendarItems = ["content", "brandContent", "musicContent"].flatMap((pipelineKey) => (data[pipelineKey]?.items || []).map((item) => ({ ...item, pipelineKey })));
-/* the scheduled/post date is what puts something on the calendar now, independent of status or
-which pipeline it lives in — Posted items keep their slot forever, everything else only shows
-once it actually has a scheduled date. */
-const scheduled = calendarItems.filter((item) => item.scheduledFor).sort((a, b) => a.scheduledFor.localeCompare(b.scheduledFor));
-/* opens the video right here on the calendar — it used to switch subtabs and throw you back onto
-the pipeline board, which lost your place on the calendar every time. */
+/* calendarItems/scheduled fed the deleted month-grid ContentCalendar and are gone with it.
+   calendarFocus below survives: it is the full-screen item editor, still opened from elsewhere. */
 const openCalendarItem = (item) => setCalendarFocus({ pipelineKey: item.pipelineKey, id: item.id });
 const patchFocused = (p) => setData((d) => ({ ...d, [calendarFocus.pipelineKey]: { ...d[calendarFocus.pipelineKey], items: d[calendarFocus.pipelineKey].items.map((z) => (z.id === calendarFocus.id ? { ...z, ...p } : z)) } }));
 return (
@@ -2982,7 +3117,6 @@ return (
 {subtab === "content" && <ContentPipeline data={data} setData={setData} q={q} pipelineKey="content" heading={null} />}
 {subtab === "brandDeals" && <ContentPipeline data={data} setData={setData} q={q} pipelineKey="brandContent" heading="Brand Deals" />}
 {subtab === "musicContent" && <ContentPipeline data={data} setData={setData} q={q} pipelineKey="musicContent" heading="Music" />}
-{subtab === "calendar" && <ContentCalendar scheduled={scheduled} onOpen={openCalendarItem} />}
 {calendarFocus && (() => {
 const item = ((data[calendarFocus.pipelineKey] || {}).items || []).find((z) => z.id === calendarFocus.id);
 if (!item) return null;
@@ -3267,99 +3401,6 @@ function SongModule({ data, setData }) {
    Two gated chains, each one a straight line: a step only unlocks once the step before it is
    ticked. Same derived-current-step trick as the old song roadmap — "current" is simply the first
    step that isn't done, so nothing can get stuck out of sync. */
-function MusicModule({ data, setData }) {
-  const chains = (data.music && data.music.chains) || [];
-  const updateStep = (cid, sid, p) => setData((d) => ({ ...d, music: { ...d.music, chains: d.music.chains.map((c) => (c.id !== cid ? c : { ...c, steps: c.steps.map((st) => (st.id === sid ? { ...st, ...p } : st)) })) } }));
-  const toggleStep = (cid, i) => setData((d) => ({ ...d, music: { ...d.music, chains: d.music.chains.map((c) => {
-    if (c.id !== cid) return c;
-    const was = c.steps[i].status === "done";
-    return { ...c, steps: c.steps.map((st, j) => (j === i ? { ...st, status: was ? "todo" : "done", lastProgress: was ? st.lastProgress : todayISO() } : st)) };
-  }) } }));
-  const totalSteps = chains.reduce((sum, chain) => sum + chain.steps.length, 0);
-  const doneSteps = chains.reduce((sum, chain) => sum + chain.steps.filter((step) => step.status === "done").length, 0);
-  const currentSteps = chains.map((chain) => {
-    const index = chain.steps.findIndex((step) => step.status !== "done");
-    return index === -1 ? null : { chain, index, step: chain.steps[index] };
-  }).filter(Boolean);
-  return (
-    <section>
-      <SectionHead title="Music dashboard" sub="Your live Music roadmap, with the next move from every chain in one place." />
-      <div className="rounded-2xl mb-5" style={{ ...card, borderRadius: 18, padding: 20 }}>
-        <div className="flex items-center gap-4 flex-wrap">
-          <Ring pct={totalSteps ? doneSteps / totalSteps : 0} tint={C.coral} size={74} thick={9} label={totalSteps ? doneSteps + "/" + totalSteps : "—"} />
-          <div className="flex-1" style={{ minWidth: 220 }}>
-            <div style={{ fontSize: 12, color: MUT, textTransform: "uppercase", letterSpacing: "0.06em" }}>Current focus</div>
-            <div className="flex flex-col gap-2 mt-2">
-              {currentSteps.map(({ chain, index, step }) => (
-                <div key={step.id} className="flex items-center gap-2 flex-wrap" style={{ fontSize: 13 }}>
-                  <button onClick={() => toggleStep(chain.id, index)} style={{ ...iconBtn, color: C.mint, border: "1px solid " + C.mint + "55", borderRadius: 7, padding: "3px 6px" }} title="Mark done"><Check size={12} /></button>
-                  <span style={{ color: C.coral, fontSize: 11, fontWeight: 600 }}>{chain.name}</span>
-                  <span style={{ fontWeight: 600 }}>{step.name}</span>
-                </div>
-              ))}
-              {currentSteps.length === 0 && <span style={{ color: C.mint, fontSize: 13 }}>Every Music chain is complete.</span>}
-            </div>
-          </div>
-        </div>
-      </div>
-      <div className="grid gap-5" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(430px, 1fr))" }}>
-        {chains.map((chain) => {
-          const total = chain.steps.length;
-          const done = chain.steps.filter((st) => st.status === "done").length;
-          const currentIdx = chain.steps.findIndex((st) => st.status !== "done");
-          return (
-            <div key={chain.id} className="rounded-2xl" style={{ ...card, borderRadius: 18, padding: 20 }}>
-              <div className="flex items-center gap-4 mb-4">
-                <Ring pct={done / total} tint={C.coral} size={56} thick={7} label={`${done}`} />
-                <div className="flex-1 min-w-0">
-                  <div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 18, letterSpacing: "-0.01em" }}>{chain.name}</div>
-                  <div style={{ fontSize: 12, color: MUT }}>{chain.sub}</div>
-                  <div style={{ fontSize: 11.5, color: currentIdx === -1 ? C.mint : C.coral, marginTop: 3, fontWeight: 600 }}>{currentIdx === -1 ? "Chain complete ✓" : `Now: ${chain.steps[currentIdx].name}`}</div>
-                </div>
-              </div>
-              <div className="flex flex-col">
-                {chain.steps.map((st, i) => {
-                  const isDone = st.status === "done", isCurrent = !isDone && i === currentIdx, isLocked = !isDone && !isCurrent;
-                  const tint = isDone ? C.mint : isCurrent ? C.coral : FAINT;
-                  return (
-                    <div key={st.id} className="flex gap-3" style={{ opacity: isLocked ? 0.6 : 1 }}>
-                      <div className="flex flex-col items-center" style={{ width: 34, flexShrink: 0 }}>
-                        <button onClick={() => toggleStep(chain.id, i)} aria-label={isDone ? "Mark not done" : "Mark done"}
-                          title={isLocked ? "Locked — finish the step above first (click anyway to skip ahead)" : isDone ? "Mark not done" : "Mark done"}
-                          style={{ width: 32, height: 32, borderRadius: 11, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", background: isDone ? C.mint : isCurrent ? `${tint}22` : C.card, border: `1px solid ${isDone ? C.mint : isCurrent ? tint : LINE}`, fontFamily: "'Bricolage Grotesque', sans-serif", fontSize: 13, fontWeight: 600, color: isDone ? "#fff" : isCurrent ? tint : MUT }}>
-                          {isDone ? <Check size={15} strokeWidth={3} /> : isLocked ? <Lock size={13} /> : i + 1}
-                        </button>
-                        {i < total - 1 && <div style={{ width: 2, flex: 1, minHeight: 20, background: isDone ? `${C.mint}66` : LINE }} />}
-                      </div>
-                      <div data-nav-id={st.id} className="rounded-2xl flex-1 mb-3" style={{ ...cardSoft, borderRadius: 14, borderLeft: `3px solid ${tint}`, padding: 13, background: isCurrent ? `${tint}0d` : cardSoft.background }}>
-                        <div className="flex items-start gap-2 flex-wrap">
-                          <div className="flex-1" style={{ minWidth: 150, fontSize: 13.5, textDecoration: isDone ? "line-through" : "none" }}><InlineEdit value={st.name} onChange={(v) => updateStep(chain.id, st.id, { name: v })} strong /></div>
-                          <span className="rounded-full px-2.5 py-0.5" style={{ fontSize: 10, fontWeight: 600, background: `${tint}1e`, border: `1px solid ${tint}55`, color: tint, whiteSpace: "nowrap" }}>{isDone ? "Done" : isCurrent ? "Current" : "Locked"}</span>
-                        </div>
-                        <div style={{ fontSize: 12, color: MUT, margin: "3px 0 6px" }}>{st.desc}</div>
-                        {st.kind === "route" && (
-                          <div className="flex gap-2 mb-2 flex-wrap">
-                            {(st.options || []).map((r) => (
-                              <button key={r} onClick={() => updateStep(chain.id, st.id, { route: st.route === r ? "" : r })} className="rounded-full px-3 py-1"
-                                style={{ fontSize: 11.5, cursor: "pointer", fontFamily: "inherit", background: st.route === r ? `${C.coral}22` : FILL, border: `1px solid ${st.route === r ? C.coral : LINE}`, color: st.route === r ? C.coral : MUT }}>{r}{st.route === r ? " ✓" : ""}</button>
-                            ))}
-                          </div>
-                        )}
-                        <InlineEdit value={st.note} onChange={(v) => updateStep(chain.id, st.id, { note: v })} placeholder="Notes…" dim />
-                        {isCurrent && <PriorityControls item={st} onChange={(p) => updateStep(chain.id, st.id, p)} />}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </section>
-  );
-}
-
 /* ================= UNLOCKS (Discovery ecosystem) ================= */
 const ECO_STATE = {
   live:     { label: "Live",        tint: C.mint,   dot: C.mint },
@@ -3912,10 +3953,12 @@ function DealsModule({ data, setData, q, navRequest }) {
 
 /* ================= MAMA ================= */
 function MamaModule({ data, setData, q, navRequest, navigateToTask, completeTask }) {
-  const [sub, setSub] = useState("dashboard");
+  /* The "Task Dashboard" subtab was removed 29 Jul 2026 — HOME's Mama card already shows the same
+     open-task rollup, so this was a second, competing dashboard. Creators and Admin Tasks are the
+     two subtabs that hold actual data. Default landing is now Creators. */
+  const [sub, setSub] = useState("creators");
   const openAdminTasks = data.tasks.filter((t) => t.status !== "Done").length;
   const subs = [
-    { id: "dashboard", emoji: "🎯", label: "Task Dashboard" },
     { id: "creators", emoji: "🧑‍🎤", label: "Creators", count: data.creators.length },
     { id: "adminTasks", emoji: "✅", label: "Admin Tasks", count: openAdminTasks },
   ];
