@@ -1310,6 +1310,12 @@ function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, syncTick }) 
      without a network call per pixel; Google is written exactly once, on release. */
   const [resizing, setResizing] = useState(null);       // { taskId, dayIndex, startMin, endMin }
   const [busyEvent, setBusyEvent] = useState(null);     // taskId of a block mid-write
+  const [actionError, setActionError] = useState("");   // shown under the grid, where the action was
+  /* Local nudge to refetch. A successful write changes Google, but the grid's own load is keyed on
+     syncTick, which only ticks once a minute — so without this a freshly dropped block would not
+     appear for up to a minute and the drop would look like it had failed. */
+  const [localRefresh, setLocalRefresh] = useState(0);
+  const refetch = () => setLocalRefresh((n) => n + 1);
   const [raw, setRaw] = useState([]);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
@@ -1351,9 +1357,12 @@ function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, syncTick }) 
       if (!st) return;
       const finalEnd = st.latestEnd;
       if (finalEnd == null || finalEnd === st.originEndMin) return;   // no actual change
+      setActionError("");
       setBusyEvent(st.taskId);
-      await onResize(st.taskId, finalEnd, st.day);
+      const ok = await onResize(st.taskId, finalEnd, st.day);
       setBusyEvent(null);
+      if (ok) setLocalRefresh((n) => n + 1);
+      else setActionError("Could not change that block's length.");
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
@@ -1403,7 +1412,7 @@ function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, syncTick }) 
     /* syncTick is in the deps on purpose: it is what makes the grid re-read Google on focus and on
        the timer, so the blocks drawn here stay in step with the chip labels that reconcileSchedule
        maintains. Without it the two could disagree after an edit made elsewhere. */
-  }, [connected, calFetch, usedKey, spanKey, syncTick]);
+  }, [connected, calFetch, usedKey, spanKey, syncTick, localRefresh]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -1515,21 +1524,27 @@ function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, syncTick }) 
                     onDrop={async (e) => {
                       e.preventDefault();
                       setDropTarget(null);
+                      setActionError("");
                       const moveRaw = e.dataTransfer.getData(MOVE_MIME);
                       if (moveRaw) {
                         let mv; try { mv = JSON.parse(moveRaw); } catch (err) { return; }
                         if (!mv || !mv.taskId) return;
                         setBusyEvent(mv.taskId); setDropping(key);
-                        await onMove(mv.taskId, day, m);
+                        const ok = await onMove(mv.taskId, day, m);
                         setDropping(null); setBusyEvent(null);
+                        if (ok) refetch(); else setActionError("Could not move that block. Nothing was changed.");
                         return;
                       }
                       let payload;
                       try { payload = JSON.parse(e.dataTransfer.getData(SCHED_MIME)); } catch (err) { return; }
                       if (!payload || !payload.taskId) return;
                       setDropping(key);
-                      await onSchedule(payload, day, m);
+                      const ok = await onSchedule(payload, day, m);
                       setDropping(null);
+                      /* refetch on success so the new block appears at once rather than on the next
+                         sync tick; on failure say so, because silence reads as a broken app. */
+                      if (ok) refetch();
+                      else setActionError(`Could not schedule "${payload.title}". Your calendar was not changed.`);
                     }}
                     style={{ height: ROW_H,
                       background: isTarget || isDropping ? "rgba(47,163,124,0.34)" : busy ? "rgba(255,255,255,0.05)" : ph.tint,
@@ -1570,17 +1585,26 @@ function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, syncTick }) 
                       <>
                         {/* unschedule. Removes the calendar block only — the task itself is untouched
                             and stays on its card, just no longer green. */}
+                        {/* A <button> inside a draggable ancestor is a known trap: mousedown starts the
+                            ancestor's drag, and the click never lands. Hence draggable={false} plus
+                            swallowing mousedown/pointerdown/dragstart before they reach the block.
+                            Sized 16px with a -3px inset so it stays hittable on a one-slot block. */}
                         <button aria-label={`Unschedule ${e.title}`} title="Remove from calendar (keeps the task)"
+                          draggable={false}
+                          onDragStart={(ev) => { ev.preventDefault(); ev.stopPropagation(); }}
                           onPointerDown={(ev) => ev.stopPropagation()}
+                          onMouseDown={(ev) => { ev.stopPropagation(); ev.preventDefault(); }}
                           onClick={async (ev) => {
                             ev.stopPropagation(); ev.preventDefault();
+                            setActionError("");
                             setBusyEvent(e.crmTaskId);
-                            await onUnschedule(e.crmTaskId);
+                            const ok = await onUnschedule(e.crmTaskId);
                             setBusyEvent(null);
+                            if (ok) refetch(); else setActionError("Could not remove that from your calendar.");
                           }}
-                          style={{ position: "absolute", top: 0, right: 0, width: 13, height: 13, lineHeight: "11px", textAlign: "center",
-                            borderRadius: 3, border: "none", background: "rgba(0,0,0,0.35)", color: C.ink, fontSize: 10, cursor: "pointer",
-                            padding: 0, fontFamily: "inherit" }}>×</button>
+                          style={{ position: "absolute", top: -3, right: -3, width: 16, height: 16, lineHeight: "14px", textAlign: "center",
+                            borderRadius: 99, border: `1px solid ${t.line}`, background: "#16161a", color: C.ink, fontSize: 11, cursor: "pointer",
+                            padding: 0, fontFamily: "inherit", zIndex: 7 }}>×</button>
 
                         {/* bottom edge: drag down to cover more slots */}
                         <div role="separator" aria-label="Lengthen block" title="Drag to lengthen"
@@ -1608,6 +1632,15 @@ function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, syncTick }) 
         })}
       </div>
 
+      {/* Calendar errors used to surface ONLY inside the header chip's popover, which is nowhere near
+          where the action happens — a failed drop looked like nothing happening at all. Anything that
+          goes wrong while scheduling now says so right here, under the grid. */}
+      {(cal.calError || actionError) && (
+        <div role="alert" className="flex items-start justify-between gap-2" style={{ marginTop: 8, padding: "7px 9px", borderRadius: 8, background: C.accentBg, border: `1px solid ${C.accentLine}`, fontSize: 10.5, lineHeight: 1.45 }}>
+          <span>{actionError || cal.calError}</span>
+          <button onClick={() => { setActionError(""); cal.setCalError(""); }} style={{ ...iconBtn, padding: 0, fontSize: 12, flexShrink: 0 }} aria-label="Dismiss">×</button>
+        </div>
+      )}
       {loadError && <div role="alert" style={{ marginTop: 8, fontSize: 10.5, color: C.amber }}>{loadError}</div>}
       <div style={{ marginTop: 8, fontSize: 10, color: FAINT, lineHeight: 1.45 }}>
         Drag a task from a card below onto a slot to schedule it — the page scrolls itself as you go.
@@ -1716,7 +1749,10 @@ function AllyCRM() {
         extendedProperties: { private: { allyCrmTaskId: String(payload.taskId) } },
       }),
     });
-    if (!r.ok || !r.data || !r.data.id) return false;
+    /* Distinguish the failure modes rather than returning a bare false. "Nothing happened" was
+       exactly the reported symptom, and a bare false gives nothing to act on. */
+    if (!r.ok) { cal.setCalError(`Google refused to create the event${r.status ? ` (HTTP ${r.status})` : r.network ? " — could not reach Google" : r.expired ? " — the connection had expired" : ""}.`); return false; }
+    if (!r.data || !r.data.id) { cal.setCalError("Google accepted the request but returned no event, so nothing was saved."); return false; }
     setAlly((d) => ({
       ...d,
       schedule: {
