@@ -438,7 +438,10 @@ const store = {
     if (typeof window !== "undefined" && window.storage && window.storage.set) {
       try { await window.storage.set(k, v, false); return; } catch (e) {}
     }
-    try { localStorage.setItem(k, v); } catch (e) {}
+    /* Do not report a save as successful if both persistence layers reject it. The visible
+       save-state indicator can now truthfully surface a backup problem instead of giving a
+       false saved message. */
+    try { localStorage.setItem(k, v); return; } catch (e) { throw e; }
   },
 };
 
@@ -595,7 +598,9 @@ const CLIENT_STATUSES = ["Lead", "Active", "Paused"];
 const MIX_ROUTES = ["Fiverr", "Crighton", "Cassidy's boyfriend", "DIY"];
 const SOURCES = ["Discord", "Basecamp", "Email", "Sheets", "Meeting", "Self"];
 const SOURCE_TINT = { Discord: C.lilac, Basecamp: C.amber, Email: C.sky, Sheets: C.mint, Meeting: C.pink, Self: C.peach };
-const TASK_COLS = ["To do", "Doing", "Done"];
+/* Done is an outcome, not a working column. Ticking the checkbox completes a task immediately,
+   while the board itself stays focused on the two useful working states. */
+const TASK_COLS = ["To do", "Doing"];
 const PRIORITY_PILLARS = ["mama", "content", "music", "lifeAdmin"]; // "deals" pulled for now — re-add here to bring its priority card back
 
 /* ---------- priority engine: shared urgency scoring across all 6 pillars ---------- */
@@ -644,7 +649,10 @@ function computeUrgency(item) {
   const touch = item.lastProgress || item.created || null;
   const dSince = touch ? daysSince(touch) : null;
   const score = Math.max(base, dueBandScore(dUntil)) + stallUrgency(dSince, dUntil);
-  const bucket = score >= 4.2 ? "Urgent" : score >= 2.2 ? "Medium" : "Low";
+  /* A manually selected Medium task must actually live in Medium even before a date is chosen.
+     A tomorrow date still supplies the stronger 2.2 score, but the priority itself is enough to
+     keep daily triage truthful rather than silently shelving it in Low. */
+  const bucket = score >= 4.2 ? "Urgent" : score >= PRIORITY_WEIGHT.Medium ? "Medium" : "Low";
   return { score: Math.round(score * 10) / 10, bucket, daysUntilDue: dUntil, daysSinceProgress: dSince };
 }
 
@@ -1949,9 +1957,10 @@ function AllyCRM() {
     };
     const stop = () => { if (raf != null) cancelAnimationFrame(raf); raf = null; pointerY = null; };
     const onDragStart = (e) => {
-      /* only for task drags — the app has other drags (pipeline cards, priority columns) that are
-         within a single view and do not want the page moving under them */
-      if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes(SCHED_MIME)) return;
+      /* Capture runs before the dragged card's own handler can attach its dataTransfer payload.
+         Identify real task cards from their marker instead, so scroll assistance reliably starts
+         for calendar, priority, and Admin board drags. */
+      if (!e.target || !e.target.closest || !e.target.closest("[data-scroll-drag]")) return;
       lastMove = Date.now();
       if (raf == null) raf = requestAnimationFrame(step);
     };
@@ -2352,15 +2361,12 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
     setNavRequest({ id: task.id, navTab: task.navTab, navSub: task.navSub || null, navOpenId: task.navOpenId || null, seq: navSeq.current });
   };
   const completeTask = (task) => completePriorityTask(setAlly, setMama, task);
-  /* the Mama rail icon always lands on Mama's own Task Dashboard, even if you're already sitting
-           on the Mama tab on some other subtab (Creators...) — go() alone can't do this since it
-     no-ops when you're already on that tab, and MamaModule's subtab is its own local state that
-     only resets on a fresh mount. Routing this through the same navRequest channel forces
-     MamaModule's subtab-switch effect to fire regardless of whether the tab itself changed. */
-  const goMamaDashboard = () => {
+  /* Mama opens straight to the creator roster. The old task dashboard duplicated Home and made
+     the main Mama tab land in the wrong place. */
+  const goMamaCreators = () => {
     go("mama");
     navSeq.current += 1;
-    setNavRequest({ id: null, navTab: "mama", navSub: "dashboard", navOpenId: null, seq: navSeq.current });
+    setNavRequest({ id: null, navTab: "mama", navSub: "creators", navOpenId: null, seq: navSeq.current });
   };
   useEffect(() => {
     if (!navRequest) return;
@@ -2629,7 +2635,7 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
               const isHome = t === "overview";
               const Glyph = NAV_ICONS[info.icon];
               return (
-                <button key={t} className={`navbtn${isHome ? " navbtn-home" : ""}`} onClick={() => (t === "mama" ? goMamaDashboard() : go(t))} title={info.label} aria-label={info.label} aria-current={on ? "page" : undefined}
+                <button key={t} className={`navbtn${isHome ? " navbtn-home" : ""}`} onClick={() => (t === "mama" ? goMamaCreators() : go(t))} title={info.label} aria-label={info.label} aria-current={on ? "page" : undefined}
                   style={{ width: isHome ? 84 : 76, padding: isHome ? "8px 0 6px" : "7px 0 6px", borderRadius: 14, cursor: "pointer", position: "relative",
                     display: "flex", flexDirection: "column", alignItems: "center", gap: 4, fontFamily: "inherit",
                     border: `1px solid ${on ? (isHome ? C.accentLine : LINE) : "transparent"}`,
@@ -2992,6 +2998,7 @@ const PRIORITY_COL_TINT = { Urgent: C.rose, Medium: C.amber, Low: C.sky };
    one with an id of `<id>-sched`. One flat map keyed by the dashboard's own task id sidesteps all of
    that, and means scheduling never has to reach into a pillar's data shape. */
 const SCHED_MIME = "application/x-ally-schedule";
+const ADMIN_TASK_MIME = "application/x-ally-admin-task";
 /* Moving a content task between pipeline stages by dragging it across the groups on its dashboard
    card. Its own type, kept separate from SCHED_MIME (calendar) and "application/json" (priority
    buckets), so a single drag can offer all three and each drop target reads only what it understands. */
@@ -3002,6 +3009,7 @@ function TaskChip({ taskId, title, pillar, due, dateKind, scheduled, onOpen, sta
   return (
     <div
       draggable
+      data-scroll-drag
       onDragStart={(e) => {
         setDragging(true);
         e.dataTransfer.setData(SCHED_MIME, JSON.stringify({ taskId, title, pillar }));
@@ -3065,7 +3073,7 @@ function TaskGroup({ label, tint, count, children, empty, onDropStatus }) {
         {count != null && <span style={{ fontSize: 8.5, color: FAINT }}>{count}</span>}
       </div>
       {children ? (
-        <div className="grid" style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 4 }}>{children}</div>
+        <div className="grid" style={{ gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 4 }}>{children}</div>
       ) : <div style={{ fontSize: 9, color: FAINT }}>{empty || "—"}</div>}
     </div>
   );
@@ -3241,7 +3249,7 @@ function PriorityPillarCard({ pillarKey, tasks, go, rank, onDropPriority, pct, o
                 <span style={{ fontSize: 8.5, color: FAINT }}>{items.length}</span>
               </div>
               {items.length ? (
-                <div className="grid" style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 4 }}>
+                <div className="grid" style={{ gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 4 }}>
                   {items.map((t) => (
                     <TaskChip key={t.id} taskId={t.id} title={t.title} pillar={pillarKey} due={t.due}
                       scheduled={schedule && schedule[t.id]} onOpen={() => onNavigate(t)} />
@@ -3293,6 +3301,9 @@ function priorityFromDueDate(daysUntilDue) {
 function priorityForNewTask(due) {
   return due ? (priorityFromDueDate(daysUntil(due)) || "Medium") : "Medium";
 }
+/* Capture forms use tomorrow when no date is selected. This keeps a new task visible in the
+   Medium daily-triage group immediately, instead of storing a date-less task that can be missed. */
+const defaultTaskDue = () => shiftISO(todayISO(), 1);
 
 /* shared control row: due date + priority (Low/Med/High) + log progress + due-date readout.
    Used on every item across the 6 pillars so the Priorities dashboard can score them all the same way.
@@ -4103,7 +4114,8 @@ function LifeAdminModule({ data, setData, q }) {
   const ql = (q || "").toLowerCase();
   const add = () => {
     const t = title.trim(); if (!t) return;
-    setData((d) => ({ ...d, lifeAdmin: { ...d.lifeAdmin, items: [{ id: uid(), title: t, description: description.trim(), status: "To do", created: todayISO(), due: due || null, priority: priorityForNewTask(due || null), lastProgress: null }, ...(d.lifeAdmin.items || [])] } }));
+    const taskDue = due || defaultTaskDue();
+    setData((d) => ({ ...d, lifeAdmin: { ...d.lifeAdmin, items: [{ id: uid(), title: t, description: description.trim(), status: "To do", created: todayISO(), due: taskDue, priority: priorityForNewTask(taskDue), lastProgress: null }, ...(d.lifeAdmin.items || [])] } }));
     setTitle(""); setDescription(""); setDue("");
   };
   const toggleDone = (id) => setData((d) => ({ ...d, lifeAdmin: { ...d.lifeAdmin, items: d.lifeAdmin.items.map((t) => { if (t.id !== id) return t; const done = t.status === "Done"; return { ...t, status: done ? "To do" : "Done", doneAt: done ? null : Date.now() }; }) } }));
@@ -4155,7 +4167,7 @@ return (
 {__priorityGroups.map((g) => g.items.length === 0 ? null : (
 <div key={g.key} style={{ marginBottom: 20 }}>
 {__groupHead(g.label, g.items.length)}
-<div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(400px, 1fr))" }}>
+<div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))" }}>
 {g.items.map(renderCard)}
 </div>
 </div>
@@ -4163,7 +4175,7 @@ return (
 {__waitingItems.length > 0 && (
 <div style={{ marginBottom: 20 }}>
 {__groupHead("Waiting on reply", __waitingItems.length)}
-<div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(400px, 1fr))" }}>
+<div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))" }}>
 {__waitingItems.map(renderCard)}
 </div>
 </div>
@@ -4196,7 +4208,8 @@ function MiniTaskList({ tasks, onChange, withLink, composerAtBottom }) {
   const visibleList = list.filter((t) => !t.done);
   const add = () => {
     const t = title.trim(); if (!t) return;
-    onChange([{ id: uid(), title: t, description: description.trim(), link: link.trim(), due: due || null, priority: priorityForNewTask(due || null), lastProgress: null, done: false, created: todayISO() }, ...list]);
+    const taskDue = due || defaultTaskDue();
+    onChange([{ id: uid(), title: t, description: description.trim(), link: link.trim(), due: taskDue, priority: priorityForNewTask(taskDue), lastProgress: null, done: false, created: todayISO() }, ...list]);
     setTitle(""); setDescription(""); setDue(""); setLink("");
   };
   const update = (id, p) => onChange(list.map((t) => (t.id === id ? { ...t, ...p } : t)));
@@ -4476,7 +4489,6 @@ function MamaModule({ data, setData, q, navRequest, navigateToTask, completeTask
           );
         })}
       </nav>
-      {sub === "dashboard" && <MamaTaskDashboard data={data} setData={setData} setSub={setSub} navigateToTask={navigateToTask} completeTask={completeTask} />}
       {sub === "creators" && <Creators data={data} setData={setData} q={q} navRequest={navRequest} />}
       {sub === "adminTasks" && <AdminTasks data={data} setData={setData} />}
     </section>
@@ -4678,11 +4690,13 @@ function AdminTasks({ data, setData }) {
     const t = title.trim(); if (!t) return;
     const raw = link.trim();
     const links = raw ? [{ id: uid(), url: raw.startsWith("http") ? raw : `https://${raw}`, label: raw.replace(/^https?:\/\//, "").slice(0, 30) }] : [];
-    setData((d) => ({ ...d, tasks: [{ id: uid(), title: t, description: description.trim(), source, links, status: "To do", created: new Date().toISOString().slice(0, 10), due: due || null, priority: priorityForNewTask(due || null), lastProgress: null }, ...d.tasks] }));
+    const taskDue = due || defaultTaskDue();
+    setData((d) => ({ ...d, tasks: [{ id: uid(), title: t, description: description.trim(), source, links, status: "To do", created: new Date().toISOString().slice(0, 10), due: taskDue, priority: priorityForNewTask(taskDue), lastProgress: null }, ...d.tasks] }));
     setTitle(""); setDescription(""); setLink(""); setDue("");
   };
-  const advance = (id) => setData((d) => ({ ...d, tasks: d.tasks.map((t) => { if (t.id !== id) return t; const status = TASK_COLS[Math.min(TASK_COLS.indexOf(t.status) + 1, 2)]; return { ...t, status, doneAt: status === "Done" ? Date.now() : t.doneAt }; }) }));
-  const back = (id) => setData((d) => ({ ...d, tasks: d.tasks.map((t) => { if (t.id !== id) return t; const status = TASK_COLS[Math.max(TASK_COLS.indexOf(t.status) - 1, 0)]; return { ...t, status, doneAt: status === "Done" ? t.doneAt : null }; }) }));
+  const advance = (id) => setData((d) => ({ ...d, tasks: d.tasks.map((t) => { if (t.id !== id) return t; const status = TASK_COLS[Math.min(TASK_COLS.indexOf(t.status) + 1, TASK_COLS.length - 1)]; return { ...t, status, doneAt: null }; }) }));
+  const back = (id) => setData((d) => ({ ...d, tasks: d.tasks.map((t) => { if (t.id !== id) return t; const status = TASK_COLS[Math.max(TASK_COLS.indexOf(t.status) - 1, 0)]; return { ...t, status, doneAt: null }; }) }));
+  const moveToColumn = (id, status) => setData((d) => ({ ...d, tasks: d.tasks.map((t) => (t.id === id ? { ...t, status, doneAt: null } : t)) }));
   const update = (id, p) => setData((d) => ({ ...d, tasks: d.tasks.map((t) => (t.id === id ? { ...t, ...p } : t)) }));
   const remove = (id) => setData((d) => ({ ...d, tasks: d.tasks.filter((t) => t.id !== id) }));
   const clearDone = () => setData((d) => ({ ...d, tasks: d.tasks.filter((t) => t.status !== "Done") }));
@@ -4706,11 +4720,11 @@ function AdminTasks({ data, setData }) {
         </div>
       </div>
       <div style={{ borderTop: `1px solid ${LINE}`, margin: "-2px 0 20px" }} />
-      <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))" }}>
+      <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
         {TASK_COLS.map((col) => {
-          const items = col === "Done" ? [] : data.tasks.filter((t) => t.status === col);
+          const items = data.tasks.filter((t) => t.status === col);
           return (
-            <div key={col} className="rounded-2xl p-3" style={{ ...cardSoft, borderRadius: 16 }}>
+            <div key={col} className="rounded-2xl p-3" onDragOver={(e) => { if (!Array.from(e.dataTransfer.types).includes(ADMIN_TASK_MIME)) return; e.preventDefault(); e.dataTransfer.dropEffect = "move"; }} onDrop={(e) => { e.preventDefault(); const id = e.dataTransfer.getData(ADMIN_TASK_MIME); if (id) moveToColumn(id, col); }} style={{ ...cardSoft, borderRadius: 16 }}>
               <div className="flex items-center justify-between mb-3 px-1"><span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 600, fontSize: 12, letterSpacing: "0.04em", textTransform: "uppercase" }}>{col}</span><span style={{ fontSize: 12, color: MUT }}>{items.length}</span></div>
               <div className="flex flex-col gap-2">
                 {items.map((t) => <TaskCard key={t.id} t={t} col={col} onUpdate={(p) => update(t.id, p)} onAdvance={() => advance(t.id)} onBack={() => back(t.id)} onRemove={() => remove(t.id)} />)}
@@ -4720,7 +4734,6 @@ function AdminTasks({ data, setData }) {
           );
         })}
       </div>
-      {data.tasks.some((t) => t.status === "Done") && <button onClick={clearDone} className="mt-4" style={{ ...iconBtn, fontSize: 12 }}>Clear done tasks</button>}
     </section>
   );
 }
@@ -4738,7 +4751,7 @@ function TaskCard({ t, col, onUpdate, onAdvance, onBack, onRemove }) {
   const [descOpen, setDescOpen] = useState(true);
   const [linkDraft, setLinkDraft] = useState("");
   const tint = SOURCE_TINT[t.source] || C.lilac;
-  const done = col === "Done";
+  const done = t.status === "Done";
   const links = t.links || [];
   const addLink = () => {
     const raw = linkDraft.trim(); if (!raw) return;
@@ -4754,7 +4767,7 @@ function TaskCard({ t, col, onUpdate, onAdvance, onBack, onRemove }) {
      only from the Mama/main hub's tiny "mark complete" dot. */
   const toggleDone = () => onUpdate(done ? { status: "To do", doneAt: null } : { status: "Done", doneAt: Date.now() });
   return (
-    <div data-nav-id={t.id} onClick={() => { if (hasTextSelection()) return; setDescOpen((v) => !v); }} className="rounded-xl p-3" style={{ cursor: "pointer", ...card, borderRadius: 12, borderLeft: `2px solid ${tint}` }}>
+    <div data-nav-id={t.id} data-scroll-drag draggable onDragStart={(e) => { e.dataTransfer.setData(ADMIN_TASK_MIME, t.id); e.dataTransfer.effectAllowed = "move"; }} onClick={() => { if (hasTextSelection()) return; setDescOpen((v) => !v); }} className="rounded-xl p-2" style={{ cursor: "grab", ...card, borderRadius: 12, borderLeft: `2px solid ${tint}` }}>
       <div className="flex items-center gap-2">
         <button onClick={(e) => { e.stopPropagation(); toggleDone(); }} aria-label="Toggle done" title={done ? "Mark not done" : "Mark done"} style={{ width: 18, height: 18, borderRadius: 6, cursor: "pointer", flexShrink: 0, background: done ? C.mint : C.card, border: `1px solid ${done ? C.mint : LINE}`, display: "flex", alignItems: "center", justifyContent: "center" }}>{done && <Check size={11} color="#fff" strokeWidth={3} />}</button>
         <div className="flex-1 min-w-0" style={{ fontSize: 13.5, textDecoration: done ? "line-through" : "none", opacity: done ? 0.55 : 1 }}><InlineEdit value={t.title} onChange={(v) => onUpdate({ title: v })} bubbleClicks /></div>
@@ -4766,7 +4779,7 @@ function TaskCard({ t, col, onUpdate, onAdvance, onBack, onRemove }) {
           <span className="ml-auto flex gap-1">
             <button onClick={(e) => { e.stopPropagation(); setEditing(true); }} style={iconBtn} aria-label="Edit source" title="Edit source">✎</button>
             {col !== "To do" && <button onClick={(e) => { e.stopPropagation(); onBack(); }} style={iconBtn} aria-label="Back">←</button>}
-            {col !== "Done" && <button onClick={(e) => { e.stopPropagation(); onAdvance(); }} style={{ ...iconBtn, color: C.mint }} aria-label="Forward">→</button>}
+            {col === "To do" && <button onClick={(e) => { e.stopPropagation(); onAdvance(); }} style={{ ...iconBtn, color: C.mint }} aria-label="Move to Doing">→</button>}
             <button onClick={(e) => { e.stopPropagation(); onRemove(); }} style={iconBtn} aria-label="Delete"><X size={12} /></button>
           </span>
         </div>
@@ -4790,7 +4803,7 @@ function TaskCard({ t, col, onUpdate, onAdvance, onBack, onRemove }) {
         <input value={linkDraft} onChange={(e) => setLinkDraft(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addLink()} placeholder="Add a URL…" className="flex-1 rounded-lg px-2 py-1" style={{ ...inputStyle, fontSize: 10.5 }} />
         <button onClick={addLink} style={{ ...iconBtn, fontSize: 10.5, background: FILL, border: `1px solid ${LINE}`, borderRadius: 6, padding: "3px 9px" }}>Add</button>
       </div>
-      {col !== "Done" && <PriorityControls item={t} onChange={onUpdate} />}
+      {!done && <PriorityControls item={t} onChange={onUpdate} />}
     </div>
   );
 }
