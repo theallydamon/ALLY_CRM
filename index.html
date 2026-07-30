@@ -1352,11 +1352,18 @@ function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, onDeleteEven
     return () => clearInterval(id);
   }, []);
 
-  /* Resize is deliberately NOT HTML5 drag-and-drop. Native drag gives no continuous position while
-     the pointer is still, and cannot show a live preview of the new height. Pointer events can do
-     both. Listeners go on window so the gesture survives the pointer leaving the block, and are torn
-     down on release no matter where that happens. */
+  /* Resize is deliberately NOT HTML5 drag-and-drop. Native drag reports nothing while the pointer is
+     still and cannot show a live preview, so the block would not follow the cursor.
+
+     THE BUG THIS ALSO FIXES — the "it duplicates into the next cell" report. The resize handle lives
+     inside a block that is itself draggable=true for moving. Grabbing the edge therefore started BOTH
+     gestures: the resize, and a native move drag. The floating copy the owner saw was the browser's
+     drag ghost, and releasing over the next cell fired that cell's move-drop as well, so the block
+     appeared to duplicate and jump.
+     preventDefault on pointerdown does NOT stop a native drag from starting on the ancestor. The only
+     reliable block is to refuse it in dragstart, which is what dragBlockedRef does. */
   const resizeRef = useRef(null);
+  const dragBlockedRef = useRef(false);
   useEffect(() => {
     if (!resizing) return;
     const onMove = (e) => {
@@ -1364,6 +1371,9 @@ function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, onDeleteEven
       if (!st) return;
       const deltaSlots = Math.round((e.clientY - st.originY) / ROW_H);
       const endMin = Math.min(DAY_END_MIN, Math.max(st.startMin + SLOT_MIN, st.originEndMin + deltaSlots * SLOT_MIN));
+      /* written straight onto the ref as well as into state: the release handler reads the ref, and
+         relying on a follow-up effect to copy it across was a race waiting to happen */
+      st.latestEnd = endMin;
       setResizing((r) => (r && r.endMin !== endMin ? { ...r, endMin } : r));
     };
     const onUp = async () => {
@@ -1372,6 +1382,8 @@ function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, onDeleteEven
       window.removeEventListener("pointerup", onUp);
       resizeRef.current = null;
       setResizing(null);
+      /* released a tick later than dragstart could fire, so unblocking here is safe */
+      setTimeout(() => { dragBlockedRef.current = false; }, 0);
       if (!st) return;
       const finalEnd = st.latestEnd;
       if (finalEnd == null || finalEnd === st.originEndMin) return;   // no actual change
@@ -1387,8 +1399,6 @@ function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, onDeleteEven
     return () => { window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp); };
   }, [!!resizing]);
 
-  /* keep the ref in step so the pointerup handler above sees the latest dragged height */
-  useEffect(() => { if (resizing && resizeRef.current) resizeRef.current.latestEnd = resizing.endMin; }, [resizing]);
 
   const used = (calendars || []).filter((c) => c.used);
   const usedKey = used.map((c) => c.id).join("|");
@@ -1601,6 +1611,10 @@ function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, onDeleteEven
                     title={`${e.title}\n${minToLabel(Math.max(e.sMin, DAY_START_MIN))} – ${minToLabel(Math.min(shownEnd, DAY_END_MIN))}\n${e.calName}${mine ? "\nDrag to move · drag the bottom edge to lengthen · × to unschedule" : ""}`}
                     draggable={mine}
                     onDragStart={mine ? (ev) => {
+                      /* refuse the move drag if this gesture began on the resize handle — otherwise
+                         the edge-drag runs a resize AND a move at once, which is what produced the
+                         phantom duplicate block */
+                      if (dragBlockedRef.current) { ev.preventDefault(); return; }
                       ev.dataTransfer.setData(MOVE_MIME, JSON.stringify({ taskId }));
                       ev.dataTransfer.effectAllowed = "move";
                     } : undefined}
@@ -1609,9 +1623,16 @@ function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, onDeleteEven
                       background: t.fill, border: `1px solid ${isResizing ? C.mint : t.line}`, borderLeft: `2px solid ${t.bar}`,
                       cursor: mine ? "grab" : "default", opacity: writing ? 0.6 : 1, zIndex: isResizing ? 6 : "auto" }}>
                     <div style={{ overflow: "hidden" }}>
-                      <div style={{ fontSize: 9.5, fontWeight: 600, lineHeight: 1.2, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: hh < 26 ? "nowrap" : "normal", paddingRight: mine ? 11 : 0 }}>{e.title}</div>
+                      <div style={{ fontSize: 9.5, fontWeight: 600, lineHeight: 1.2, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: hh < 26 ? "nowrap" : "normal", paddingRight: mine || orphan ? 11 : 0 }}>{e.title}</div>
                       {hh >= 34 && <div style={{ fontSize: 8.5, color: MUT, lineHeight: 1.2 }}>{minToLabel(Math.max(e.sMin, DAY_START_MIN))}–{minToLabel(Math.min(shownEnd, DAY_END_MIN))}</div>}
                     </div>
+                    {/* live readout while stretching, since on a short block there is no room for the
+                        times inline and the whole point is knowing where the edge has got to */}
+                    {isResizing && (
+                      <div style={{ position: "absolute", right: 2, bottom: 1, fontSize: 8.5, fontWeight: 700, color: C.mint, background: "rgba(0,0,0,0.55)", borderRadius: 3, padding: "0 3px", pointerEvents: "none" }}>
+                        {Math.round((shownEnd - e.sMin) / SLOT_MIN) * 0.5}h → {minToLabel(shownEnd)}
+                      </div>
+                    )}
 
                     {(mine || orphan) && (
                       <>
@@ -1643,6 +1664,8 @@ function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, onDeleteEven
                         {mine && <div role="separator" aria-label="Lengthen block" title="Drag to lengthen"
                           onPointerDown={(ev) => {
                             ev.stopPropagation(); ev.preventDefault();
+                            /* set BEFORE any dragstart can fire, so the ancestor's move drag is refused */
+                            dragBlockedRef.current = true;
                             resizeRef.current = { taskId, day, originY: ev.clientY, startMin: e.sMin, originEndMin: e.eMin, latestEnd: e.eMin };
                             setResizing({ taskId, dayIndex: ci, startMin: e.sMin, endMin: e.eMin });
                           }}
