@@ -1300,10 +1300,16 @@ function packLanes(items) {
   return Math.max(1, laneEnds.length);
 }
 
-function DayGrid({ cal, onSchedule, syncTick }) {
+const MOVE_MIME = "application/x-ally-move";
+
+function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, syncTick }) {
   const { connected, calFetch, calendars } = cal;
   const [dropTarget, setDropTarget] = useState(null);   // "dayIndex:slotIndex" being hovered
   const [dropping, setDropping] = useState(null);       // same, while the event is being created
+  /* live resize state. Kept local and rendered as a preview so the block follows the pointer at 60fps
+     without a network call per pixel; Google is written exactly once, on release. */
+  const [resizing, setResizing] = useState(null);       // { taskId, dayIndex, startMin, endMin }
+  const [busyEvent, setBusyEvent] = useState(null);     // taskId of a block mid-write
   const [raw, setRaw] = useState([]);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
@@ -1321,6 +1327,41 @@ function DayGrid({ cal, onSchedule, syncTick }) {
     }, 60000);
     return () => clearInterval(id);
   }, []);
+
+  /* Resize is deliberately NOT HTML5 drag-and-drop. Native drag gives no continuous position while
+     the pointer is still, and cannot show a live preview of the new height. Pointer events can do
+     both. Listeners go on window so the gesture survives the pointer leaving the block, and are torn
+     down on release no matter where that happens. */
+  const resizeRef = useRef(null);
+  useEffect(() => {
+    if (!resizing) return;
+    const onMove = (e) => {
+      const st = resizeRef.current;
+      if (!st) return;
+      const deltaSlots = Math.round((e.clientY - st.originY) / ROW_H);
+      const endMin = Math.min(DAY_END_MIN, Math.max(st.startMin + SLOT_MIN, st.originEndMin + deltaSlots * SLOT_MIN));
+      setResizing((r) => (r && r.endMin !== endMin ? { ...r, endMin } : r));
+    };
+    const onUp = async () => {
+      const st = resizeRef.current;
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      resizeRef.current = null;
+      setResizing(null);
+      if (!st) return;
+      const finalEnd = st.latestEnd;
+      if (finalEnd == null || finalEnd === st.originEndMin) return;   // no actual change
+      setBusyEvent(st.taskId);
+      await onResize(st.taskId, finalEnd, st.day);
+      setBusyEvent(null);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => { window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp); };
+  }, [!!resizing]);
+
+  /* keep the ref in step so the pointerup handler above sees the latest dragged height */
+  useEffect(() => { if (resizing && resizeRef.current) resizeRef.current.latestEnd = resizing.endMin; }, [resizing]);
 
   const used = (calendars || []).filter((c) => c.used);
   const usedKey = used.map((c) => c.id).join("|");
@@ -1350,7 +1391,11 @@ function DayGrid({ cal, onSchedule, syncTick }) {
           return;
         }
         if (!ev.start.dateTime) return;
-        out.push({ id: `${c.id}::${ev.id}`, title: ev.summary || "(no title)", calId: c.id, calName: c.name, writable, allDay: false,
+        /* allyCrmTaskId is the marker written when this app created the event. Only blocks carrying it
+           get the move / resize / remove controls: everything else on the calendar is a real-world
+           commitment the CRM has no business rearranging, even on a writable calendar. */
+        const crmTaskId = (((ev.extendedProperties || {}).private) || {}).allyCrmTaskId || null;
+        out.push({ id: `${c.id}::${ev.id}`, eventId: ev.id, crmTaskId, title: ev.summary || "(no title)", calId: c.id, calName: c.name, writable, allDay: false,
           start: new Date(ev.start.dateTime), end: new Date((ev.end && ev.end.dateTime) || ev.start.dateTime) });
       });
     });
@@ -1456,16 +1501,29 @@ function DayGrid({ cal, onSchedule, syncTick }) {
                   <div key={i} className="daycell" data-day={ci} data-slot={i}
                     title={`${day.toLocaleDateString("en-ZA", { weekday: "short", day: "numeric" })} ${minToLabel(m)} · ${ph.label}${busy ? " · busy" : " · free"}`}
                     /* dragover must preventDefault on EVERY event or the browser refuses the drop */
+                    /* accepts two kinds of drop: a NEW task from a card (SCHED_MIME) and an EXISTING
+                       block being moved within the grid (MOVE_MIME). Each has its own handler so a
+                       move can never accidentally create a duplicate event. */
                     onDragOver={(e) => {
-                      if (!Array.from(e.dataTransfer.types).includes(SCHED_MIME)) return;
+                      const types = Array.from(e.dataTransfer.types);
+                      if (!types.includes(SCHED_MIME) && !types.includes(MOVE_MIME)) return;
                       e.preventDefault();
-                      e.dataTransfer.dropEffect = "copy";
+                      e.dataTransfer.dropEffect = types.includes(MOVE_MIME) ? "move" : "copy";
                       setDropTarget(key);
                     }}
                     onDragLeave={() => setDropTarget((t) => (t === key ? null : t))}
                     onDrop={async (e) => {
                       e.preventDefault();
                       setDropTarget(null);
+                      const moveRaw = e.dataTransfer.getData(MOVE_MIME);
+                      if (moveRaw) {
+                        let mv; try { mv = JSON.parse(moveRaw); } catch (err) { return; }
+                        if (!mv || !mv.taskId) return;
+                        setBusyEvent(mv.taskId); setDropping(key);
+                        await onMove(mv.taskId, day, m);
+                        setDropping(null); setBusyEvent(null);
+                        return;
+                      }
                       let payload;
                       try { payload = JSON.parse(e.dataTransfer.getData(SCHED_MIME)); } catch (err) { return; }
                       if (!payload || !payload.taskId) return;
@@ -1486,13 +1544,56 @@ function DayGrid({ cal, onSchedule, syncTick }) {
                 const h = Math.max(ROW_H - 2, topOf(e.eMin) - top - 1);
                 const w = 100 / laneCount;
                 const t = eventTint(e.calId, e.writable);
+                const mine = !!e.crmTaskId;                       // created by this app -> editable here
+                const isResizing = resizing && resizing.taskId === e.crmTaskId && resizing.dayIndex === ci;
+                const shownEnd = isResizing ? resizing.endMin : e.eMin;
+                const hh = Math.max(ROW_H - 2, topOf(shownEnd) - top - 1);
+                const writing = busyEvent === e.crmTaskId;
                 return (
-                  <div key={e.id} className="dayevent" title={`${e.title}\n${minToLabel(Math.max(e.sMin, DAY_START_MIN))} – ${minToLabel(Math.min(e.eMin, DAY_END_MIN))}\n${e.calName}`}
-                    style={{ position: "absolute", top, height: h, left: `calc(${e.lane * w}% + 2px)`, width: `calc(${w}% - 4px)`,
-                      borderRadius: 5, padding: "1px 4px", overflow: "hidden",
-                      background: t.fill, border: `1px solid ${t.line}`, borderLeft: `2px solid ${t.bar}` }}>
-                    <div style={{ fontSize: 9.5, fontWeight: 600, lineHeight: 1.2, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: h < 26 ? "nowrap" : "normal" }}>{e.title}</div>
-                    {h >= 34 && <div style={{ fontSize: 8.5, color: MUT, lineHeight: 1.2 }}>{minToLabel(Math.max(e.sMin, DAY_START_MIN))}</div>}
+                  <div key={e.id} className="dayevent"
+                    title={`${e.title}\n${minToLabel(Math.max(e.sMin, DAY_START_MIN))} – ${minToLabel(Math.min(shownEnd, DAY_END_MIN))}\n${e.calName}${mine ? "\nDrag to move · drag the bottom edge to lengthen · × to unschedule" : ""}`}
+                    draggable={mine}
+                    onDragStart={mine ? (ev) => {
+                      ev.dataTransfer.setData(MOVE_MIME, JSON.stringify({ taskId: e.crmTaskId }));
+                      ev.dataTransfer.effectAllowed = "move";
+                    } : undefined}
+                    style={{ position: "absolute", top, height: hh, left: `calc(${e.lane * w}% + 2px)`, width: `calc(${w}% - 4px)`,
+                      borderRadius: 5, padding: "1px 4px", overflow: "visible",
+                      background: t.fill, border: `1px solid ${isResizing ? C.mint : t.line}`, borderLeft: `2px solid ${t.bar}`,
+                      cursor: mine ? "grab" : "default", opacity: writing ? 0.6 : 1, zIndex: isResizing ? 6 : "auto" }}>
+                    <div style={{ overflow: "hidden" }}>
+                      <div style={{ fontSize: 9.5, fontWeight: 600, lineHeight: 1.2, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: hh < 26 ? "nowrap" : "normal", paddingRight: mine ? 11 : 0 }}>{e.title}</div>
+                      {hh >= 34 && <div style={{ fontSize: 8.5, color: MUT, lineHeight: 1.2 }}>{minToLabel(Math.max(e.sMin, DAY_START_MIN))}–{minToLabel(Math.min(shownEnd, DAY_END_MIN))}</div>}
+                    </div>
+
+                    {mine && (
+                      <>
+                        {/* unschedule. Removes the calendar block only — the task itself is untouched
+                            and stays on its card, just no longer green. */}
+                        <button aria-label={`Unschedule ${e.title}`} title="Remove from calendar (keeps the task)"
+                          onPointerDown={(ev) => ev.stopPropagation()}
+                          onClick={async (ev) => {
+                            ev.stopPropagation(); ev.preventDefault();
+                            setBusyEvent(e.crmTaskId);
+                            await onUnschedule(e.crmTaskId);
+                            setBusyEvent(null);
+                          }}
+                          style={{ position: "absolute", top: 0, right: 0, width: 13, height: 13, lineHeight: "11px", textAlign: "center",
+                            borderRadius: 3, border: "none", background: "rgba(0,0,0,0.35)", color: C.ink, fontSize: 10, cursor: "pointer",
+                            padding: 0, fontFamily: "inherit" }}>×</button>
+
+                        {/* bottom edge: drag down to cover more slots */}
+                        <div role="separator" aria-label="Lengthen block" title="Drag to lengthen"
+                          onPointerDown={(ev) => {
+                            ev.stopPropagation(); ev.preventDefault();
+                            resizeRef.current = { taskId: e.crmTaskId, day, originY: ev.clientY, startMin: e.sMin, originEndMin: e.eMin, latestEnd: e.eMin };
+                            setResizing({ taskId: e.crmTaskId, dayIndex: ci, startMin: e.sMin, endMin: e.eMin });
+                          }}
+                          style={{ position: "absolute", left: 0, right: 0, bottom: -3, height: 7, cursor: "ns-resize" }}>
+                          <div style={{ position: "absolute", left: "50%", transform: "translateX(-50%)", bottom: 2, width: 16, height: 2, borderRadius: 2, background: isResizing ? C.mint : t.bar, opacity: isResizing ? 1 : 0.65 }} />
+                        </div>
+                      </>
+                    )}
                   </div>
                 );
               })}
@@ -1510,6 +1611,8 @@ function DayGrid({ cal, onSchedule, syncTick }) {
       {loadError && <div role="alert" style={{ marginTop: 8, fontSize: 10.5, color: C.amber }}>{loadError}</div>}
       <div style={{ marginTop: 8, fontSize: 10, color: FAINT, lineHeight: 1.45 }}>
         Drag a task from a card below onto a slot to schedule it — the page scrolls itself as you go.
+        Blocks the CRM made can be dragged to a new slot, lengthened by their bottom edge, or removed with ×
+        (which unschedules the task but keeps it). Your other commitments are read-only here.
         <span style={{ color: C.sky }}> Blue</span> is your own calendar,
         <span style={{ color: C.amber }}> yellow</span> is ally@mama.co.za, grey is view-only.
       </div>
@@ -1581,9 +1684,14 @@ function AllyCRM() {
      hook drop the token the moment you sign out of the CRM. */
   const cal = useCalendarAuth(user);
 
-  /* ---------- scheduling a task onto the calendar ----------
-     THE ONLY PLACE IN THIS APP THAT WRITES TO GOOGLE CALENDAR. Keep it that way: one funnel means
-     one place to reason about what can be created, and one place to get the write target right.
+  /* ---------- the calendar write layer ----------
+     THE ONLY PLACE IN THIS APP THAT WRITES TO GOOGLE CALENDAR: create, move, resize, remove. Keep it
+     that way — one funnel means one place to reason about what can change and one place to get the
+     write target right.
+
+     Every mutation follows the same order: ask Google first, and only touch CRM state once Google has
+     confirmed. A failed write must never leave the CRM claiming something is scheduled when it is not,
+     or showing it gone when it still exists.
 
      Writes go to "primary" — the owner's own gmail calendar — never to ally@mama.co.za, even though
      that calendar is writable. Decided 29 Jul 2026: the mama calendar is shared with
@@ -1622,6 +1730,56 @@ function AllyCRM() {
         },
       },
     }));
+    return true;
+  };
+
+  const schedLabel = (start) => `${start.toLocaleDateString("en-ZA", { weekday: "short", day: "numeric" })} ${minToLabel(start.getHours() * 60 + start.getMinutes())}`;
+
+  /* Remove a block from the calendar WITHOUT touching the task. The task returns to unscheduled — the
+     chip goes grey — and stays exactly where it was on its card. This is the "×" on a block.
+     A 404/410 is treated as success: the event is already gone, which is the desired end state, so
+     the CRM should stop claiming it exists rather than refusing to let go of a phantom. */
+  const unscheduleTask = async (taskId) => {
+    const s = (ally.schedule || {})[taskId];
+    if (!s || !s.eventId) return false;
+    const r = await cal.calFetch(`/calendars/${encodeURIComponent(s.calendarId || "primary")}/events/${encodeURIComponent(s.eventId)}`, { method: "DELETE", quiet: true });
+    if (!r.ok && r.status !== 404 && r.status !== 410) { cal.setCalError("Could not remove that from your calendar."); return false; }
+    setAlly((d) => { const next = { ...(d.schedule || {}) }; delete next[taskId]; return { ...d, schedule: next }; });
+    return true;
+  };
+
+  /* Move an existing block to a new day/slot, keeping its current length. PATCH the SAME event rather
+     than delete-and-recreate: recreating would churn the event id, lose the CRM link and spam any
+     guests or notifications attached to it. */
+  const moveScheduled = async (taskId, day, startMin) => {
+    const s = (ally.schedule || {})[taskId];
+    if (!s || !s.eventId) return false;
+    const durMs = Math.max(SLOT_MIN * 60000, new Date(s.endISO) - new Date(s.startISO));
+    const start = new Date(day.getFullYear(), day.getMonth(), day.getDate(), Math.floor(startMin / 60), startMin % 60, 0);
+    const end = new Date(start.getTime() + durMs);
+    const r = await cal.calFetch(`/calendars/${encodeURIComponent(s.calendarId || "primary")}/events/${encodeURIComponent(s.eventId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ start: { dateTime: start.toISOString() }, end: { dateTime: end.toISOString() } }),
+    });
+    if (!r.ok) return false;
+    setAlly((d) => ({ ...d, schedule: { ...(d.schedule || {}), [taskId]: { ...s, startISO: start.toISOString(), endISO: end.toISOString(), label: schedLabel(start) } } }));
+    return true;
+  };
+
+  /* Change only the END of a block — dragging its bottom edge to cover more slots. Start is untouched,
+     and a block can never be shorter than one slot. */
+  const resizeScheduled = async (taskId, endMin, day) => {
+    const s = (ally.schedule || {})[taskId];
+    if (!s || !s.eventId) return false;
+    const start = new Date(s.startISO);
+    const end = new Date(day.getFullYear(), day.getMonth(), day.getDate(), Math.floor(endMin / 60), endMin % 60, 0);
+    if (end.getTime() - start.getTime() < SLOT_MIN * 60000) return false;
+    const r = await cal.calFetch(`/calendars/${encodeURIComponent(s.calendarId || "primary")}/events/${encodeURIComponent(s.eventId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ end: { dateTime: end.toISOString() } }),
+    });
+    if (!r.ok) return false;
+    setAlly((d) => ({ ...d, schedule: { ...(d.schedule || {}), [taskId]: { ...s, endISO: end.toISOString() } } }));
     return true;
   };
 
@@ -2325,7 +2483,7 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
               hidden behind it. */}
           <div ref={scrollRef} className="scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "24px 32px", display: "flex", flexDirection: "column", alignItems: "center" }}>
             <div style={{ width: "100%", maxWidth: 1280, margin: 0, paddingBottom: 32 }}>
-              {tab === "overview" && <PersonalModule ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} q={q} navRequest={navRequest} navigateToTask={navigateToTask} completeTask={completeTask} cal={cal} onSchedule={scheduleTask} syncTick={syncTick} />}
+              {tab === "overview" && <PersonalModule ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} q={q} navRequest={navRequest} navigateToTask={navigateToTask} completeTask={completeTask} cal={cal} onSchedule={scheduleTask} onMove={moveScheduled} onResize={resizeScheduled} onUnschedule={unscheduleTask} syncTick={syncTick} />}
               {tab === "content" && <ContentModule data={ally} setData={setAlly} q={q} navRequest={navRequest} />}
               {tab === "lifeAdmin" && <LifeAdminModule data={ally} setData={setAlly} q={q} />}
               {tab === "deals" && <DealsModule data={ally} setData={setAlly} q={q} navRequest={navRequest} />}
@@ -2617,10 +2775,10 @@ function CalendarChip({ cal, crmEmail }) {
 /* HOME. Life Admin used to live here as a subtab; it is now a top-level tab in its own right, so
    this no longer has any subtabs. The calendar day grid lands directly above PriorityDashboard in
    step 3 — connection state lives in the header chip, not here, so the grid gets the full width. */
-function PersonalModule({ ally, mama, setAlly, setMama, go, q, navRequest, navigateToTask, completeTask, cal, onSchedule, syncTick }) {
+function PersonalModule({ ally, mama, setAlly, setMama, go, q, navRequest, navigateToTask, completeTask, cal, onSchedule, onMove, onResize, onUnschedule, syncTick }) {
   return (
     <section style={{ width: "100%", margin: 0, textAlign: "left" }}>
-      {cal && <DayGrid cal={cal} onSchedule={onSchedule} syncTick={syncTick} />}
+      {cal && <DayGrid cal={cal} onSchedule={onSchedule} onMove={onMove} onResize={onResize} onUnschedule={onUnschedule} syncTick={syncTick} />}
       <PriorityDashboard ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} navigateToTask={navigateToTask} completeTask={completeTask} schedule={ally.schedule || {}} />
     </section>
   );
