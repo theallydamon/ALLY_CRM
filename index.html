@@ -1929,8 +1929,14 @@ function AllyCRM() {
   useEffect(() => {
     const EDGE = 130;        // px from an edge where scrolling begins
     const MAX_SPEED = 24;    // px per frame at the very edge
-    let pointerY = null, raf = null;
+    const IDLE_MS = 400;     // no dragover for this long -> the drag is over, whatever the events say
+    let pointerY = null, raf = null, lastMove = 0;
     const step = () => {
+      /* WATCHDOG. This loop must be able to stop itself. It previously relied entirely on dragend or
+         drop arriving, and when neither did it kept scrolling forever with a stale pointer position —
+         which is exactly the runaway downward scroll that was reported. dragover fires continuously
+         during a real drag, so silence means the drag has ended. */
+      if (Date.now() - lastMove > IDLE_MS) { stop(); return; }
       const el = scrollRef.current;
       if (el && pointerY != null) {
         const r = el.getBoundingClientRect();
@@ -1946,19 +1952,30 @@ function AllyCRM() {
       /* only for task drags — the app has other drags (pipeline cards, priority columns) that are
          within a single view and do not want the page moving under them */
       if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes(SCHED_MIME)) return;
+      lastMove = Date.now();
       if (raf == null) raf = requestAnimationFrame(step);
     };
-    const onDragOver = (e) => { if (raf != null) pointerY = e.clientY; };
-    document.addEventListener("dragstart", onDragStart);
-    document.addEventListener("dragover", onDragOver);
-    document.addEventListener("dragend", stop);
-    document.addEventListener("drop", stop);
+    const onDragOver = (e) => { if (raf != null) { pointerY = e.clientY; lastMove = Date.now(); } };
+    /* CAPTURE PHASE, and this is load-bearing rather than incidental. Drop handlers inside the app
+       call stopPropagation (the stage-group drop does), which prevents a bubbling document listener
+       from ever seeing the drop — so `stop` was never reached and the loop ran on. Capture fires
+       before any handler can stop propagation. */
+    const opts = { capture: true };
+    document.addEventListener("dragstart", onDragStart, opts);
+    document.addEventListener("dragover", onDragOver, opts);
+    document.addEventListener("dragend", stop, opts);
+    document.addEventListener("drop", stop, opts);
+    /* belt and braces: a pointer/mouse release means no drag can still be in progress */
+    document.addEventListener("pointerup", stop, opts);
+    window.addEventListener("blur", stop);
     return () => {
       stop();
-      document.removeEventListener("dragstart", onDragStart);
-      document.removeEventListener("dragover", onDragOver);
-      document.removeEventListener("dragend", stop);
-      document.removeEventListener("drop", stop);
+      document.removeEventListener("dragstart", onDragStart, opts);
+      document.removeEventListener("dragover", onDragOver, opts);
+      document.removeEventListener("dragend", stop, opts);
+      document.removeEventListener("drop", stop, opts);
+      document.removeEventListener("pointerup", stop, opts);
+      window.removeEventListener("blur", stop);
     };
   }, []);
 
