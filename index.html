@@ -1622,9 +1622,18 @@ function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, onDeleteEven
                       borderRadius: 5, padding: "1px 4px", overflow: "visible",
                       background: t.fill, border: `1px solid ${isResizing ? C.mint : t.line}`, borderLeft: `2px solid ${t.bar}`,
                       cursor: mine ? "grab" : "default", opacity: writing ? 0.6 : 1, zIndex: isResizing ? 6 : "auto" }}>
-                    <div style={{ overflow: "hidden" }}>
-                      <div style={{ fontSize: 9.5, fontWeight: 600, lineHeight: 1.2, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: hh < 26 ? "nowrap" : "normal", paddingRight: mine || orphan ? 11 : 0 }}>{e.title}</div>
-                      {hh >= 34 && <div style={{ fontSize: 8.5, color: MUT, lineHeight: 1.2 }}>{minToLabel(Math.max(e.sMin, DAY_START_MIN))}–{minToLabel(Math.min(shownEnd, DAY_END_MIN))}</div>}
+                    {/* The block itself must stay overflow:visible so the × and the resize grip can sit
+                        on its edge, which means the text needs its own clipped box — otherwise a long
+                        title spills straight out of the block, as it did. Height is pinned to the
+                        block's, and the title is clamped to however many lines actually fit, so a
+                        two-hour block shows more of the title than a half-hour one instead of both
+                        overflowing. */}
+                    <div style={{ height: Math.max(0, hh - 2), overflow: "hidden" }}>
+                      <div style={{ fontSize: 9.5, fontWeight: 600, lineHeight: "11.5px", color: C.ink,
+                        display: "-webkit-box", WebkitBoxOrient: "vertical",
+                        WebkitLineClamp: Math.max(1, Math.floor((hh - 2 - (hh >= 34 ? 11 : 0)) / 11.5)),
+                        overflow: "hidden", wordBreak: "break-word", paddingRight: mine || orphan ? 12 : 0 }}>{e.title}</div>
+                      {hh >= 34 && <div style={{ fontSize: 8.5, color: MUT, lineHeight: "11px", whiteSpace: "nowrap" }}>{minToLabel(Math.max(e.sMin, DAY_START_MIN))}–{minToLabel(Math.min(shownEnd, DAY_END_MIN))}</div>}
                     </div>
                     {/* live readout while stretching, since on a short block there is no room for the
                         times inline and the whole point is knowing where the edge has got to */}
@@ -1698,13 +1707,9 @@ function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, onDeleteEven
         </div>
       )}
       {loadError && <div role="alert" style={{ marginTop: 8, fontSize: 10.5, color: C.amber }}>{loadError}</div>}
-      <div style={{ marginTop: 8, fontSize: 10, color: FAINT, lineHeight: 1.45 }}>
-        Drag a task from a card below onto a slot to schedule it — the page scrolls itself as you go.
-        Blocks the CRM made can be dragged to a new slot, lengthened by their bottom edge, or removed with ×
-        (which unschedules the task but keeps it). Your other commitments are read-only here.
-        <span style={{ color: C.sky }}> Blue</span> is your own calendar,
-        <span style={{ color: C.amber }}> yellow</span> is ally@mama.co.za, grey is view-only.
-      </div>
+      {/* No instructional footer here. The owner built this and does not need the interface narrated;
+          that applies generally, so resist adding explanatory copy to the UI. Errors and live data are
+          fine — telling him how his own app works is not. */}
     </div>
   );
 }
@@ -2832,9 +2837,9 @@ function CalendarChip({ cal, crmEmail }) {
             </div>
             <div style={{ fontSize: 10.5, color: MUT, lineHeight: 1.45 }}>
               {connected
-                ? (account ? `Granted on ${account}. Renews itself — you will not be asked again.` : "Permission granted.")
+                ? (account || "")
                 : connecting ? "Reconnecting…"
-                : "Not connected. Access was either never granted on this account, or revoked at Google."}
+                : "Not connected."}
             </div>
 
             {calError && (
@@ -3084,19 +3089,19 @@ IDEAS is deliberately absent from both this and the Music card. It is a bank of 
 rather than scheduleable work, and it crowded out the three stages that are. It is still on the
 Content board and still in the counts row above.
 Each column is a bordered group with its tasks underneath, three across before wrapping. */}
-<TaskGroup label="To Film" tint={CONTENT_TINT["To Film"]} count={toFilmDated.length || null} empty="nothing waiting">
+<TaskGroup label="To Film" tint={CONTENT_TINT["To Film"]} count={toFilmDated.length || null} empty="—">
 {toFilmDated.length ? toFilmDated.map((i) => (
 <TaskChip key={i.id} taskId={i.id} title={i.title} pillar={pipelineKey} due={liveDate(i)} dateKind={liveDue(i) ? "do" : "post"}
 scheduled={schedule && schedule[i.id]} onOpen={() => onNavigate && onNavigate({ id: i.id, navTab: "content", navSub })} />
 )) : null}
 </TaskGroup>
-<TaskGroup label="To Edit" tint={CONTENT_TINT["To Edit"]} count={toEditDated.length || null} empty="nothing waiting">
+<TaskGroup label="To Edit" tint={CONTENT_TINT["To Edit"]} count={toEditDated.length || null} empty="—">
 {toEditDated.length ? toEditDated.map((i) => (
 <TaskChip key={i.id} taskId={i.id} title={i.title} pillar={pipelineKey} due={liveDate(i)} dateKind={liveDue(i) ? "do" : "post"}
 scheduled={schedule && schedule[i.id]} onOpen={() => onNavigate && onNavigate({ id: i.id, navTab: "content", navSub })} />
 )) : null}
 </TaskGroup>
-<TaskGroup label="To Post" tint={CONTENT_TINT["Ready to Post"]} count={toPostDated.length || null} empty="nothing ready">
+<TaskGroup label="To Post" tint={CONTENT_TINT["Ready to Post"]} count={toPostDated.length || null} empty="—">
 {toPostDated.length ? toPostDated.map((i) => (
 <TaskChip key={i.id} taskId={i.id} title={i.title} pillar={pipelineKey} due={livePost(i) || liveDue(i)} dateKind={livePost(i) ? "post" : "do"}
 scheduled={schedule && schedule[i.id]} onOpen={() => onNavigate && onNavigate({ id: i.id, navTab: "content", navSub })} />
