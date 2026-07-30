@@ -1320,7 +1320,7 @@ function packLanes(items) {
 
 const MOVE_MIME = "application/x-ally-move";
 
-function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, syncTick }) {
+function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, onDeleteEvent, syncTick, schedule }) {
   const { connected, calFetch, calendars } = cal;
   const [dropTarget, setDropTarget] = useState(null);   // "dayIndex:slotIndex" being hovered
   const [dropping, setDropping] = useState(null);       // same, while the event is being created
@@ -1422,7 +1422,7 @@ function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, syncTick }) 
            get the move / resize / remove controls: everything else on the calendar is a real-world
            commitment the CRM has no business rearranging, even on a writable calendar. */
         const crmTaskId = (((ev.extendedProperties || {}).private) || {}).allyCrmTaskId || null;
-        out.push({ id: `${c.id}::${ev.id}`, eventId: ev.id, crmTaskId, title: ev.summary || "(no title)", calId: c.id, calName: c.name, writable, allDay: false,
+        out.push({ id: `${c.id}::${ev.id}`, eventId: ev.id, crmTaskId, desc: ev.description || "", title: ev.summary || "(no title)", calId: c.id, calName: c.name, writable, allDay: false,
           start: new Date(ev.start.dateTime), end: new Date((ev.end && ev.end.dateTime) || ev.start.dateTime) });
       });
     });
@@ -1452,6 +1452,16 @@ function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, syncTick }) 
     const allDayHere = raw.filter((e) => e.allDay && midnight(day) >= midnight(e.start) && midnight(day) < midnight(e.end));
     return { day, timed, laneCount, taken, allDay: allDayHere };
   });
+
+  /* WHICH BLOCKS ARE OURS — two independent routes, because relying on one was the bug.
+     The first attempt trusted extendedProperties.private.allyCrmTaskId, the tag written at creation.
+     If Google does not hand that back on a list call, every block looks foreign, and a foreign block
+     correctly gets no × and no drag — which is exactly the reported "× does nothing, cannot move it".
+     So we also match on event id against ally.schedule, which is data this app owns outright and can
+     always read. A block counts as ours if EITHER route identifies it. */
+  const eventIdToTask = {};
+  Object.entries(schedule || {}).forEach(([taskId, s]) => { if (s && s.eventId) eventIdToTask[s.eventId] = taskId; });
+  const ownTaskId = (e) => e.crmTaskId || eventIdToTask[e.eventId] || null;
 
   const topOf = (m) => ((Math.min(Math.max(m, DAY_START_MIN), DAY_END_MIN) - DAY_START_MIN) / SLOT_MIN) * ROW_H;
   const bodyH = SLOT_COUNT * ROW_H;
@@ -1577,17 +1587,21 @@ function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, syncTick }) 
                 const h = Math.max(ROW_H - 2, topOf(e.eMin) - top - 1);
                 const w = 100 / laneCount;
                 const t = eventTint(e.calId, e.writable);
-                const mine = !!e.crmTaskId;                       // created by this app -> editable here
-                const isResizing = resizing && resizing.taskId === e.crmTaskId && resizing.dayIndex === ci;
+                const taskId = ownTaskId(e);                      // non-null => this app created it
+                /* an orphan: we made it (its description says so) but the link back is gone. Removable, but
+                   not movable or resizable, since there is no CRM record to keep in step. */
+                const orphan = !taskId && /Scheduled from ALLY CRM/i.test(e.desc || "");
+                const mine = !!taskId;                            // and only ours are editable here
+                const isResizing = resizing && resizing.taskId === taskId && resizing.dayIndex === ci;
                 const shownEnd = isResizing ? resizing.endMin : e.eMin;
                 const hh = Math.max(ROW_H - 2, topOf(shownEnd) - top - 1);
-                const writing = busyEvent === e.crmTaskId;
+                const writing = busyEvent === taskId;
                 return (
                   <div key={e.id} className="dayevent"
                     title={`${e.title}\n${minToLabel(Math.max(e.sMin, DAY_START_MIN))} – ${minToLabel(Math.min(shownEnd, DAY_END_MIN))}\n${e.calName}${mine ? "\nDrag to move · drag the bottom edge to lengthen · × to unschedule" : ""}`}
                     draggable={mine}
                     onDragStart={mine ? (ev) => {
-                      ev.dataTransfer.setData(MOVE_MIME, JSON.stringify({ taskId: e.crmTaskId }));
+                      ev.dataTransfer.setData(MOVE_MIME, JSON.stringify({ taskId }));
                       ev.dataTransfer.effectAllowed = "move";
                     } : undefined}
                     style={{ position: "absolute", top, height: hh, left: `calc(${e.lane * w}% + 2px)`, width: `calc(${w}% - 4px)`,
@@ -1599,7 +1613,7 @@ function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, syncTick }) 
                       {hh >= 34 && <div style={{ fontSize: 8.5, color: MUT, lineHeight: 1.2 }}>{minToLabel(Math.max(e.sMin, DAY_START_MIN))}–{minToLabel(Math.min(shownEnd, DAY_END_MIN))}</div>}
                     </div>
 
-                    {mine && (
+                    {(mine || orphan) && (
                       <>
                         {/* unschedule. Removes the calendar block only — the task itself is untouched
                             and stays on its card, just no longer green. */}
@@ -1615,8 +1629,8 @@ function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, syncTick }) 
                           onClick={async (ev) => {
                             ev.stopPropagation(); ev.preventDefault();
                             setActionError("");
-                            setBusyEvent(e.crmTaskId);
-                            const ok = await onUnschedule(e.crmTaskId);
+                            setBusyEvent(taskId || e.eventId);
+                            const ok = orphan ? await onDeleteEvent(e.calId, e.eventId) : await onUnschedule(taskId);
                             setBusyEvent(null);
                             if (ok) refetch(); else setActionError("Could not remove that from your calendar.");
                           }}
@@ -1624,16 +1638,17 @@ function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, syncTick }) 
                             borderRadius: 99, border: `1px solid ${t.line}`, background: "#16161a", color: C.ink, fontSize: 11, cursor: "pointer",
                             padding: 0, fontFamily: "inherit", zIndex: 7 }}>×</button>
 
-                        {/* bottom edge: drag down to cover more slots */}
-                        <div role="separator" aria-label="Lengthen block" title="Drag to lengthen"
+                        {/* bottom edge: drag down to cover more slots. Linked blocks only — an orphan
+                            has no CRM record to update, so lengthening it would drift silently. */}
+                        {mine && <div role="separator" aria-label="Lengthen block" title="Drag to lengthen"
                           onPointerDown={(ev) => {
                             ev.stopPropagation(); ev.preventDefault();
-                            resizeRef.current = { taskId: e.crmTaskId, day, originY: ev.clientY, startMin: e.sMin, originEndMin: e.eMin, latestEnd: e.eMin };
-                            setResizing({ taskId: e.crmTaskId, dayIndex: ci, startMin: e.sMin, endMin: e.eMin });
+                            resizeRef.current = { taskId, day, originY: ev.clientY, startMin: e.sMin, originEndMin: e.eMin, latestEnd: e.eMin };
+                            setResizing({ taskId, dayIndex: ci, startMin: e.sMin, endMin: e.eMin });
                           }}
                           style={{ position: "absolute", left: 0, right: 0, bottom: -3, height: 7, cursor: "ns-resize" }}>
                           <div style={{ position: "absolute", left: "50%", transform: "translateX(-50%)", bottom: 2, width: 16, height: 2, borderRadius: 2, background: isResizing ? C.mint : t.bar, opacity: isResizing ? 1 : 0.65 }} />
-                        </div>
+                        </div>}
                       </>
                     )}
                   </div>
@@ -1788,6 +1803,19 @@ function AllyCRM() {
   };
 
   const schedLabel = (start) => `${start.toLocaleDateString("en-ZA", { weekday: "short", day: "numeric" })} ${minToLabel(start.getHours() * 60 + start.getMinutes())}`;
+
+  /* ORPHAN CLEANUP. A block the CRM created can lose its link back — it happened during this build,
+     when events made by an earlier version predated the identifying tag. Such a block matches nothing
+     in ally.schedule and carries no tag, so it gets no controls and becomes permanently stuck on the
+     calendar with no way to remove it from inside the app.
+     This deletes the Google event by id and touches no CRM state, because by definition there is none
+     left to clean up. Only offered for blocks whose description marks them as ours, so it can never be
+     pointed at a real commitment. */
+  const deleteOrphanEvent = async (calendarId, eventId) => {
+    const r = await cal.calFetch(`/calendars/${encodeURIComponent(calendarId || "primary")}/events/${encodeURIComponent(eventId)}`, { method: "DELETE", quiet: true });
+    if (!r.ok && r.status !== 404 && r.status !== 410) { cal.setCalError("Could not remove that block."); return false; }
+    return true;
+  };
 
   /* Remove a block from the calendar WITHOUT touching the task. The task returns to unscheduled — the
      chip goes grey — and stays exactly where it was on its card. This is the "×" on a block.
@@ -2537,7 +2565,7 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
               hidden behind it. */}
           <div ref={scrollRef} className="scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "24px 32px", display: "flex", flexDirection: "column", alignItems: "center" }}>
             <div style={{ width: "100%", maxWidth: 1280, margin: 0, paddingBottom: 32 }}>
-              {tab === "overview" && <PersonalModule ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} q={q} navRequest={navRequest} navigateToTask={navigateToTask} completeTask={completeTask} cal={cal} onSchedule={scheduleTask} onMove={moveScheduled} onResize={resizeScheduled} onUnschedule={unscheduleTask} syncTick={syncTick} />}
+              {tab === "overview" && <PersonalModule ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} q={q} navRequest={navRequest} navigateToTask={navigateToTask} completeTask={completeTask} cal={cal} onSchedule={scheduleTask} onMove={moveScheduled} onResize={resizeScheduled} onUnschedule={unscheduleTask} onDeleteEvent={deleteOrphanEvent} syncTick={syncTick} />}
               {tab === "content" && <ContentModule data={ally} setData={setAlly} q={q} navRequest={navRequest} />}
               {tab === "lifeAdmin" && <LifeAdminModule data={ally} setData={setAlly} q={q} />}
               {tab === "deals" && <DealsModule data={ally} setData={setAlly} q={q} navRequest={navRequest} />}
@@ -2829,10 +2857,10 @@ function CalendarChip({ cal, crmEmail }) {
 /* HOME. Life Admin used to live here as a subtab; it is now a top-level tab in its own right, so
    this no longer has any subtabs. The calendar day grid lands directly above PriorityDashboard in
    step 3 — connection state lives in the header chip, not here, so the grid gets the full width. */
-function PersonalModule({ ally, mama, setAlly, setMama, go, q, navRequest, navigateToTask, completeTask, cal, onSchedule, onMove, onResize, onUnschedule, syncTick }) {
+function PersonalModule({ ally, mama, setAlly, setMama, go, q, navRequest, navigateToTask, completeTask, cal, onSchedule, onMove, onResize, onUnschedule, onDeleteEvent, syncTick }) {
   return (
     <section style={{ width: "100%", margin: 0, textAlign: "left" }}>
-      {cal && <DayGrid cal={cal} onSchedule={onSchedule} onMove={onMove} onResize={onResize} onUnschedule={onUnschedule} syncTick={syncTick} />}
+      {cal && <DayGrid cal={cal} onSchedule={onSchedule} onMove={onMove} onResize={onResize} onUnschedule={onUnschedule} onDeleteEvent={onDeleteEvent} syncTick={syncTick} schedule={ally.schedule || {}} />}
       <PriorityDashboard ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} navigateToTask={navigateToTask} completeTask={completeTask} schedule={ally.schedule || {}} />
     </section>
   );
@@ -2850,7 +2878,13 @@ const fillPct = Object.fromEntries(PRIORITY_PILLARS.map((k) => [k,
 k === "content" ? Math.max(contentTaskPct, contentPostUrgency.pct) :
 k === "music" ? Math.max(musicTaskPct, musicPostUrgency.pct) :
 computePillarFillPercent(byPillar[k])]));
-const ranked = [...PRIORITY_PILLARS].sort((a, b) => fillPct[b] - fillPct[a]);
+/* FIXED ORDER, owner's call 30 Jul 2026: Life Admin, Comedy Content, Music Content, Mama.
+   The cards used to re-sort themselves by how full each ring was, which meant they moved around under
+   the cursor between visits — bad for muscle memory generally, and actively bad now that tasks are
+   dragged out of them onto the calendar. The rings still show urgency; only the position is frozen.
+   The number badge is therefore position, not rank. */
+const CARD_ORDER = ["lifeAdmin", "content", "music", "mama"];
+const ranked = CARD_ORDER.filter((k) => PRIORITY_PILLARS.includes(k));
 const rankOf = Object.fromEntries(ranked.map((k, i) => [k, i + 1]));
 const onDropPriority = (pillar, id, patch) => setPillarItemPriority(setAlly, setMama, pillar, id, patch);
 
@@ -2990,7 +3024,6 @@ const byDate = (a, b) => daysUntil(liveDate(a)) - daysUntil(liveDate(b));
 const toPostDated = allItems.filter((i) => i.status === "Ready to Post").sort((a, b) => daysUntil(livePost(a) || liveDue(a)) - daysUntil(livePost(b) || liveDue(b))).slice(0, 6);
 const toFilmDated = allItems.filter((i) => i.status === "To Film" && liveDate(i)).sort(byDate).slice(0, 3);
 const toEditDated = allItems.filter((i) => i.status === "To Edit" && liveDate(i)).sort(byDate).slice(0, 3);
-const ideasDated = allItems.filter((i) => i.status === "Ideas" && liveDate(i)).sort(byDate).slice(0, 3);
 return (
 <div onClick={() => onNavigate && onNavigate({ navTab: "content", navSub })} className="rounded-2xl p-4 pillar-card" style={{ ...card, borderRadius: 16, borderLeft: "4px solid " + mod.accent, cursor: "pointer" }}>
 <div className="flex items-center justify-between mb-3">
@@ -3022,12 +3055,15 @@ return (
 ))}
 </div>
 <div className="flex flex-col gap-2 mt-3 pt-3" style={{ borderTop: "1px solid " + LINE }}>
-{/* Columns run horizontally as bordered groups with their tasks underneath, three across before
-wrapping — the owner's layout, so a card reads as grouped blocks rather than tall thin columns.
-TO POST is new: it is the "Ready to Post" stage, which previously only appeared as a count. */}
-<TaskGroup label="To Post" tint={CONTENT_TINT["Ready to Post"]} count={toPostDated.length || null} empty="nothing ready">
-{toPostDated.length ? toPostDated.map((i) => (
-<TaskChip key={i.id} taskId={i.id} title={i.title} pillar={pipelineKey} due={livePost(i) || liveDue(i)} dateKind={livePost(i) ? "post" : "do"}
+{/* FIXED ORDER, owner's call 30 Jul 2026: TO FILM, then TO EDIT, then TO POST — the real production
+sequence, so the card reads top-to-bottom the way the work actually flows.
+IDEAS is deliberately absent from both this and the Music card. It is a bank of unstarted thoughts
+rather than scheduleable work, and it crowded out the three stages that are. It is still on the
+Content board and still in the counts row above.
+Each column is a bordered group with its tasks underneath, three across before wrapping. */}
+<TaskGroup label="To Film" tint={CONTENT_TINT["To Film"]} count={toFilmDated.length || null} empty="nothing waiting">
+{toFilmDated.length ? toFilmDated.map((i) => (
+<TaskChip key={i.id} taskId={i.id} title={i.title} pillar={pipelineKey} due={liveDate(i)} dateKind={liveDue(i) ? "do" : "post"}
 scheduled={schedule && schedule[i.id]} onOpen={() => onNavigate && onNavigate({ id: i.id, navTab: "content", navSub })} />
 )) : null}
 </TaskGroup>
@@ -3037,20 +3073,12 @@ scheduled={schedule && schedule[i.id]} onOpen={() => onNavigate && onNavigate({ 
 scheduled={schedule && schedule[i.id]} onOpen={() => onNavigate && onNavigate({ id: i.id, navTab: "content", navSub })} />
 )) : null}
 </TaskGroup>
-<TaskGroup label="To Film" tint={CONTENT_TINT["To Film"]} count={toFilmDated.length || null} empty="nothing waiting">
-{toFilmDated.length ? toFilmDated.map((i) => (
-<TaskChip key={i.id} taskId={i.id} title={i.title} pillar={pipelineKey} due={liveDate(i)} dateKind={liveDue(i) ? "do" : "post"}
+<TaskGroup label="To Post" tint={CONTENT_TINT["Ready to Post"]} count={toPostDated.length || null} empty="nothing ready">
+{toPostDated.length ? toPostDated.map((i) => (
+<TaskChip key={i.id} taskId={i.id} title={i.title} pillar={pipelineKey} due={livePost(i) || liveDue(i)} dateKind={livePost(i) ? "post" : "do"}
 scheduled={schedule && schedule[i.id]} onOpen={() => onNavigate && onNavigate({ id: i.id, navTab: "content", navSub })} />
 )) : null}
 </TaskGroup>
-{ideasDated.length > 0 && (
-<TaskGroup label="Ideas" tint={CONTENT_TINT.Ideas} count={ideasDated.length}>
-{ideasDated.map((i) => (
-<TaskChip key={i.id} taskId={i.id} title={i.title} pillar={pipelineKey} due={liveDate(i)} dateKind={liveDue(i) ? "do" : "post"}
-scheduled={schedule && schedule[i.id]} onOpen={() => onNavigate && onNavigate({ id: i.id, navTab: "content", navSub })} />
-))}
-</TaskGroup>
-)}
 </div>
 </div>
 );
