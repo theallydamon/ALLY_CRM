@@ -3113,9 +3113,12 @@ const byDate = (a, b) => daysUntil(liveDate(a)) - daysUntil(liveDate(b));
 /* `paused` means the owner switched this item's priority off — clicking the active L/M/H pill in
 PriorityControls sets it. A paused item must not appear on the dashboard at all; it was still showing
 under TO POST because that feed only checked status. */
-const toPostDated = allItems.filter((i) => i.status === "Ready to Post" && !i.paused).sort((a, b) => daysUntil(livePost(a) || liveDue(a)) - daysUntil(livePost(b) || liveDue(b))).slice(0, 6);
-const toFilmDated = allItems.filter((i) => i.status === "To Film" && !i.paused && liveDate(i)).sort(byDate).slice(0, 3);
-const toEditDated = allItems.filter((i) => i.status === "To Edit" && !i.paused && liveDate(i)).sort(byDate).slice(0, 3);
+/* NO CAPS on any of these. They used to slice to 3 (and 6 for To Post), which quietly hid work —
+if six videos are waiting to be filmed, six must be visible, or the card lies about the workload.
+The groups wrap at three per row, so extra items flow onto the next row. */
+const toPostDated = allItems.filter((i) => i.status === "Ready to Post" && !i.paused).sort((a, b) => daysUntil(livePost(a) || liveDue(a)) - daysUntil(livePost(b) || liveDue(b)));
+const toFilmDated = allItems.filter((i) => i.status === "To Film" && !i.paused && liveDate(i)).sort(byDate);
+const toEditDated = allItems.filter((i) => i.status === "To Edit" && !i.paused && liveDate(i)).sort(byDate);
 return (
 <div onClick={() => onNavigate && onNavigate({ navTab: "content", navSub })} className="rounded-2xl p-4 pillar-card" style={{ ...card, borderRadius: 16, borderLeft: "4px solid " + mod.accent, cursor: "pointer" }}>
 <div className="flex items-center justify-between mb-3">
