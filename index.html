@@ -2916,6 +2916,20 @@ const ranked = CARD_ORDER.filter((k) => PRIORITY_PILLARS.includes(k));
 const rankOf = Object.fromEntries(ranked.map((k, i) => [k, i + 1]));
 const onDropPriority = (pillar, id, patch) => setPillarItemPriority(setAlly, setMama, pillar, id, patch);
 
+/* Moving a content task between stages from its dashboard card. Writes the real item in the real
+   pipeline, which is why it shows up on the Content tab's board immediately — same data, two views,
+   no mirroring logic to drift.
+   `pipe` comes from the chip rather than being inferred, because the Comedy card merges brandContent
+   items alongside content ones and they live in different pipelines. */
+const onSetStatus = ({ id, pipe, from }, status) => {
+  if (!pipe || from === status) return;
+  setAlly((d) => {
+    const p = d[pipe];
+    if (!p || !Array.isArray(p.items)) return d;
+    return { ...d, [pipe]: { ...p, items: p.items.map((i) => (i.id === id ? { ...i, status } : i)) } };
+  });
+};
+
 return (
 <section>
 <div style={{ marginBottom: 16 }}>
@@ -2931,9 +2945,9 @@ screens, where a 4-up would be unusable and there is no dragging anyway. */}
 <div className="grid gap-3 pillar-grid">
 {ranked.map((k) => (
 k === "content"
-? <ContentPillarCard key={k} content={ally.content} pipelineKey="content" mod={MODULES.content} go={go} rank={rankOf[k]} taskPct={contentTaskPct} postPct={contentPostUrgency.pct} onNavigate={navigateToTask} onComplete={completeTask} extraItems={ally.brandContent.items} schedule={schedule} />
+? <ContentPillarCard key={k} content={ally.content} pipelineKey="content" mod={MODULES.content} go={go} rank={rankOf[k]} taskPct={contentTaskPct} postPct={contentPostUrgency.pct} onNavigate={navigateToTask} onComplete={completeTask} extraItems={ally.brandContent.items} schedule={schedule} onSetStatus={onSetStatus} />
 : k === "music"
-? <ContentPillarCard key={k} content={ally.musicContent} pipelineKey="musicContent" mod={MUSIC_CONTENT_MOD} go={go} rank={rankOf[k]} taskPct={musicTaskPct} postPct={musicPostUrgency.pct} onNavigate={navigateToTask} onComplete={completeTask} schedule={schedule} />
+? <ContentPillarCard key={k} content={ally.musicContent} pipelineKey="musicContent" mod={MUSIC_CONTENT_MOD} go={go} rank={rankOf[k]} taskPct={musicTaskPct} postPct={musicPostUrgency.pct} onNavigate={navigateToTask} onComplete={completeTask} schedule={schedule} onSetStatus={onSetStatus} />
 : <PriorityPillarCard key={k} pillarKey={k} tasks={byPillar[k]} go={go} rank={rankOf[k]} onDropPriority={onDropPriority} pct={fillPct[k]} onNavigate={navigateToTask} onComplete={completeTask} schedule={schedule} />
 ))}
 </div>
@@ -2961,8 +2975,12 @@ const PRIORITY_COL_TINT = { Urgent: C.rose, Medium: C.amber, Low: C.sky };
    one with an id of `<id>-sched`. One flat map keyed by the dashboard's own task id sidesteps all of
    that, and means scheduling never has to reach into a pillar's data shape. */
 const SCHED_MIME = "application/x-ally-schedule";
+/* Moving a content task between pipeline stages by dragging it across the groups on its dashboard
+   card. Its own type, kept separate from SCHED_MIME (calendar) and "application/json" (priority
+   buckets), so a single drag can offer all three and each drop target reads only what it understands. */
+const STATUS_MIME = "application/x-ally-status";
 
-function TaskChip({ taskId, title, pillar, due, dateKind, scheduled, onOpen }) {
+function TaskChip({ taskId, title, pillar, due, dateKind, scheduled, onOpen, statusMove }) {
   const [dragging, setDragging] = useState(false);
   return (
     <div
@@ -2972,6 +2990,8 @@ function TaskChip({ taskId, title, pillar, due, dateKind, scheduled, onOpen }) {
         e.dataTransfer.setData(SCHED_MIME, JSON.stringify({ taskId, title, pillar }));
         /* keep the legacy payload so the within-card column drop still works */
         e.dataTransfer.setData("application/json", JSON.stringify({ id: taskId, pillar }));
+        /* content chips can additionally be dropped on another stage group to move pipeline stage */
+        if (statusMove) e.dataTransfer.setData(STATUS_MIME, JSON.stringify(statusMove));
         e.dataTransfer.effectAllowed = "copyMove";
       }}
       onDragEnd={() => setDragging(false)}
@@ -3002,11 +3022,29 @@ function TaskChip({ taskId, title, pillar, due, dateKind, scheduled, onOpen }) {
 
 /* One bordered group per column, laid out horizontally with its tasks underneath, three across
    before wrapping — the owner's layout, so a card reads as grouped blocks rather than tall columns. */
-function TaskGroup({ label, tint, count, children, empty }) {
+/* One group per pipeline stage, tinted with that stage's own colour at low alpha so the stages read as
+   separate zones at a glance rather than three near-identical boxes.
+   `onDropStatus` makes the group a drop target for a chip dragged out of another stage. */
+function TaskGroup({ label, tint, count, children, empty, onDropStatus }) {
+  const [over, setOver] = useState(false);
+  const base = tint || MUT;
   return (
-    <div style={{ border: `1px solid ${LINE}`, borderRadius: 9, padding: "6px 7px 7px", background: "rgba(255,255,255,0.02)" }}>
+    <div
+      onDragOver={onDropStatus ? (e) => {
+        if (!Array.from(e.dataTransfer.types).includes(STATUS_MIME)) return;
+        e.preventDefault(); e.dataTransfer.dropEffect = "move";
+        if (!over) setOver(true);
+      } : undefined}
+      onDragLeave={onDropStatus ? () => setOver(false) : undefined}
+      onDrop={onDropStatus ? (e) => {
+        e.preventDefault(); e.stopPropagation(); setOver(false);
+        let p; try { p = JSON.parse(e.dataTransfer.getData(STATUS_MIME)); } catch (err) { return; }
+        if (p && p.id) onDropStatus(p);
+      } : undefined}
+      style={{ border: `1px solid ${over ? base : `${base}33`}`, borderRadius: 9, padding: "6px 7px 7px",
+        background: over ? `${base}26` : `${base}12`, transition: "background-color 0.14s ease, border-color 0.14s ease" }}>
       <div className="flex items-center justify-between" style={{ marginBottom: 5 }}>
-        <span style={{ fontSize: 8.5, letterSpacing: "0.09em", textTransform: "uppercase", color: tint || MUT, fontWeight: 700 }}>{label}</span>
+        <span style={{ fontSize: 8.5, letterSpacing: "0.09em", textTransform: "uppercase", color: base, fontWeight: 700 }}>{label}</span>
         {count != null && <span style={{ fontSize: 8.5, color: FAINT }}>{count}</span>}
       </div>
       {children ? (
@@ -3029,7 +3067,7 @@ function dueLabel(iso) {
 /* Content's card doesn't show Urgent/Medium/Low task columns like the other pillars — content has no
    individual priorities anymore, just one master signal (days since last post, entirely independent
    of the pipeline) rendered as its own fill ring, plus a glance at where ideas sit in the pipeline. */
-function ContentPillarCard({ content, pipelineKey, mod, go, rank, taskPct, postPct, onNavigate, onComplete, extraItems, schedule }) {
+function ContentPillarCard({ content, pipelineKey, mod, go, rank, taskPct, postPct, onNavigate, onComplete, extraItems, schedule, onSetStatus }) {
 const since = daysSince(content.lastPosted);
 const taskTint = urgencyTint(taskPct);
 const postTint = urgencyTint(postPct);
@@ -3042,16 +3080,25 @@ const counts = Object.fromEntries(pipelineCols.map((c) => [c, content.items.filt
 /* two separate deadline feeds so filming deadlines and editing deadlines stay visually apart —
 title pulls through by title only (never the script/desc box), same rule every other pillar
 follows. Both rings above stay purely score-driven regardless of what is in either list. */
-const allItems = extraItems && extraItems.length ? [...content.items, ...extraItems] : content.items;
+/* Each item is tagged with the pipeline it actually lives in. The Comedy card merges brandContent
+alongside content, and a status change has to patch the pipeline that owns the item — without the tag a
+Brand Deals item dropped on another stage would be written into `content` and silently vanish. */
+const allItems = [
+  ...content.items.map((i) => ({ ...i, _pipe: pipelineKey })),
+  ...((extraItems || []).map((i) => ({ ...i, _pipe: "brandContent" }))),
+];
 /* TO POST is the Ready-to-Post stage. Unlike the other feeds it deliberately does NOT require a
 date: something finished and waiting to go out is actionable regardless, and needing a date first
 was why this stage never appeared as a task list at all. */
 /* All four feeds read dates through liveDue/livePost, so muting a chip removes the item from the
    dashboard immediately without deleting the date underneath. */
 const byDate = (a, b) => daysUntil(liveDate(a)) - daysUntil(liveDate(b));
-const toPostDated = allItems.filter((i) => i.status === "Ready to Post").sort((a, b) => daysUntil(livePost(a) || liveDue(a)) - daysUntil(livePost(b) || liveDue(b))).slice(0, 6);
-const toFilmDated = allItems.filter((i) => i.status === "To Film" && liveDate(i)).sort(byDate).slice(0, 3);
-const toEditDated = allItems.filter((i) => i.status === "To Edit" && liveDate(i)).sort(byDate).slice(0, 3);
+/* `paused` means the owner switched this item's priority off — clicking the active L/M/H pill in
+PriorityControls sets it. A paused item must not appear on the dashboard at all; it was still showing
+under TO POST because that feed only checked status. */
+const toPostDated = allItems.filter((i) => i.status === "Ready to Post" && !i.paused).sort((a, b) => daysUntil(livePost(a) || liveDue(a)) - daysUntil(livePost(b) || liveDue(b))).slice(0, 6);
+const toFilmDated = allItems.filter((i) => i.status === "To Film" && !i.paused && liveDate(i)).sort(byDate).slice(0, 3);
+const toEditDated = allItems.filter((i) => i.status === "To Edit" && !i.paused && liveDate(i)).sort(byDate).slice(0, 3);
 return (
 <div onClick={() => onNavigate && onNavigate({ navTab: "content", navSub })} className="rounded-2xl p-4 pillar-card" style={{ ...card, borderRadius: 16, borderLeft: "4px solid " + mod.accent, cursor: "pointer" }}>
 <div className="flex items-center justify-between mb-3">
@@ -3089,22 +3136,25 @@ IDEAS is deliberately absent from both this and the Music card. It is a bank of 
 rather than scheduleable work, and it crowded out the three stages that are. It is still on the
 Content board and still in the counts row above.
 Each column is a bordered group with its tasks underneath, three across before wrapping. */}
-<TaskGroup label="To Film" tint={CONTENT_TINT["To Film"]} count={toFilmDated.length || null} empty="—">
+<TaskGroup label="To Film" tint={CONTENT_TINT["To Film"]} count={toFilmDated.length || null} empty="—" onDropStatus={(p) => onSetStatus && onSetStatus(p, "To Film")}>
 {toFilmDated.length ? toFilmDated.map((i) => (
 <TaskChip key={i.id} taskId={i.id} title={i.title} pillar={pipelineKey} due={liveDate(i)} dateKind={liveDue(i) ? "do" : "post"}
-scheduled={schedule && schedule[i.id]} onOpen={() => onNavigate && onNavigate({ id: i.id, navTab: "content", navSub })} />
+scheduled={schedule && schedule[i.id]} statusMove={{ id: i.id, pipe: i._pipe, from: i.status }}
+onOpen={() => onNavigate && onNavigate({ id: i.id, navTab: "content", navSub })} />
 )) : null}
 </TaskGroup>
-<TaskGroup label="To Edit" tint={CONTENT_TINT["To Edit"]} count={toEditDated.length || null} empty="—">
+<TaskGroup label="To Edit" tint={CONTENT_TINT["To Edit"]} count={toEditDated.length || null} empty="—" onDropStatus={(p) => onSetStatus && onSetStatus(p, "To Edit")}>
 {toEditDated.length ? toEditDated.map((i) => (
 <TaskChip key={i.id} taskId={i.id} title={i.title} pillar={pipelineKey} due={liveDate(i)} dateKind={liveDue(i) ? "do" : "post"}
-scheduled={schedule && schedule[i.id]} onOpen={() => onNavigate && onNavigate({ id: i.id, navTab: "content", navSub })} />
+scheduled={schedule && schedule[i.id]} statusMove={{ id: i.id, pipe: i._pipe, from: i.status }}
+onOpen={() => onNavigate && onNavigate({ id: i.id, navTab: "content", navSub })} />
 )) : null}
 </TaskGroup>
-<TaskGroup label="To Post" tint={CONTENT_TINT["Ready to Post"]} count={toPostDated.length || null} empty="—">
+<TaskGroup label="To Post" tint={CONTENT_TINT["Ready to Post"]} count={toPostDated.length || null} empty="—" onDropStatus={(p) => onSetStatus && onSetStatus(p, "Ready to Post")}>
 {toPostDated.length ? toPostDated.map((i) => (
 <TaskChip key={i.id} taskId={i.id} title={i.title} pillar={pipelineKey} due={livePost(i) || liveDue(i)} dateKind={livePost(i) ? "post" : "do"}
-scheduled={schedule && schedule[i.id]} onOpen={() => onNavigate && onNavigate({ id: i.id, navTab: "content", navSub })} />
+scheduled={schedule && schedule[i.id]} statusMove={{ id: i.id, pipe: i._pipe, from: i.status }}
+onOpen={() => onNavigate && onNavigate({ id: i.id, navTab: "content", navSub })} />
 )) : null}
 </TaskGroup>
 </div>
