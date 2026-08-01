@@ -1348,7 +1348,11 @@ function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, onDeleteEven
   const [nowMin, setNowMin] = useState(() => { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); });
   const [today, setToday] = useState(() => new Date());
 
-  const days = Array.from({ length: GRID_DAYS }, (_, i) => new Date(today.getFullYear(), today.getMonth(), today.getDate() + i));
+  /* Window offset in days. Steps a whole window at a time so the columns never straddle an awkward
+     boundary. spanKey below is derived from the first visible day, so changing this refetches Google
+     for the new range automatically — no separate plumbing. */
+  const [offsetDays, setOffsetDays] = useState(0);
+  const days = Array.from({ length: GRID_DAYS }, (_, i) => new Date(today.getFullYear(), today.getMonth(), today.getDate() + offsetDays + i));
 
   /* the now-line needs minute resolution; re-reading the date also rolls the grid over at midnight */
   useEffect(() => {
@@ -1490,10 +1494,21 @@ function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, onDeleteEven
   return (
     <div className="rounded-2xl daygrid" style={{ ...card, borderRadius: 16, padding: 13, marginBottom: 16 }}>
       <div className="flex items-baseline justify-between flex-wrap gap-2" style={{ marginBottom: 9 }}>
-        <div>
-          <div style={{ fontWeight: 700, fontSize: 13.5 }}>Next {GRID_DAYS} days</div>
-          <div style={{ fontSize: 10.5, color: MUT, marginTop: 1 }}>
-            {loading ? "Reading your calendar…" : `${totalFree} half-hour slots free across ${GRID_DAYS} days`}
+        <div className="flex items-center gap-2">
+          <button onClick={() => setOffsetDays((o) => o - GRID_DAYS)} aria-label="Earlier days" title="Earlier"
+            style={{ ...iconBtn, width: 24, height: 24, borderRadius: 7, border: `1px solid ${LINE}`, display: "flex", alignItems: "center", justifyContent: "center" }}>‹</button>
+          <button onClick={() => setOffsetDays((o) => o + GRID_DAYS)} aria-label="Later days" title="Later"
+            style={{ ...iconBtn, width: 24, height: 24, borderRadius: 7, border: `1px solid ${LINE}`, display: "flex", alignItems: "center", justifyContent: "center" }}>›</button>
+          {offsetDays !== 0 && (
+            <button onClick={() => setOffsetDays(0)} style={{ ...iconBtn, fontSize: 10, padding: "3px 9px", borderRadius: 999, border: `1px solid ${C.accentLine}`, color: C.accent }}>Today</button>
+          )}
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 13.5 }}>
+              {days[0].toLocaleDateString("en-ZA", { day: "numeric", month: "short" })} – {days[GRID_DAYS - 1].toLocaleDateString("en-ZA", { day: "numeric", month: "short" })}
+            </div>
+            <div style={{ fontSize: 10.5, color: MUT, marginTop: 1 }}>
+              {loading ? "Reading your calendar…" : `${totalFree} half-hour slots free`}
+            </div>
           </div>
         </div>
         <div className="flex items-center gap-3" style={{ fontSize: 9.5, color: MUT, letterSpacing: "0.06em", textTransform: "uppercase" }}>
@@ -2912,7 +2927,7 @@ function PersonalModule({ ally, mama, setAlly, setMama, go, q, navRequest, navig
   return (
     <section style={{ width: "100%", margin: 0, textAlign: "left" }}>
       {cal && <DayGrid cal={cal} onSchedule={onSchedule} onMove={onMove} onResize={onResize} onUnschedule={onUnschedule} onDeleteEvent={onDeleteEvent} syncTick={syncTick} schedule={ally.schedule || {}} />}
-      <PriorityDashboard ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} navigateToTask={navigateToTask} completeTask={completeTask} schedule={ally.schedule || {}} />
+      <PriorityDashboard ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} navigateToTask={navigateToTask} completeTask={completeTask} schedule={currentSchedule(ally.schedule)} />
     </section>
   );
 }
@@ -2997,6 +3012,27 @@ const PRIORITY_COL_TINT = { Urgent: C.rose, Medium: C.amber, Low: C.sky };
    some are synthetic — a content item with both a deadline and a post date produces two task rows,
    one with an id of `<id>-sched`. One flat map keyed by the dashboard's own task id sidesteps all of
    that, and means scheduling never has to reach into a pillar's data shape. */
+/* A chip is green only while its scheduled slot is still ahead of it — today or later. The moment that
+   day passes without the task being ticked off, the green clears and it reads as unscheduled again,
+   because a plan you did not act on is not a plan any more and should be prompting a reschedule.
+
+   The underlying entry is deliberately NOT deleted. The Google event still exists as history, and
+   keeping the record means scrolling the grid back to a past day still shows that block as ours, with
+   its × and its link intact. Only the card's treatment of it expires, not the data.
+
+   Compared by calendar day rather than by timestamp: a block at 09:00 should stay green all day, not
+   go stale at 09:31. */
+function currentSchedule(schedule) {
+  const t = new Date(); const todayStart = new Date(t.getFullYear(), t.getMonth(), t.getDate()).getTime();
+  const out = {};
+  Object.entries(schedule || {}).forEach(([id, s]) => {
+    if (!s || !s.startISO) return;
+    const d = new Date(s.startISO);
+    if (new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() >= todayStart) out[id] = s;
+  });
+  return out;
+}
+
 const SCHED_MIME = "application/x-ally-schedule";
 const ADMIN_TASK_MIME = "application/x-ally-admin-task";
 /* Moving a content task between pipeline stages by dragging it across the groups on its dashboard
