@@ -357,7 +357,7 @@ const AVATAR_IMG = "data:image/jpeg;base64," +
       for the priority rings, which must keep encoding urgency. Do not fold them into the accent.
 
    The remaining named tints (lilac, sky, pink, peach, brown) survive because they carry meaning
-   elsewhere: kanban columns (CONTENT_TINT), task sources (SOURCE_TINT), client states
+   elsewhere: kanban columns (CONTENT_TINT), priority levels (PRIORITY_TINT), client states
    (CLIENT_TINT). Tabs no longer use them for identity — every module accent is now `accent`. */
 const C = {
   canvas: "#08080A", frame: "#08080A",
@@ -578,6 +578,22 @@ out = { ...out, musicContent: { ...out.musicContent, cadence: out.musicContent.c
   }
   return out;
 }
+/* Mama admin tasks, one-way fold-forward on every load (local AND the Firestore reconcile path, so
+   a second device that still has the old shape gets cleaned too rather than syncing it back):
+     - `source` / `link` are dropped outright. Sources were retired 3 Aug 2026 and the single-link
+       field was superseded by the `links` array long before that (folded in at the call site).
+     - `status: "Doing"` collapses to "To do". The Doing column is gone; the board's columns are
+       priority levels now, so an in-between working state has nowhere to live and would otherwise
+       leave those tasks invisible.
+   Idempotent — a task already in the new shape is returned by identity so this can run every load. */
+function migrateMamaTasks(tasks) {
+  return (tasks || []).map((t) => {
+    const stale = t.source !== undefined || t.link !== undefined || t.status === "Doing";
+    if (!stale) return t;
+    const { source, link, ...rest } = t;
+    return { ...rest, status: t.status === "Doing" ? "To do" : t.status };
+  });
+}
 const DEAL_STAGES = ["Brief", "Script", "Script approval", "Film", "Edit", "Final approval", "Posted"];
 /* Reel production stages. Each carries its own per-stage deadline (deal.stageDue[key]); the
    current stage (deal.stage) is what surfaces in the Priorities hub, titled by `hub`. When the
@@ -596,17 +612,32 @@ const dealHeadlineDue = (x) => ((x.piece || "Reel") === "Story")
   : (((x.stageDue || {})[x.stage || "script"]) || "");
 const CLIENT_STATUSES = ["Lead", "Active", "Paused"];
 const MIX_ROUTES = ["Fiverr", "Crighton", "Cassidy's boyfriend", "DIY"];
-const SOURCES = ["Discord", "Basecamp", "Email", "Sheets", "Meeting", "Self"];
-const SOURCE_TINT = { Discord: C.lilac, Basecamp: C.amber, Email: C.sky, Sheets: C.mint, Meeting: C.pink, Self: C.peach };
-/* Done is an outcome, not a working column. Ticking the checkbox completes a task immediately,
-   while the board itself stays focused on the two useful working states. */
-const TASK_COLS = ["To do", "Doing"];
+/* Admin tasks used to be categorised by where they came in from (Discord / Basecamp / Email /
+   Sheets / Meeting / Self) — a coloured pill on every card plus an "open tasks by source" bar
+   chart. Owner's call 3 Aug 2026: the channel a task arrived through never changed what he did
+   about it, so the whole dimension is gone (field stripped from stored tasks by migrateMamaTasks).
+   What actually matters is priority, so that is what the board is organised by now.
+
+   Done is an outcome, not a working column, and "Doing" was never really used either — ticking the
+   checkbox completes a task immediately, and the board's columns are the priority levels instead.
+   `status` survives as "To do" | "Done" only, because the dashboard, auto-clean and
+   completePriorityTask all key off it. */
+const ADMIN_TASK_COLS = ["High", "Medium", "Low", "None"];
+const ADMIN_COL_LABEL = { High: "High", Medium: "Medium", Low: "Low", None: "Non-priority" };
 const PRIORITY_PILLARS = ["mama", "content", "music", "lifeAdmin"]; // "deals" pulled for now — re-add here to bring its priority card back
 
 /* ---------- priority engine: shared urgency scoring across all 6 pillars ---------- */
 const PRIORITY_LEVELS = ["Low", "Medium", "High"];
 const PRIORITY_WEIGHT = { Low: 1, Medium: 2, High: 3 };
 const PRIORITY_TINT = { Low: C.sky, Medium: C.amber, High: C.rose };
+/* "None" isn't a priority level — it's the absence of one, so it stays out of PRIORITY_LEVELS (which
+   drives the L/M/H buttons) and only exists as a board column / summary bucket. A task lands there
+   either by being paused (the explicit "not a live priority yet" state PriorityControls already had)
+   or by simply having no priority value stored at all. */
+/* hex, not MUT's rgba() — these tints get an alpha suffix appended (`${tint}14`) for the soft tile
+   backgrounds, which only works on 6-digit hex. A neutral grey keeps Non-priority visually quiet. */
+const ADMIN_COL_TINT = { ...PRIORITY_TINT, None: "#8A8A93" };
+const adminTaskBucket = (t) => (t.paused || !PRIORITY_LEVELS.includes(t.priority) ? "None" : t.priority);
 
 /* single source of truth for "how urgent is this due date" — one set of day bands, reused
    for the Urgent/Medium/Low bucket (the 3 columns on each pillar's card, and sort order within
@@ -1787,6 +1818,7 @@ function AllyCRM() {
          pattern as Creators' Links section) so this folds any old single link into that array
          once, the first time this loads after the change. */
       m = { ...m, tasks: (m.tasks || []).map((t) => t.links !== undefined ? t : { ...t, links: t.link ? [{ id: uid(), url: t.link, label: t.link.replace(/^https?:\/\//, "").slice(0, 30) }] : [] }) };
+      m = { ...m, tasks: migrateMamaTasks(m.tasks) };
       setAlly(a); setMama(m); loaded.current = true; setLocalLoaded(true);
     })();
   }, []);
@@ -2155,7 +2187,7 @@ function AllyCRM() {
         const snap = await docRef.get();
         const remote = snap.exists ? snap.data() : null;
         if (remote && remote.ally && remote.mama) {
-          setAlly(migrateAlly(remote.ally)); setMama(remote.mama);
+          setAlly(migrateAlly(remote.ally)); setMama({ ...remote.mama, tasks: migrateMamaTasks(remote.mama.tasks) });
         } else {
           await docRef.set({ ally: allyRef.current, mama: mamaRef.current, updatedAt: Date.now() });
         }
@@ -4721,34 +4753,93 @@ function CreatorDetailPage({ c, onUpdate, onRemove }) {
 
 /* ---- tasks ---- */
 function AdminTasks({ data, setData }) {
-  const [title, setTitle] = useState(""); const [description, setDescription] = useState(""); const [source, setSource] = useState("Discord"); const [link, setLink] = useState(""); const [due, setDue] = useState("");
+  const [title, setTitle] = useState(""); const [description, setDescription] = useState(""); const [due, setDue] = useState("");
+  /* staged links: built up BEFORE the task is saved, so one capture can carry the Basecamp thread,
+     the brief and the reference doc all at once instead of one URL and then a round of editing.
+     Each entry gets its own label, defaulting to the bare domain/path if you can't be bothered. */
+  const [draftLinks, setDraftLinks] = useState([]);
+  const [linkLabel, setLinkLabel] = useState(""); const [linkUrl, setLinkUrl] = useState("");
+  const addDraftLink = () => {
+    const raw = linkUrl.trim(); if (!raw) return;
+    const url = raw.startsWith("http") ? raw : `https://${raw}`;
+    setDraftLinks((ls) => [...ls, { id: uid(), url, label: linkLabel.trim() || raw.replace(/^https?:\/\//, "").slice(0, 30) }]);
+    setLinkLabel(""); setLinkUrl("");
+  };
+  const removeDraftLink = (id) => setDraftLinks((ls) => ls.filter((l) => l.id !== id));
   const add = () => {
     const t = title.trim(); if (!t) return;
-    const raw = link.trim();
-    const links = raw ? [{ id: uid(), url: raw.startsWith("http") ? raw : `https://${raw}`, label: raw.replace(/^https?:\/\//, "").slice(0, 30) }] : [];
+    /* a URL still sitting in the input when you hit Capture counts — no silent loss for forgetting
+       to press Enter/+ on the last one. */
+    const trailing = linkUrl.trim();
+    const links = trailing
+      ? [...draftLinks, { id: uid(), url: trailing.startsWith("http") ? trailing : `https://${trailing}`, label: linkLabel.trim() || trailing.replace(/^https?:\/\//, "").slice(0, 30) }]
+      : draftLinks;
     const taskDue = due || defaultTaskDue();
-    setData((d) => ({ ...d, tasks: [{ id: uid(), title: t, description: description.trim(), source, links, status: "To do", created: new Date().toISOString().slice(0, 10), due: taskDue, priority: priorityForNewTask(taskDue), lastProgress: null }, ...d.tasks] }));
-    setTitle(""); setDescription(""); setLink(""); setDue("");
+    setData((d) => ({ ...d, tasks: [{ id: uid(), title: t, description: description.trim(), links, status: "To do", created: new Date().toISOString().slice(0, 10), due: taskDue, priority: priorityForNewTask(taskDue), lastProgress: null }, ...d.tasks] }));
+    setTitle(""); setDescription(""); setDue(""); setDraftLinks([]); setLinkLabel(""); setLinkUrl("");
   };
-  const advance = (id) => setData((d) => ({ ...d, tasks: d.tasks.map((t) => { if (t.id !== id) return t; const status = TASK_COLS[Math.min(TASK_COLS.indexOf(t.status) + 1, TASK_COLS.length - 1)]; return { ...t, status, doneAt: null }; }) }));
-  const back = (id) => setData((d) => ({ ...d, tasks: d.tasks.map((t) => { if (t.id !== id) return t; const status = TASK_COLS[Math.max(TASK_COLS.indexOf(t.status) - 1, 0)]; return { ...t, status, doneAt: null }; }) }));
-  const moveToColumn = (id, status) => setData((d) => ({ ...d, tasks: d.tasks.map((t) => (t.id === id ? { ...t, status, doneAt: null } : t)) }));
+  /* drag/drop now sets PRIORITY, not status — the columns are the priority levels.
+     A due date normally drives priority continuously (PriorityControls' dateTarget effect), so a
+     manual drag that disagrees with the date would be snapped straight back on the next render.
+     Hence: dropping into a column that contradicts the stored due date clears that date, handing
+     manual control back — exactly what clicking an L/M/H button already does in that situation.
+     Dropping into a column that agrees with the date leaves the date alone.
+     Non-priority = `paused`, the existing "on the board but not a live priority" state, which also
+     drops it off the Priorities dashboard (collectPriorityTasks skips paused). */
+  const moveToColumn = (id, col) => setData((d) => ({ ...d, tasks: d.tasks.map((t) => {
+    if (t.id !== id) return t;
+    if (col === "None") return { ...t, paused: true, due: null };
+    const dateTarget = t.due && !t.paused ? priorityFromDueDate(daysUntil(t.due)) : null;
+    const clearsDue = dateTarget && dateTarget !== col;
+    return { ...t, priority: col, paused: false, ...(clearsDue ? { due: null } : {}) };
+  }) }));
   const update = (id, p) => setData((d) => ({ ...d, tasks: d.tasks.map((t) => (t.id === id ? { ...t, ...p } : t)) }));
   const remove = (id) => setData((d) => ({ ...d, tasks: d.tasks.filter((t) => t.id !== id) }));
-  const clearDone = () => setData((d) => ({ ...d, tasks: d.tasks.filter((t) => t.status !== "Done") }));
-  const bars = SOURCES.map((s) => ({ label: s.slice(0, 4), value: data.tasks.filter((t) => t.source === s && t.status !== "Done").length, color: SOURCE_TINT[s] }));
+  const openTasks = data.tasks.filter((t) => t.status !== "Done");
+  const counts = ADMIN_TASK_COLS.reduce((acc, c) => ({ ...acc, [c]: openTasks.filter((t) => adminTaskBucket(t) === c).length }), {});
   return (
     <section>
-      <SectionHead title="Admin task capture" sub="One place for the strays: Discord pings, Basecamp tags, email asks. Tap a card to move it forward. Tasks tied to a specific creator live on their own subtab instead." />
-      {data.tasks.some((t) => t.status !== "Done") && (
-        <div className="rounded-2xl p-4 mb-5" style={{ ...card, borderRadius: 18 }}><div style={{ fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase", color: MUT, marginBottom: 6 }}>Open tasks by source 📥</div><Bars data={bars} height={110} /></div>
-      )}
+      <SectionHead title="Admin task capture" sub="One place for the strays. Cards are grouped by priority — drag one to a different column to re-rank it. Tasks tied to a specific creator live on their own subtab instead." />
+      {/* live rollup, replaces the old by-source bar chart: what is actually sitting in each priority
+          right now. Recomputed from `openTasks` every render, so it can never drift from the board. */}
+      <div className="rounded-2xl p-4 mb-5" style={{ ...card, borderRadius: 18 }}>
+        <div className="flex items-baseline justify-between mb-3">
+          <div style={{ fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase", color: MUT }}>Open tasks by priority</div>
+          <div style={{ fontSize: 12, color: MUT }}>{openTasks.length} open</div>
+        </div>
+        <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))" }}>
+          {ADMIN_TASK_COLS.map((c) => {
+            const tint = ADMIN_COL_TINT[c];
+            const n = counts[c];
+            return (
+              <div key={c} className="rounded-xl px-3 py-2.5" style={{ background: n ? `${tint}14` : FILL, border: `1px solid ${n ? tint : LINE}`, borderRadius: 14 }}>
+                <div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 28, lineHeight: 1, color: n ? tint : FAINT }}>{n}</div>
+                <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: MUT, marginTop: 5 }}>{ADMIN_COL_LABEL[c]}</div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
       <div className="rounded-2xl p-4 mb-6" style={{ ...card, borderRadius: 16 }}>
-        <div className="flex gap-2 flex-wrap mb-3">{SOURCES.map((s) => (<button key={s} onClick={() => setSource(s)} className="rounded-full px-3 py-1" style={{ fontSize: 12, cursor: "pointer", fontFamily: "inherit", background: source === s ? `${SOURCE_TINT[s]}22` : FILL, border: `1px solid ${source === s ? SOURCE_TINT[s] : LINE}`, color: source === s ? SOURCE_TINT[s] : MUT }}>{s}</button>))}</div>
         <div className="flex gap-2 flex-wrap mb-2">
-          <input value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} placeholder={`What came in via ${source}?`} className="flex-1 rounded-lg px-3 py-2" style={{ ...inputStyle, minWidth: 200 }} />
-          <input value={link} onChange={(e) => setLink(e.target.value)} placeholder="Link (optional)" className="rounded-lg px-3 py-2" style={{ ...inputStyle, width: 160 }} />
+          <input value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} placeholder="What came in?" className="flex-1 rounded-lg px-3 py-2" style={{ ...inputStyle, minWidth: 200 }} />
           <input type="date" value={due} onChange={(e) => setDue(e.target.value)} className="rounded-lg px-3 py-2" style={{ ...inputStyle, width: 150 }} aria-label="Due date (optional)" title="Due date (optional) — auto-sets the priority" />
+        </div>
+        {draftLinks.length > 0 && (
+          <div className="flex gap-1.5 flex-wrap mb-2">
+            {draftLinks.map((l) => (
+              <span key={l.id} className="rounded-full px-2.5 py-1 flex items-center gap-1.5" style={{ background: FILL, border: `1px solid ${LINE}`, fontSize: 11.5 }}>
+                <ExternalLink size={10} color={C.sky} />
+                <span style={{ color: C.sky }}>{l.label}</span>
+                <button onClick={() => removeDraftLink(l.id)} style={{ ...iconBtn, padding: 0 }} aria-label={`Remove ${l.label}`} title="Remove link"><X size={10} /></button>
+              </span>
+            ))}
+          </div>
+        )}
+        <div className="flex gap-2 flex-wrap mb-2">
+          <input value={linkLabel} onChange={(e) => setLinkLabel(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addDraftLink()} placeholder="Link name" className="rounded-lg px-3 py-2" style={{ ...inputStyle, width: 130 }} aria-label="Link name" />
+          <input value={linkUrl} onChange={(e) => setLinkUrl(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addDraftLink()} placeholder="URL (optional) — Enter or + to add another" className="flex-1 rounded-lg px-3 py-2" style={{ ...inputStyle, minWidth: 180 }} aria-label="Link URL" />
+          <button onClick={addDraftLink} disabled={!linkUrl.trim()} style={{ ...pillGhost, padding: "8px 14px", opacity: linkUrl.trim() ? 1 : 0.4, cursor: linkUrl.trim() ? "pointer" : "not-allowed" }} title="Add this link and clear the fields for the next one"><Plus size={14} /></button>
         </div>
         <div className="flex gap-2 flex-wrap items-start">
           <GrowingTextarea value={description} onChange={setDescription} placeholder="Description (optional) — what to actually do. Keeps the title short." rows={2} className="flex-1 rounded-lg px-3 py-2" style={{ ...inputStyle, minWidth: 200, lineHeight: 1.45 }} />
@@ -4757,13 +4848,14 @@ function AdminTasks({ data, setData }) {
       </div>
       <div style={{ borderTop: `1px solid ${LINE}`, margin: "-2px 0 20px" }} />
       <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
-        {TASK_COLS.map((col) => {
-          const items = data.tasks.filter((t) => t.status === col);
+        {ADMIN_TASK_COLS.map((col) => {
+          const items = openTasks.filter((t) => adminTaskBucket(t) === col);
+          const tint = ADMIN_COL_TINT[col];
           return (
             <div key={col} className="rounded-2xl p-3" onDragOver={(e) => { if (!Array.from(e.dataTransfer.types).includes(ADMIN_TASK_MIME)) return; e.preventDefault(); e.dataTransfer.dropEffect = "move"; }} onDrop={(e) => { e.preventDefault(); const id = e.dataTransfer.getData(ADMIN_TASK_MIME); if (id) moveToColumn(id, col); }} style={{ ...cardSoft, borderRadius: 16 }}>
-              <div className="flex items-center justify-between mb-3 px-1"><span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 600, fontSize: 12, letterSpacing: "0.04em", textTransform: "uppercase" }}>{col}</span><span style={{ fontSize: 12, color: MUT }}>{items.length}</span></div>
+              <div className="flex items-center justify-between mb-3 px-1"><span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 600, fontSize: 12, letterSpacing: "0.04em", textTransform: "uppercase", color: tint }}>{ADMIN_COL_LABEL[col]}</span><span style={{ fontSize: 12, color: MUT }}>{items.length}</span></div>
               <div className="flex flex-col gap-2">
-                {items.map((t) => <TaskCard key={t.id} t={t} col={col} onUpdate={(p) => update(t.id, p)} onAdvance={() => advance(t.id)} onBack={() => back(t.id)} onRemove={() => remove(t.id)} />)}
+                {items.map((t) => <TaskCard key={t.id} t={t} onUpdate={(p) => update(t.id, p)} onRemove={() => remove(t.id)} />)}
                 {items.length === 0 && <div className="rounded-xl p-3 text-center" style={{ border: `1px dashed ${LINE}`, fontSize: 12, color: FAINT, borderRadius: 12 }}>Empty</div>}
               </div>
             </div>
@@ -4774,26 +4866,27 @@ function AdminTasks({ data, setData }) {
   );
 }
 
-/* single admin task card: source has a pencil-toggle edit mode so a mis-logged channel can be
-   corrected after the fact without retyping the whole card. Links are separate — a persistent,
-   always-addable list (same pattern as Creators' Links section) rather than a single field, so you
-   can keep attaching new URLs to a task well after it was first captured, none overwriting the
-     last. No creator tagging here anymore — a task tied to a specific creator belongs on
-       that creator's own card instead. Description used to always stay fully visible here (the
-   one place in the CRM where it never collapsed) — now it expands/collapses on card click same as
-   everywhere else, via its own lifted open state. */
-function TaskCard({ t, col, onUpdate, onAdvance, onBack, onRemove }) {
-  const [editing, setEditing] = useState(false);
+/* single admin task card. Links are a persistent, always-addable labelled list (same pattern as
+   Creators' Links section and the capture form above) rather than a single field, so you can keep
+   attaching new URLs to a task well after it was first captured, none overwriting the last. No
+   creator tagging here anymore — a task tied to a specific creator belongs on that creator's own
+   card instead, and no source pill either (see ADMIN_TASK_COLS). Description used to always stay
+   fully visible here (the one place in the CRM where it never collapsed) — now it expands/collapses
+   on card click same as everywhere else, via its own lifted open state.
+   `col` and the ←/→ column arrows are gone with the Doing column: the card's own PriorityControls
+   already move it between the priority columns, and dragging does the same thing. */
+function TaskCard({ t, onUpdate, onRemove }) {
   const [descOpen, setDescOpen] = useState(true);
   const [linkDraft, setLinkDraft] = useState("");
-  const tint = SOURCE_TINT[t.source] || C.lilac;
+  const [labelDraft, setLabelDraft] = useState("");
+  const tint = ADMIN_COL_TINT[adminTaskBucket(t)];
   const done = t.status === "Done";
   const links = t.links || [];
   const addLink = () => {
     const raw = linkDraft.trim(); if (!raw) return;
     const url = raw.startsWith("http") ? raw : `https://${raw}`;
-    onUpdate({ links: [...links, { id: uid(), url, label: url.replace(/^https?:\/\//, "").slice(0, 30) }] });
-    setLinkDraft("");
+    onUpdate({ links: [...links, { id: uid(), url, label: labelDraft.trim() || url.replace(/^https?:\/\//, "").slice(0, 30) }] });
+    setLinkDraft(""); setLabelDraft("");
   };
   const removeLink = (id) => onUpdate({ links: links.filter((l) => l.id !== id) });
   /* same round checkbox as MiniTaskRow/Life Admin — jumps straight to Done (skipping "Doing") so
@@ -4809,22 +4902,11 @@ function TaskCard({ t, col, onUpdate, onAdvance, onBack, onRemove }) {
         <div className="flex-1 min-w-0" style={{ fontSize: 13.5, textDecoration: done ? "line-through" : "none", opacity: done ? 0.55 : 1 }}><InlineEdit value={t.title} onChange={(v) => onUpdate({ title: v })} bubbleClicks /></div>
       </div>
       <div style={{ fontSize: 11.5, color: MUT, marginTop: 2 }}><InlineEditArea value={t.description || ""} onChange={(v) => onUpdate({ description: v })} placeholder="Add a description…" open={descOpen} onToggle={() => setDescOpen((v) => !v)} /></div>
-      {!editing ? (
-        <div className="flex items-center gap-2 mt-2 flex-wrap" style={{ fontSize: 11, color: MUT }}>
-          <span style={{ color: tint }}>{t.source}</span>
-          <span className="ml-auto flex gap-1">
-            <button onClick={(e) => { e.stopPropagation(); setEditing(true); }} style={iconBtn} aria-label="Edit source" title="Edit source">✎</button>
-            {col !== "To do" && <button onClick={(e) => { e.stopPropagation(); onBack(); }} style={iconBtn} aria-label="Back">←</button>}
-            {col === "To do" && <button onClick={(e) => { e.stopPropagation(); onAdvance(); }} style={{ ...iconBtn, color: C.mint }} aria-label="Move to Doing">→</button>}
-            <button onClick={(e) => { e.stopPropagation(); onRemove(); }} style={iconBtn} aria-label="Delete"><X size={12} /></button>
-          </span>
-        </div>
-      ) : (
-        <div className="mt-2 flex flex-col gap-2" style={{ fontSize: 11 }}>
-          <div className="flex gap-1 flex-wrap">{SOURCES.map((s) => (<button key={s} onClick={(e) => { e.stopPropagation(); onUpdate({ source: s }); }} className="rounded-full px-2.5 py-0.5" style={{ fontSize: 11, cursor: "pointer", fontFamily: "inherit", background: t.source === s ? `${SOURCE_TINT[s]}22` : FILL, border: `1px solid ${t.source === s ? SOURCE_TINT[s] : LINE}`, color: t.source === s ? SOURCE_TINT[s] : MUT }}>{s}</button>))}</div>
-          <button onClick={(e) => { e.stopPropagation(); setEditing(false); }} className="self-end" style={{ ...iconBtn, fontSize: 11 }}>Done</button>
-        </div>
-      )}
+      <div className="flex items-center gap-2 mt-1" style={{ fontSize: 11, color: MUT }}>
+        <span className="ml-auto flex gap-1">
+          <button onClick={(e) => { e.stopPropagation(); onRemove(); }} style={iconBtn} aria-label="Delete"><X size={12} /></button>
+        </span>
+      </div>
       {links.length > 0 && (
         <div onClick={(e) => e.stopPropagation()} className="flex gap-1.5 flex-wrap mt-1.5">
           {links.map((l) => (
@@ -4836,8 +4918,9 @@ function TaskCard({ t, col, onUpdate, onAdvance, onBack, onRemove }) {
         </div>
       )}
       <div onClick={(e) => e.stopPropagation()} className="flex gap-1.5 mt-1.5">
-        <input value={linkDraft} onChange={(e) => setLinkDraft(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addLink()} placeholder="Add a URL…" className="flex-1 rounded-lg px-2 py-1" style={{ ...inputStyle, fontSize: 10.5 }} />
-        <button onClick={addLink} style={{ ...iconBtn, fontSize: 10.5, background: FILL, border: `1px solid ${LINE}`, borderRadius: 6, padding: "3px 9px" }}>Add</button>
+        <input value={labelDraft} onChange={(e) => setLabelDraft(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addLink()} placeholder="Name" className="rounded-lg px-2 py-1" style={{ ...inputStyle, fontSize: 10.5, width: 68 }} aria-label="Link name" />
+        <input value={linkDraft} onChange={(e) => setLinkDraft(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addLink()} placeholder="Add a URL…" className="flex-1 rounded-lg px-2 py-1" style={{ ...inputStyle, fontSize: 10.5, minWidth: 60 }} aria-label="Link URL" />
+        <button onClick={addLink} style={{ ...iconBtn, fontSize: 10.5, background: FILL, border: `1px solid ${LINE}`, borderRadius: 6, padding: "3px 9px" }} title="Add link">+</button>
       </div>
       {!done && <PriorityControls item={t} onChange={onUpdate} />}
     </div>
