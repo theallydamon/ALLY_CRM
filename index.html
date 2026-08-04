@@ -1414,7 +1414,11 @@ function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, onDeleteEven
     const onMove = (e) => {
       const st = resizeRef.current;
       if (!st) return;
-      const deltaSlots = Math.round((e.clientY - st.originY) / ROW_H);
+      /* The moment the pointer enters the next half hour, the block owns that slot. Rounding made
+         an edge drag wait until the pointer crossed half the row, which felt like the block was not
+         extending over the slot being dragged across. */
+      const deltaY = e.clientY - st.originY;
+      const deltaSlots = deltaY >= 0 ? Math.ceil(deltaY / ROW_H) : Math.floor(deltaY / ROW_H);
       const endMin = Math.min(DAY_END_MIN, Math.max(st.startMin + SLOT_MIN, st.originEndMin + deltaSlots * SLOT_MIN));
       /* written straight onto the ref as well as into state: the release handler reads the ref, and
          relying on a follow-up effect to copy it across was a race waiting to happen */
@@ -1668,7 +1672,7 @@ function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, onDeleteEven
                 return (
                   <div key={e.id} className="dayevent"
                     title={`${e.title}\n${minToLabel(Math.max(e.sMin, DAY_START_MIN))} – ${minToLabel(Math.min(shownEnd, DAY_END_MIN))}\n${e.calName}${mine ? "\nClick to open task · drag to move · drag the bottom edge to lengthen · × to unschedule" : ""}`}
-                    draggable={mine}
+                    draggable={mine && !isResizing}
                     onDragStart={mine ? (ev) => {
                       /* refuse the move drag if this gesture began on the resize handle — otherwise
                          the edge-drag runs a resize AND a move at once, which is what produced the
@@ -1739,10 +1743,13 @@ function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, onDeleteEven
                             ev.stopPropagation(); ev.preventDefault();
                             /* set BEFORE any dragstart can fire, so the ancestor's move drag is refused */
                             dragBlockedRef.current = true;
+                            /* Capture the pointer on the handle so a fast edge drag cannot be handed
+                               to the draggable event beneath it. */
+                            if (ev.currentTarget.setPointerCapture) ev.currentTarget.setPointerCapture(ev.pointerId);
                             resizeRef.current = { taskId, day, originY: ev.clientY, startMin: e.sMin, originEndMin: e.eMin, latestEnd: e.eMin };
                             setResizing({ taskId, dayIndex: ci, startMin: e.sMin, endMin: e.eMin });
                           }}
-                          style={{ position: "absolute", left: 0, right: 0, bottom: -3, height: 7, cursor: "ns-resize" }}>
+                          style={{ position: "absolute", left: 0, right: 0, bottom: -5, height: 12, cursor: "ns-resize", touchAction: "none" }}>
                           <div style={{ position: "absolute", left: "50%", transform: "translateX(-50%)", bottom: 2, width: 16, height: 2, borderRadius: 2, background: isResizing ? C.mint : t.bar, opacity: isResizing ? 1 : 0.65 }} />
                         </div>}
                       </>
