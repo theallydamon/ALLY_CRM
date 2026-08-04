@@ -512,7 +512,9 @@ function migrateAlly(a) {
   if (!a) return a;
   let out = a;
   if (out.content && Array.isArray(out.content.items)) {
-    out = { ...out, content: { ...out.content, items: out.content.items.map((i) => ({ ...(CONTENT_STATUS_MIGRATE[i.status] ? { ...i, status: CONTENT_STATUS_MIGRATE[i.status] } : i), scheduledFor: i.scheduledFor !== undefined ? i.scheduledFor : null })) } };
+    /* REPOST was an obsolete placeholder rather than a real content idea. Remove it during
+       migration as well as from fresh data, so it cannot return from an older local or cloud save. */
+    out = { ...out, content: { ...out.content, items: out.content.items.filter((i) => !/^repost$/i.test((i.title || "").trim())).map((i) => ({ ...(CONTENT_STATUS_MIGRATE[i.status] ? { ...i, status: CONTENT_STATUS_MIGRATE[i.status] } : i), scheduledFor: i.scheduledFor !== undefined ? i.scheduledFor : null })) } };
   }
   /* Anchor moved from one running text box to a per-day diary (entries keyed by ISO date, one
      string each). Fold any old single `idea` string in once, landing it on today's date so nothing
@@ -785,7 +787,7 @@ pushContentTasks(ally.musicContent.items, "music", computeContentUrgency(ally.mu
 (ally.lifeAdmin.items || []).filter((t) => t.status !== "Done" && !t.paused).forEach((t) => out.push({
     id: t.id, pillar: "lifeAdmin", title: t.title, due: t.due || null,
     priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
-    sourceType: "lifeAdmin", navTab: "overview", navSub: "lifeAdmin", navOpenId: null, chaseOn: t.chaseOn || null,
+    sourceType: "lifeAdmin", navTab: "lifeAdmin", navSub: null, navOpenId: null, chaseOn: t.chaseOn || null,
   }));
   /* waiting on someone else: any task can be parked with a chase-by date (the ⏳ waiting button in
      PriorityControls). Until that date it drops off the dashboard completely — you're not the
@@ -1359,7 +1361,7 @@ function packLanes(items) {
 
 const MOVE_MIME = "application/x-ally-move";
 
-function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, onDeleteEvent, syncTick, schedule }) {
+function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, onDeleteEvent, onOpenTask, syncTick, schedule }) {
   const { connected, calFetch, calendars } = cal;
   const [dropTarget, setDropTarget] = useState(null);   // "dayIndex:slotIndex" being hovered
   const [dropping, setDropping] = useState(null);       // same, while the event is being created
@@ -1650,19 +1652,22 @@ function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, onDeleteEven
                 const top = topOf(e.sMin);
                 const h = Math.max(ROW_H - 2, topOf(e.eMin) - top - 1);
                 const w = 100 / laneCount;
-                const t = eventTint(e.calId, e.writable);
                 const taskId = ownTaskId(e);                      // non-null => this app created it
                 /* an orphan: we made it (its description says so) but the link back is gone. Removable, but
                    not movable or resizable, since there is no CRM record to keep in step. */
-                const orphan = !taskId && /Scheduled from ALLY CRM/i.test(e.desc || "");
+                /* Leat Brief is a legacy CRM block whose old event was saved before the task marker
+                   existed. It is safe to expose the same remove control for this exact orphan. */
+                const orphan = !taskId && (/Scheduled from ALLY CRM/i.test(e.desc || "") || /^leat brief$/i.test((e.title || "").trim()));
                 const mine = !!taskId;                            // and only ours are editable here
+                const completed = mine && !!((schedule || {})[taskId] || {}).completed;
+                const t = completed ? { fill: "rgba(47,163,124,0.30)", line: "rgba(47,163,124,0.82)", bar: C.mint } : eventTint(e.calId, e.writable);
                 const isResizing = resizing && resizing.taskId === taskId && resizing.dayIndex === ci;
                 const shownEnd = isResizing ? resizing.endMin : e.eMin;
                 const hh = Math.max(ROW_H - 2, topOf(shownEnd) - top - 1);
                 const writing = busyEvent === taskId;
                 return (
                   <div key={e.id} className="dayevent"
-                    title={`${e.title}\n${minToLabel(Math.max(e.sMin, DAY_START_MIN))} – ${minToLabel(Math.min(shownEnd, DAY_END_MIN))}\n${e.calName}${mine ? "\nDrag to move · drag the bottom edge to lengthen · × to unschedule" : ""}`}
+                    title={`${e.title}\n${minToLabel(Math.max(e.sMin, DAY_START_MIN))} – ${minToLabel(Math.min(shownEnd, DAY_END_MIN))}\n${e.calName}${mine ? "\nClick to open task · drag to move · drag the bottom edge to lengthen · × to unschedule" : ""}`}
                     draggable={mine}
                     onDragStart={mine ? (ev) => {
                       /* refuse the move drag if this gesture began on the resize handle — otherwise
@@ -1671,6 +1676,11 @@ function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, onDeleteEven
                       if (dragBlockedRef.current) { ev.preventDefault(); return; }
                       ev.dataTransfer.setData(MOVE_MIME, JSON.stringify({ taskId }));
                       ev.dataTransfer.effectAllowed = "move";
+                    } : undefined}
+                    onClick={mine ? (ev) => {
+                      if (dragBlockedRef.current || resizing) return;
+                      ev.stopPropagation();
+                      onOpenTask && onOpenTask(taskId);
                     } : undefined}
                     style={{ position: "absolute", top, height: hh, left: `calc(${e.lane * w}% + 2px)`, width: `calc(${w}% - 4px)`,
                       borderRadius: 5, padding: "1px 4px", overflow: "visible",
@@ -2069,6 +2079,39 @@ function AllyCRM() {
       syncingRef.current = false;
     }
   }, [cal.connected, cal.calFetch, ally && ally.schedule]);
+
+  /* A CRM completion is also a calendar completion. Patch the existing event in place so its time,
+     link, and event id stay intact. The local completed flag lets the grid turn green immediately
+     after Google confirms, including when the task was completed from a non dashboard surface. */
+  const completionSyncRef = useRef(false);
+  useEffect(() => {
+    if (!cal.connected || !ally || !mama || completionSyncRef.current) return;
+    const doneIds = completedScheduledTaskIds(ally, mama);
+    const changes = Object.entries(ally.schedule || {}).filter(([id, slot]) => slot && slot.eventId && !!slot.completed !== doneIds.has(id));
+    if (!changes.length) return;
+    completionSyncRef.current = true;
+    (async () => {
+      const confirmed = [];
+      await Promise.all(changes.map(async ([id, slot]) => {
+        const completed = doneIds.has(id);
+        const response = await cal.calFetch(`/calendars/${encodeURIComponent(slot.calendarId || "primary")}/events/${encodeURIComponent(slot.eventId)}`, {
+          method: "PATCH",
+          body: JSON.stringify({ colorId: completed ? "10" : "9" }),
+        });
+        if (response.ok) confirmed.push([id, completed]);
+      }));
+      if (confirmed.length) {
+        setAlly((current) => {
+          const schedule = { ...(current.schedule || {}) };
+          confirmed.forEach(([id, completed]) => {
+            if (schedule[id]) schedule[id] = { ...schedule[id], completed };
+          });
+          return { ...current, schedule };
+        });
+      }
+      completionSyncRef.current = false;
+    })();
+  }, [ally, mama, cal.connected, cal.calFetch]);
 
   /* syncTick drives both the reconcile above and the day grid's own refetch, so the chips and the
      grid never disagree about what Google currently says. */
@@ -2958,7 +3001,7 @@ function CalendarChip({ cal, crmEmail }) {
 function PersonalModule({ ally, mama, setAlly, setMama, go, q, navRequest, navigateToTask, completeTask, cal, onSchedule, onMove, onResize, onUnschedule, onDeleteEvent, syncTick }) {
   return (
     <section style={{ width: "100%", margin: 0, textAlign: "left" }}>
-      {cal && <DayGrid cal={cal} onSchedule={onSchedule} onMove={onMove} onResize={onResize} onUnschedule={onUnschedule} onDeleteEvent={onDeleteEvent} syncTick={syncTick} schedule={ally.schedule || {}} />}
+      {cal && <DayGrid cal={cal} onSchedule={onSchedule} onMove={onMove} onResize={onResize} onUnschedule={onUnschedule} onDeleteEvent={onDeleteEvent} onOpenTask={(id) => navigateToTask(collectPriorityTasks(ally, mama).find((task) => task.id === id))} syncTick={syncTick} schedule={ally.schedule || {}} />}
       <PriorityDashboard ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} navigateToTask={navigateToTask} completeTask={completeTask} schedule={currentSchedule(ally.schedule)} />
     </section>
   );
@@ -3063,6 +3106,23 @@ function currentSchedule(schedule) {
     if (new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() >= todayStart) out[id] = s;
   });
   return out;
+}
+
+/* Calendar blocks belong to many different task stores. Keep the completion test in one place so
+   a completed task always changes its matching calendar event to green, regardless of where it was
+   checked off. */
+function completedScheduledTaskIds(ally, mama) {
+  const done = new Set();
+  (ally.lifeAdmin.items || []).forEach((t) => { if (t.status === "Done") done.add(t.id); });
+  (ally.deals.deals || []).forEach((d) => {
+    if (d.stage === "done") done.add(d.id);
+    (d.tasks || []).forEach((t) => { if (t.done) done.add(t.id); });
+  });
+  (ally.deals.clients || []).forEach((c) => (c.tasks || []).forEach((t) => { if (t.done) done.add(t.id); }));
+  [ally.content, ally.brandContent, ally.musicContent].forEach((pipeline) => (pipeline && pipeline.items || []).forEach((i) => { if (i.status === "Posted") done.add(i.id); }));
+  (mama.tasks || []).forEach((t) => { if (t.status === "Done") done.add(t.id); });
+  (mama.creators || []).forEach((creator) => (creator.tasks || []).forEach((t) => { if (t.done) done.add(t.id); }));
+  return done;
 }
 
 const SCHED_MIME = "application/x-ally-schedule";
@@ -3830,7 +3890,7 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
                   /* description defaults to open (full height) the moment it has content, so an
                      idea with a pasted paragraph always shows the whole thing without a click —
                      openDesc only overrides that once you've explicitly toggled it yourself. */
-                  const descOpen = openDesc[i.id] !== undefined ? openDesc[i.id] : !!i.desc;
+                  const descOpen = openDesc[i.id] !== undefined ? openDesc[i.id] : false;
                   const toggleDesc = () => { if (hasTextSelection()) return; setOpenDesc((o) => ({ ...o, [i.id]: !descOpen })); };
                   return (
                   <div key={i.id} data-nav-id={i.id} draggable onDragStart={(e) => { e.dataTransfer.setData("text/plain", i.id); e.dataTransfer.effectAllowed = "move"; }} onClick={toggleDesc} className="rounded-lg" style={{ cursor: "pointer", background: "rgba(255,255,255,0.035)", border: `1px solid ${LINE}`, borderLeft: `2px solid ${CONTENT_TINT[col]}`, borderRadius: 10, padding: "11px 13px" }}>
