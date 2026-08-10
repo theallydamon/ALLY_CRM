@@ -1302,17 +1302,17 @@ const GRID_DAYS = 4;
 const ROW_H = 21;
 const TIME_COL_W = 62;
 
-/* Daily work blocks are deliberately noticeable so the calendar reads as a plan before any events
-   are added. Boundaries tile 06:00-22:00 exactly and remain behind appointments and drop targets. */
+/* Routine blocks deliberately use colours that do not belong to any event calendar. Their lower
+   opacity keeps real events visually dominant, while the stronger edge still marks each boundary. */
 const DAY_PHASES = [
   { key: "start",          label: "Start",             from: 6 * 60,       to: 6 * 60 + 30,  tint: "rgba(255,255,255,0.035)", edge: "rgba(255,255,255,0.13)" },
-  { key: "morningEditing", label: "Editing",           from: 6 * 60 + 30,  to: 7 * 60 + 30,  tint: "rgba(62,143,214,0.22)",  edge: "rgba(62,143,214,0.68)" },
-  { key: "morningIdeas",   label: "Ideation",          from: 7 * 60 + 30,  to: 8 * 60 + 30,  tint: "rgba(164,111,214,0.22)", edge: "rgba(164,111,214,0.68)" },
-  { key: "gym",            label: "Gym",               from: 8 * 60 + 30,  to: 11 * 60 + 30, tint: "rgba(47,163,124,0.20)",  edge: "rgba(47,163,124,0.66)" },
-  { key: "postGymEditing", label: "Post gym editing",  from: 12 * 60,      to: 13 * 60,      tint: "rgba(62,143,214,0.22)",  edge: "rgba(62,143,214,0.68)" },
-  { key: "postGymIdeas",   label: "Post gym ideation", from: 13 * 60,      to: 14 * 60,      tint: "rgba(164,111,214,0.22)", edge: "rgba(164,111,214,0.68)" },
-  { key: "mama",           label: "Mama work",         from: 14 * 60,      to: 18 * 60 + 30, tint: "rgba(214,154,0,0.24)",  edge: "rgba(214,154,0,0.72)" },
-  { key: "music",          label: "Music",             from: 18 * 60 + 30, to: 22 * 60,      tint: "rgba(229,72,77,0.23)",   edge: "rgba(229,72,77,0.72)" },
+  { key: "morningEditing", label: "Editing",           from: 6 * 60 + 30,  to: 7 * 60 + 30,  tint: "rgba(143,93,193,0.13)",  edge: "rgba(143,93,193,0.38)" },
+  { key: "morningIdeas",   label: "Ideation",          from: 7 * 60 + 30,  to: 8 * 60 + 30,  tint: "rgba(203,82,151,0.12)",  edge: "rgba(203,82,151,0.36)" },
+  { key: "gym",            label: "Gym",               from: 8 * 60 + 30,  to: 11 * 60 + 30, tint: "rgba(35,172,166,0.11)",  edge: "rgba(35,172,166,0.34)" },
+  { key: "postGymEditing", label: "Post gym editing",  from: 12 * 60,      to: 13 * 60,      tint: "rgba(143,93,193,0.09)",  edge: "rgba(143,93,193,0.30)" },
+  { key: "postGymIdeas",   label: "Post gym ideation", from: 13 * 60,      to: 14 * 60,      tint: "rgba(203,82,151,0.08)",  edge: "rgba(203,82,151,0.28)" },
+  { key: "mama",           label: "Mama work",         from: 14 * 60,      to: 18 * 60 + 30, tint: "rgba(205,99,61,0.10)",   edge: "rgba(205,99,61,0.32)" },
+  { key: "music",          label: "Music",             from: 18 * 60 + 30, to: 22 * 60,      tint: "rgba(112,76,175,0.12)",  edge: "rgba(112,76,175,0.36)" },
 ];
 const phaseForMin = (m) => DAY_PHASES.find((p) => m >= p.from && m < p.to) || DAY_PHASES[DAY_PHASES.length - 1];
 const slotToMin = (i) => DAY_START_MIN + i * SLOT_MIN;
