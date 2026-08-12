@@ -1303,6 +1303,7 @@ const skitSnapshot = (item) => ({ id: item.id || "", title: item.title || "", sc
 
 function useSkitRegistry(crmUser, ally) {
   const tokenRef = useRef(null);
+  const tokenExpiryRef = useRef(0);
   const clientRef = useRef(null);
   const previousRef = useRef(null);
   const queueRef = useRef(Promise.resolve());
@@ -1336,7 +1337,11 @@ function useSkitRegistry(crmUser, ally) {
       ...options,
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", ...(options.headers || {}) },
     });
-    if (!response.ok) throw new Error(`Google Sheets returned ${response.status}`);
+    if (!response.ok) {
+      let detail = "";
+      try { const body = await response.json(); detail = body && body.error && body.error.message ? `, ${body.error.message}` : ""; } catch (e) {}
+      throw new Error(`Google Sheets returned ${response.status}${detail}`);
+    }
     return response.json();
   }, []);
 
@@ -1360,6 +1365,21 @@ function useSkitRegistry(crmUser, ally) {
     await sheetFetch("values/%27Revision%20Log%27%21A5%3AI:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS", { method: "POST", body: JSON.stringify({ values }) });
   }, [crmUser, sheetFetch]);
 
+  const writeCurrentTabs = useCallback(async (items, updatedAt) => {
+    const meta = await sheetFetch("?fields=sheets.properties(sheetId,title)");
+    const ids = new Map((meta.sheets || []).map((sheet) => [sheet.properties.title, sheet.properties.sheetId]));
+    const grouped = Object.fromEntries(SKIT_TABS.map((tab) => [tab, []]));
+    (items || []).forEach((item) => grouped[skitTab(item.status)].push(skitRow(item, updatedAt)));
+    const requests = [];
+    SKIT_TABS.forEach((tab) => {
+      const sheetId = ids.get(tab);
+      if (sheetId === undefined) throw new Error(`Missing ${tab} tab in the skit registry.`);
+      requests.push({ repeatCell: { range: { sheetId, startRowIndex: 4, endRowIndex: 1000, startColumnIndex: 0, endColumnIndex: 7 }, cell: {}, fields: "userEnteredValue" } });
+      if (grouped[tab].length) requests.push({ updateCells: { range: { sheetId, startRowIndex: 4, startColumnIndex: 0 }, rows: grouped[tab].map((row) => ({ values: row.map((value) => ({ userEnteredValue: { stringValue: String(value) } })) })), fields: "userEnteredValue" } });
+    });
+    await sheetFetch(":batchUpdate", { method: "POST", body: JSON.stringify({ requests }) });
+  }, [sheetFetch]);
+
   const syncItems = useCallback(async (items) => {
     const current = new Map((items || []).map((item) => [item.id, skitSnapshot(item)]));
     const previous = previousRef.current;
@@ -1378,15 +1398,12 @@ function useSkitRegistry(crmUser, ally) {
         if (current.has(id)) return;
         revisions.push({ id, type: "Deleted", field: "", before: before.title || "", after: "", snapshot: before });
       });
-      await Promise.all(SKIT_TABS.map((tab) => sheetFetch(`values/%27${encodeURIComponent(tab)}%27%21A5%3AG1000:clear`, { method: "POST", body: "{}" })));
-      const grouped = Object.fromEntries(SKIT_TABS.map((tab) => [tab, []]));
-      (items || []).forEach((item) => grouped[skitTab(item.status)].push(skitRow(item, now)));
-      await Promise.all(SKIT_TABS.filter((tab) => grouped[tab].length).map((tab) => sheetFetch(`values/%27${encodeURIComponent(tab)}%27%21A5%3AG:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, { method: "POST", body: JSON.stringify({ values: grouped[tab] }) })));
+      await writeCurrentTabs(items, now);
       await appendRevisions(revisions);
       previousRef.current = current;
       setState("synced"); setError("");
-    } catch (e) { setState("error"); setError("The skit registry did not save. Your CRM data is still safe in Firebase."); }
-  }, [appendRevisions, ensureRegistry, sheetFetch]);
+    } catch (e) { setState("error"); setError(`The skit registry did not save, ${e.message || "unknown Google Sheets error"}. Your CRM data is still safe in Firebase.`); }
+  }, [appendRevisions, ensureRegistry, writeCurrentTabs]);
 
   const connect = useCallback((silent = false) => {
     if (!crmUser || !ready) { if (!silent) setError("Sign in to the CRM and wait for Google to load first."); return; }
@@ -1395,7 +1412,7 @@ function useSkitRegistry(crmUser, ally) {
       client_id: GOOGLE_CLIENT_ID, scope: SKIT_SCOPE,
       callback: (response) => {
         if (!response || response.error || !response.access_token) { setState("error"); setActive(false); try { localStorage.removeItem(SKIT_REGISTRY_FLAG); } catch (e) {} if (!silent) setError("Google Sheets access was not granted."); return; }
-        tokenRef.current = response.access_token; setActive(true); setState("syncing");
+        tokenRef.current = response.access_token; tokenExpiryRef.current = Date.now() + Math.max(60, Number(response.expires_in || 3600) - 120) * 1000; setActive(true); setState("syncing");
         try { localStorage.setItem(SKIT_REGISTRY_FLAG, "true"); } catch (e) {}
       },
       error_callback: () => { setState("error"); setActive(false); try { localStorage.removeItem(SKIT_REGISTRY_FLAG); } catch (e) {} if (!silent) setError("Google could not open the Sheets permission window."); },
@@ -1404,6 +1421,11 @@ function useSkitRegistry(crmUser, ally) {
   }, [crmUser, ready]);
 
   useEffect(() => { if (active && ready && crmUser && !tokenRef.current) connect(true); }, [active, ready, crmUser, connect]);
+  useEffect(() => {
+    if (!active || !ready || !crmUser) return;
+    const id = setInterval(() => { if (!tokenRef.current || Date.now() >= tokenExpiryRef.current) connect(true); }, 30000);
+    return () => clearInterval(id);
+  }, [active, ready, crmUser, connect]);
   useEffect(() => {
     if (!active || !tokenRef.current || !ally) return;
     const id = setTimeout(() => { queueRef.current = queueRef.current.then(() => syncItems((ally.content || {}).items || [])); }, 650);
