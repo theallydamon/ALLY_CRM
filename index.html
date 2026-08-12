@@ -3097,7 +3097,7 @@ function CompleteCheckbox({ onComplete, size = 18, mt = 0, label = "Mark complet
    The popover is the disconnect affordance 02-GOAL.md requires. Do not promote any of this back
    into the page body. */
 function CalendarChip({ cal, registry, crmEmail }) {
-  const { connected, connecting, account, calError, gisReady, grant, disconnect, calendars } = cal;
+  const { connected, connecting, account, calError, gisReady, grant, disconnect } = cal;
   const [open, setOpen] = useState(false);
 
   const mismatch = account && crmEmail && account.toLowerCase() !== crmEmail.toLowerCase();
@@ -3152,23 +3152,6 @@ function CalendarChip({ cal, registry, crmEmail }) {
               </div>
             )}
 
-            {calendars && (
-              <div style={{ marginTop: 10 }}>
-                <div style={{ fontSize: 9.5, letterSpacing: "0.08em", textTransform: "uppercase", color: MUT, marginBottom: 5 }}>Used for busy slots</div>
-                <div className="flex flex-col" style={{ gap: 3 }}>
-                  {calendars.map((c) => {
-                    const writable = c.role === "owner" || c.role === "writer";
-                    return (
-                      <div key={c.id} className="flex items-center gap-1.5" style={{ fontSize: 11, opacity: c.used ? 1 : 0.4 }}>
-                        <span style={{ width: 5, height: 5, borderRadius: 99, background: c.used ? (writable ? C.mint : C.sky) : MUT, flexShrink: 0 }} />
-                        <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</span>
-                        <span style={{ fontSize: 9, color: MUT, whiteSpace: "nowrap" }}>{!c.used ? "ignored" : c.primary ? "writes here" : writable ? "read" : "read"}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
             <div className="flex items-center gap-2" style={{ marginTop: 11 }}>
               {connected
                 ? <button onClick={() => { disconnect(); setOpen(false); }} style={{ ...iconBtn, fontSize: 11, padding: "6px 11px", border: `1px solid ${LINE}`, borderRadius: 999 }}>Disconnect</button>
