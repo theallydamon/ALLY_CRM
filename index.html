@@ -1282,6 +1282,137 @@ function useCalendarAuth(crmUser) {
   return { connected, connecting, account, setAccount, calError, setCalError, gisReady, connect, grant, disconnect, calFetch, tokenValid, calendars, loadCalendars };
 }
 
+/* ================= SKIT REGISTRY =================
+   The registry uses the owner's own short lived Google token to write directly to the dedicated
+   Sheet. No token or script content is sent to a third party, and no server or paid Firebase plan
+   is required. A skit keeps one ID while its current row moves between the four pipeline tabs.
+   Revision Log is append only, so moving or accidentally deleting a skit remains recoverable. */
+const SKIT_REGISTRY_ID = "1fKzfNPPk-MSKrG74ApwhCeziq8N296bSeTraHH-FOL0";
+const SKIT_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
+const SKIT_API = "https://sheets.googleapis.com/v4/spreadsheets";
+const SKIT_REGISTRY_FLAG = "ally-crm-skit-registry-enabled";
+const SKIT_TABS = ["Ideas", "To Film", "To Edit", "Ready to Post"];
+const skitTab = (status) => SKIT_TABS.includes(status) ? status : "Ready to Post";
+const scriptText = (value) => {
+  const box = document.createElement("div");
+  box.innerHTML = value || "";
+  return (box.innerText || box.textContent || "").replace(/\n{3,}/g, "\n\n").trim();
+};
+const skitRow = (item, updatedAt) => [item.id || "", item.title || "", scriptText(item.desc || ""), item.created || "", updatedAt || new Date().toISOString(), "ALLY CRM", ""];
+const skitSnapshot = (item) => ({ id: item.id || "", title: item.title || "", script: scriptText(item.desc || ""), status: item.status || "Ideas", created: item.created || "", pipeline: "Content" });
+
+function useSkitRegistry(crmUser, ally) {
+  const tokenRef = useRef(null);
+  const clientRef = useRef(null);
+  const previousRef = useRef(null);
+  const queueRef = useRef(Promise.resolve());
+  const [state, setState] = useState("off"); // off | connecting | syncing | synced | error
+  const [error, setError] = useState("");
+  const [ready, setReady] = useState(false);
+  const [active, setActive] = useState(() => { try { return localStorage.getItem(SKIT_REGISTRY_FLAG) === "true"; } catch (e) { return false; } });
+
+  useEffect(() => {
+    let tries = 0, id = null;
+    const check = () => {
+      if (window.google && window.google.accounts && window.google.accounts.oauth2) { setReady(true); return; }
+      if (++tries < 40) id = setTimeout(check, 250);
+      else setError("Google authorisation did not load, so the skit registry cannot connect.");
+    };
+    check();
+    return () => id && clearTimeout(id);
+  }, []);
+
+  useEffect(() => {
+    if (crmUser) return;
+    tokenRef.current = null; previousRef.current = null;
+    setActive(false); setState("off");
+    try { localStorage.removeItem(SKIT_REGISTRY_FLAG); } catch (e) {}
+  }, [crmUser]);
+
+  const sheetFetch = useCallback(async (path, options = {}) => {
+    const token = tokenRef.current;
+    if (!token) throw new Error("No registry access token");
+    const response = await fetch(`${SKIT_API}/${SKIT_REGISTRY_ID}/${path}`, {
+      ...options,
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", ...(options.headers || {}) },
+    });
+    if (!response.ok) throw new Error(`Google Sheets returned ${response.status}`);
+    return response.json();
+  }, []);
+
+  const ensureRegistry = useCallback(async () => {
+    const meta = await sheetFetch("?fields=sheets.properties(sheetId,title)");
+    const existing = new Map((meta.sheets || []).map((sheet) => [sheet.properties.title, sheet.properties.sheetId]));
+    const requests = [];
+    if (existing.has("Sheet1") && !existing.has("Ideas")) requests.push({ updateSheetProperties: { properties: { sheetId: existing.get("Sheet1"), title: "Ideas" }, fields: "title" } });
+    const afterRename = new Map(existing); if (afterRename.has("Sheet1")) { afterRename.set("Ideas", afterRename.get("Sheet1")); afterRename.delete("Sheet1"); }
+    SKIT_TABS.concat("Revision Log").filter((title) => !afterRename.has(title)).forEach((title) => requests.push({ addSheet: { properties: { title } } }));
+    if (requests.length) await sheetFetch(":batchUpdate", { method: "POST", body: JSON.stringify({ requests }) });
+    const headers = {};
+    SKIT_TABS.forEach((tab) => { headers[`'${tab}'!A1:G4`] = [[`Ally Damon Skit Registry | ${tab}`], [`One permanent skit ID. This is the CRM's current ${tab} column.`], [], ["Skit ID", "Title", "Full Script", "Created At", "Last Updated", "Source", "Notes"]]; });
+    headers["'Revision Log'!A1:I4"] = [["Skit Revision Log"], ["Append only backup history. Do not edit this tab."], [], ["Event ID", "Timestamp", "Skit ID", "Event", "Field", "Previous Value", "New Value", "Editor", "Full Snapshot"]];
+    await sheetFetch("values:batchUpdate", { method: "POST", body: JSON.stringify({ valueInputOption: "RAW", data: Object.entries(headers).map(([range, values]) => ({ range, values })) }) });
+  }, [sheetFetch]);
+
+  const appendRevisions = useCallback(async (events) => {
+    if (!events.length) return;
+    const values = events.map((event) => [uid(), new Date().toISOString(), event.id, event.type, event.field || "", event.before || "", event.after || "", crmUser ? crmUser.email || "Ally Damon" : "Ally Damon", JSON.stringify(event.snapshot || {})]);
+    await sheetFetch("values/%27Revision%20Log%27%21A5%3AI:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS", { method: "POST", body: JSON.stringify({ values }) });
+  }, [crmUser, sheetFetch]);
+
+  const syncItems = useCallback(async (items) => {
+    const current = new Map((items || []).map((item) => [item.id, skitSnapshot(item)]));
+    const previous = previousRef.current;
+    if (previous && JSON.stringify([...previous]) === JSON.stringify([...current])) return;
+    setState("syncing");
+    try {
+      await ensureRegistry();
+      const now = new Date().toISOString();
+      const revisions = [];
+      current.forEach((snapshot, id) => {
+        const before = previous && previous.get(id);
+        if (!before) revisions.push({ id, type: previous ? "Created" : "Imported", field: "", before: "", after: snapshot.title, snapshot });
+        else ["title", "script", "status"].forEach((field) => { if (before[field] !== snapshot[field]) revisions.push({ id, type: "Updated", field, before: before[field] || "", after: snapshot[field] || "", snapshot }); });
+      });
+      if (previous) previous.forEach((before, id) => {
+        if (current.has(id)) return;
+        revisions.push({ id, type: "Deleted", field: "", before: before.title || "", after: "", snapshot: before });
+      });
+      await Promise.all(SKIT_TABS.map((tab) => sheetFetch(`values/%27${encodeURIComponent(tab)}%27%21A5%3AG1000:clear`, { method: "POST", body: "{}" })));
+      const grouped = Object.fromEntries(SKIT_TABS.map((tab) => [tab, []]));
+      (items || []).forEach((item) => grouped[skitTab(item.status)].push(skitRow(item, now)));
+      await Promise.all(SKIT_TABS.filter((tab) => grouped[tab].length).map((tab) => sheetFetch(`values/%27${encodeURIComponent(tab)}%27%21A5%3AG:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, { method: "POST", body: JSON.stringify({ values: grouped[tab] }) })));
+      await appendRevisions(revisions);
+      previousRef.current = current;
+      setState("synced"); setError("");
+    } catch (e) { setState("error"); setError("The skit registry did not save. Your CRM data is still safe in Firebase."); }
+  }, [appendRevisions, ensureRegistry, sheetFetch]);
+
+  const connect = useCallback((silent = false) => {
+    if (!crmUser || !ready) { if (!silent) setError("Sign in to the CRM and wait for Google to load first."); return; }
+    setState("connecting"); setError("");
+    if (!clientRef.current) clientRef.current = window.google.accounts.oauth2.initTokenClient({
+      client_id: GOOGLE_CLIENT_ID, scope: SKIT_SCOPE,
+      callback: (response) => {
+        if (!response || response.error || !response.access_token) { setState("error"); if (!silent) setError("Google Sheets access was not granted."); return; }
+        tokenRef.current = response.access_token; setActive(true); setState("syncing");
+        try { localStorage.setItem(SKIT_REGISTRY_FLAG, "true"); } catch (e) {}
+      },
+      error_callback: () => { setState("error"); if (!silent) setError("Google could not open the Sheets permission window."); },
+    });
+    clientRef.current.requestAccessToken({ prompt: silent ? "" : "consent" });
+  }, [crmUser, ready]);
+
+  useEffect(() => { if (active && ready && crmUser && !tokenRef.current) connect(true); }, [active, ready, crmUser, connect]);
+  useEffect(() => {
+    if (!active || !tokenRef.current || !ally) return;
+    const id = setTimeout(() => { queueRef.current = queueRef.current.then(() => syncItems((ally.content || {}).items || [])); }, 650);
+    return () => clearTimeout(id);
+  }, [ally, active, syncItems]);
+
+  return { state, error, connect, active, ready };
+}
+
 /* ================= DAY GRID =================
    Step 3 of context/04-REDESIGN.md. READ ONLY: renders the next four days as countable half-hour
    cells and fills in what Google already has. There is no POST/PATCH/PUT/DELETE anywhere in here,
@@ -1855,6 +1986,7 @@ function AllyCRM() {
      whether the app may touch your calendar (Google Identity Services). Passing `user` in lets the
      hook drop the token the moment you sign out of the CRM. */
   const cal = useCalendarAuth(user);
+  const registry = useSkitRegistry(user, ally);
 
   /* ---------- the calendar write layer ----------
      THE ONLY PLACE IN THIS APP THAT WRITES TO GOOGLE CALENDAR: create, move, resize, remove. Keep it
@@ -2748,7 +2880,7 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
           <div ref={scrollRef} className="scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "24px 32px", display: "flex", flexDirection: "column", alignItems: "center" }}>
             <div style={{ width: "100%", maxWidth: 1280, margin: 0, paddingBottom: 32 }}>
               {tab === "overview" && <PersonalModule ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} q={q} navRequest={navRequest} navigateToTask={navigateToTask} completeTask={completeTask} cal={cal} onSchedule={scheduleTask} onMove={moveScheduled} onResize={resizeScheduled} onUnschedule={unscheduleTask} onDeleteEvent={deleteOrphanEvent} syncTick={syncTick} />}
-              {tab === "content" && <ContentModule data={ally} setData={setAlly} q={q} navRequest={navRequest} onContentSchedule={syncContentCalendar} />}
+              {tab === "content" && <ContentModule data={ally} setData={setAlly} q={q} navRequest={navRequest} onContentSchedule={syncContentCalendar} registry={registry} />}
               {tab === "lifeAdmin" && <LifeAdminModule data={ally} setData={setAlly} q={q} />}
               {tab === "deals" && <DealsModule data={ally} setData={setAlly} q={q} navRequest={navRequest} />}
               {tab === "mama" && <MamaModule data={mama} setData={setMama} q={q} navRequest={navRequest} navigateToTask={navigateToTask} completeTask={completeTask} />}
@@ -3754,7 +3886,7 @@ function ScriptBox({ value, isHtml, open, onFocus, onChange, onToggle, big, plac
   );
 }
 
-function ContentModule({ data, setData, q, navRequest, onContentSchedule }) {
+function ContentModule({ data, setData, q, navRequest, onContentSchedule, registry }) {
 const [subtab, setSubtab] = useState("content");
 const [calendarFocus, setCalendarFocus] = useState(null);
 /* a dashboard task pointing at the Music (or another) subtab needs this tab to actually land
@@ -3781,6 +3913,11 @@ return (
 <nav className="flex gap-2 mb-6 flex-wrap w-full" style={{ justifyContent: "flex-start" }}>
 {tabs.map((tab) => <button key={tab.id} onClick={() => setSubtab(tab.id)} className="rounded-full px-4 py-2" style={{ background: subtab === tab.id ? C.dark : C.card, border: "1px solid " + (subtab === tab.id ? C.dark : LINE), color: subtab === tab.id ? C.canvas : C.ink, cursor: "pointer", fontSize: 14, fontWeight: subtab === tab.id ? 600 : 400, fontFamily: "inherit" }}>{tab.label}</button>)}
 </nav>
+<div className="flex items-center gap-2 mb-4 flex-wrap" style={{ fontSize: 11.5, color: registry.state === "synced" ? C.mint : registry.state === "error" ? C.rose : MUT }}>
+  <span>{registry.state === "synced" ? "Skit registry synced" : registry.state === "syncing" ? "Saving skit registry" : registry.state === "connecting" ? "Connecting skit registry" : registry.active ? "Skit registry waiting for Google" : "Skit registry not connected"}</span>
+  {!registry.active && <button onClick={() => registry.connect(false)} disabled={!registry.ready} className="rounded-full px-2.5 py-1" style={{ cursor: registry.ready ? "pointer" : "wait", fontFamily: "inherit", fontSize: 10.5, background: C.lilacBg, border: `1px solid ${C.lilac}55`, color: C.lilac }}>Connect Sheet</button>}
+  {registry.error && <span style={{ color: C.rose }}>{registry.error}</span>}
+</div>
 {subtab === "content" && <ContentPipeline data={data} setData={setData} q={q} pipelineKey="content" heading={null} onContentSchedule={onContentSchedule} />}
 {subtab === "brandDeals" && <ContentPipeline data={data} setData={setData} q={q} pipelineKey="brandContent" heading="Brand Deals" onContentSchedule={onContentSchedule} />}
 {subtab === "musicContent" && <ContentPipeline data={data} setData={setData} q={q} pipelineKey="musicContent" heading="Music" onContentSchedule={onContentSchedule} />}
