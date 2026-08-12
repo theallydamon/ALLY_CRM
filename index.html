@@ -2870,7 +2870,7 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
               </button>
               <input ref={importInputRef} type="file" accept="application/json" onChange={handleImportFile} style={{ display: "none" }} />
             </div>
-            {user && <CalendarChip cal={cal} crmEmail={user.email || ""} />}
+            {user && <CalendarChip cal={cal} registry={registry} crmEmail={user.email || ""} />}
             <div style={{ width: 30, height: 30, borderRadius: 99, overflow: "hidden", flexShrink: 0 }} title="Ally"><img src={AVATAR_IMG} alt="Ally" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} /></div>
           </header>
 
@@ -3096,21 +3096,25 @@ function CompleteCheckbox({ onComplete, size = 18, mt = 0, label = "Mark complet
 
    The popover is the disconnect affordance 02-GOAL.md requires. Do not promote any of this back
    into the page body. */
-function CalendarChip({ cal, crmEmail }) {
+function CalendarChip({ cal, registry, crmEmail }) {
   const { connected, connecting, account, calError, gisReady, grant, disconnect, calendars } = cal;
   const [open, setOpen] = useState(false);
 
   const mismatch = account && crmEmail && account.toLowerCase() !== crmEmail.toLowerCase();
-  const dot = connected ? (mismatch ? C.amber : C.mint) : calError ? C.accent : MUT;
+  const sheetConnected = registry && registry.state === "synced";
+  const sheetBusy = registry && (registry.state === "connecting" || registry.state === "syncing");
+  const allConnected = connected && sheetConnected && !mismatch;
+  const dot = allConnected ? C.mint : mismatch ? C.amber : C.rose;
+  const connectionLabel = allConnected ? "Google Calendar and Skit Registry connected" : "A connection needs attention";
 
   return (
     <div style={{ position: "relative", flexShrink: 0 }}>
       <button onClick={() => setOpen((o) => !o)}
-        title={connected ? `Google Calendar connected${account ? ` · ${account}` : ""}` : "Google Calendar not connected"}
-        aria-label={connected ? "Google Calendar connected" : "Google Calendar not connected"}
+        title={connectionLabel}
+        aria-label={connectionLabel}
         className="flex items-center justify-center"
         style={{ ...iconBtn, padding: 6, borderRadius: 99, border: "1px solid transparent", cursor: "pointer" }}>
-        <span className={!connected && !calError ? "pulse-dot" : ""}
+        <span className={!allConnected && (connecting || sheetBusy) ? "pulse-dot" : ""}
           style={{ width: 7, height: 7, borderRadius: 99, background: dot, flexShrink: 0, display: "block" }} />
       </button>
 
@@ -3126,6 +3130,16 @@ function CalendarChip({ cal, crmEmail }) {
                 ? (account || "")
                 : connecting ? "Reconnecting…"
                 : "Not connected."}
+            </div>
+
+            <div style={{ marginTop: 11, paddingTop: 10, borderTop: `1px solid ${LINE}` }}>
+              <div style={{ fontWeight: 700, fontSize: 12.5, marginBottom: 2 }}>
+                Skit Registry {sheetConnected ? <span style={{ color: C.mint, fontWeight: 600 }}>· connected</span> : <span style={{ color: C.rose, fontWeight: 400 }}>· not connected</span>}
+              </div>
+              <div style={{ fontSize: 10.5, color: MUT, lineHeight: 1.45 }}>
+                {sheetConnected ? "Backed up to your Google Sheet." : sheetBusy ? "Waiting for Google…" : "Connect it from the Content page."}
+              </div>
+              {registry && registry.error && <div role="alert" style={{ marginTop: 7, fontSize: 10.5, lineHeight: 1.45, color: C.rose }}>{registry.error}</div>}
             </div>
 
             {calError && (
