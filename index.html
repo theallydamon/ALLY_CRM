@@ -1332,7 +1332,7 @@ function useSkitRegistry(crmUser, ally) {
   const sheetFetch = useCallback(async (path, options = {}) => {
     const token = tokenRef.current;
     if (!token) throw new Error("No registry access token");
-    const response = await fetch(`${SKIT_API}/${SKIT_REGISTRY_ID}/${path}`, {
+    const response = await fetch(`${SKIT_API}/${SKIT_REGISTRY_ID}${path.startsWith(":") ? "" : "/"}${path}`, {
       ...options,
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", ...(options.headers || {}) },
     });
