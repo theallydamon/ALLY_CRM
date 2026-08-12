@@ -1394,11 +1394,11 @@ function useSkitRegistry(crmUser, ally) {
     if (!clientRef.current) clientRef.current = window.google.accounts.oauth2.initTokenClient({
       client_id: GOOGLE_CLIENT_ID, scope: SKIT_SCOPE,
       callback: (response) => {
-        if (!response || response.error || !response.access_token) { setState("error"); if (!silent) setError("Google Sheets access was not granted."); return; }
+        if (!response || response.error || !response.access_token) { setState("error"); setActive(false); try { localStorage.removeItem(SKIT_REGISTRY_FLAG); } catch (e) {} if (!silent) setError("Google Sheets access was not granted."); return; }
         tokenRef.current = response.access_token; setActive(true); setState("syncing");
         try { localStorage.setItem(SKIT_REGISTRY_FLAG, "true"); } catch (e) {}
       },
-      error_callback: () => { setState("error"); if (!silent) setError("Google could not open the Sheets permission window."); },
+      error_callback: () => { setState("error"); setActive(false); try { localStorage.removeItem(SKIT_REGISTRY_FLAG); } catch (e) {} if (!silent) setError("Google could not open the Sheets permission window."); },
     });
     clientRef.current.requestAccessToken({ prompt: silent ? "" : "consent" });
   }, [crmUser, ready]);
@@ -3915,7 +3915,7 @@ return (
 </nav>
 <div className="flex items-center gap-2 mb-4 flex-wrap" style={{ fontSize: 11.5, color: registry.state === "synced" ? C.mint : registry.state === "error" ? C.rose : MUT }}>
   <span>{registry.state === "synced" ? "Skit registry synced" : registry.state === "syncing" ? "Saving skit registry" : registry.state === "connecting" ? "Connecting skit registry" : registry.active ? "Skit registry waiting for Google" : "Skit registry not connected"}</span>
-  {!registry.active && <button onClick={() => registry.connect(false)} disabled={!registry.ready} className="rounded-full px-2.5 py-1" style={{ cursor: registry.ready ? "pointer" : "wait", fontFamily: "inherit", fontSize: 10.5, background: C.lilacBg, border: `1px solid ${C.lilac}55`, color: C.lilac }}>Connect Sheet</button>}
+  {registry.state !== "synced" && <button onClick={() => registry.connect(false)} disabled={!registry.ready} className="rounded-full px-2.5 py-1" style={{ cursor: registry.ready ? "pointer" : "wait", fontFamily: "inherit", fontSize: 10.5, background: C.lilacBg, border: `1px solid ${C.lilac}55`, color: C.lilac }}>{registry.active ? "Reconnect Sheet" : "Connect Sheet"}</button>}
   {registry.error && <span style={{ color: C.rose }}>{registry.error}</span>}
 </div>
 {subtab === "content" && <ContentPipeline data={data} setData={setData} q={q} pipelineKey="content" heading={null} onContentSchedule={onContentSchedule} />}
