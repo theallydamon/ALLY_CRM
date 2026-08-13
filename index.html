@@ -1290,7 +1290,6 @@ function useCalendarAuth(crmUser) {
 const SKIT_REGISTRY_ID = "1fKzfNPPk-MSKrG74ApwhCeziq8N296bSeTraHH-FOL0";
 const SKIT_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
 const SKIT_API = "https://sheets.googleapis.com/v4/spreadsheets";
-const SKIT_REGISTRY_FLAG = "ally-crm-skit-registry-enabled";
 const SKIT_TABS = ["Ideas", "To Film", "To Edit", "Ready to Post"];
 const skitTab = (status) => SKIT_TABS.includes(status) ? status : "Ready to Post";
 const scriptText = (value) => {
@@ -1305,12 +1304,13 @@ function useSkitRegistry(crmUser, ally) {
   const tokenRef = useRef(null);
   const tokenExpiryRef = useRef(0);
   const clientRef = useRef(null);
+  const silentRef = useRef(true);
   const previousRef = useRef(null);
   const queueRef = useRef(Promise.resolve());
   const [state, setState] = useState("off"); // off | connecting | syncing | synced | error
   const [error, setError] = useState("");
   const [ready, setReady] = useState(false);
-  const [active, setActive] = useState(() => { try { return localStorage.getItem(SKIT_REGISTRY_FLAG) === "true"; } catch (e) { return false; } });
+  const [active, setActive] = useState(false);
 
   useEffect(() => {
     let tries = 0, id = null;
@@ -1325,9 +1325,8 @@ function useSkitRegistry(crmUser, ally) {
 
   useEffect(() => {
     if (crmUser) return;
-    tokenRef.current = null; previousRef.current = null;
+    tokenRef.current = null; tokenExpiryRef.current = 0; previousRef.current = null;
     setActive(false); setState("off");
-    try { localStorage.removeItem(SKIT_REGISTRY_FLAG); } catch (e) {}
   }, [crmUser]);
 
   const sheetFetch = useCallback(async (path, options = {}) => {
@@ -1407,22 +1406,22 @@ function useSkitRegistry(crmUser, ally) {
 
   const connect = useCallback((silent = false) => {
     if (!crmUser || !ready) { if (!silent) setError("Sign in to the CRM and wait for Google to load first."); return; }
+    silentRef.current = !!silent;
     setState("connecting"); setError("");
     if (!clientRef.current) clientRef.current = window.google.accounts.oauth2.initTokenClient({
       client_id: GOOGLE_CLIENT_ID, scope: SKIT_SCOPE,
       callback: (response) => {
-        if (!response || response.error || !response.access_token) { setState("error"); setActive(false); try { localStorage.removeItem(SKIT_REGISTRY_FLAG); } catch (e) {} if (!silent) setError("Google Sheets access was not granted."); return; }
+        if (!response || response.error || !response.access_token) { setState("off"); setActive(false); if (!silentRef.current) setError("Google Sheets access was not granted."); return; }
         tokenRef.current = response.access_token; tokenExpiryRef.current = Date.now() + Math.max(60, Number(response.expires_in || 3600) - 120) * 1000; setActive(true); setState("syncing");
-        try { localStorage.setItem(SKIT_REGISTRY_FLAG, "true"); } catch (e) {}
       },
-      error_callback: () => { setState("error"); setActive(false); try { localStorage.removeItem(SKIT_REGISTRY_FLAG); } catch (e) {} if (!silent) setError("Google could not open the Sheets permission window."); },
+      error_callback: () => { setState("off"); setActive(false); if (!silentRef.current) setError("Google could not open the Sheets permission window."); },
     });
     clientRef.current.requestAccessToken({ prompt: silent ? "" : "consent" });
   }, [crmUser, ready]);
 
-  useEffect(() => { if (active && ready && crmUser && !tokenRef.current) connect(true); }, [active, ready, crmUser, connect]);
+  useEffect(() => { if (ready && crmUser && !tokenRef.current) connect(true); }, [ready, crmUser, connect]);
   useEffect(() => {
-    if (!active || !ready || !crmUser) return;
+    if (!ready || !crmUser) return;
     const id = setInterval(() => { if (!tokenRef.current || Date.now() >= tokenExpiryRef.current) connect(true); }, 30000);
     return () => clearInterval(id);
   }, [active, ready, crmUser, connect]);
