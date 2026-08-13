@@ -2352,52 +2352,34 @@ function AllyCRM() {
     return unsub;
   }, []);
 
-  /* Sign-in errors used to be swallowed whole, on the theory that the only realistic failure was
-     the user closing the popup. That was wrong and actively harmful: a blocked popup, an
-     unauthorised domain, or a disabled provider all fail here too, and every one of them looked
-     identical to a dead button with no feedback at all. Now the real cause is surfaced.
-
-     signInWithPopup is also fragile in some contexts (popup blockers, embedded webviews). When the
-     failure is specifically a popup problem we fall back to a full-page redirect, which does not
-     need a popup at all. Note: never put `e` itself on screen — Firebase error objects can carry
-     request detail we do not want rendered. Only the mapped code and message go out. */
-  /* Verified 29 Jul 2026: on localhost, signInWithPopup neither resolves NOR rejects — it just
-     hangs, with no popup and no error. Reproduced on the pre-redesign code too, so it is not a
-     regression. It is the well-known interaction between popup-based Firebase auth and browser
-     restrictions on third-party storage; the live GitHub Pages origin is unaffected.
-
-     A promise that never settles cannot be caught, so a catch block alone leaves a dead button.
-     Hence the stall timer: if the popup has not produced an answer in STALL_MS, we say so and
-     offer the redirect flow, which does not depend on a popup at all. */
-  const STALL_MS = 9000;
-  const signInRedirect = async (provider) => {
-    try { await fbAuth.signInWithRedirect(provider || new window.firebase.auth.GoogleAuthProvider()); }
-    catch (e) {
-      const code = (e && e.code) || "";
-      setAuthError(AUTH_ERRORS[code] || `Sign-in failed${code ? ` (${code})` : ""}. Try again.`);
-    }
-  };
+  /* The Firebase hosted auth handler is cross-site from the CRM. Safari web apps can block that
+     handoff before Google is even reached. Use the Google library already used by Calendar and
+     Sheets instead, then exchange its access token directly with Firebase. This keeps the whole
+     sign-in inside the CRM window and never visits Firebase's fragile handler page. */
   const signInGoogle = async () => {
     if (!fbAuth) { setAuthError("Firebase failed to load, so sign-in is unavailable. Check your connection and reload."); return; }
-    setAuthError(""); setAuthStalled(false);
-    const provider = new window.firebase.auth.GoogleAuthProvider();
-    await signInRedirect(provider);
-    return;
-    const stall = setTimeout(() => {
-      setAuthStalled(true);
-      setAuthError("The Google popup did not come back. This usually means the browser blocked it, or is blocking third-party storage for the sign-in window.");
-    }, STALL_MS);
-    try {
-      await fbAuth.signInWithPopup(provider);
-      clearTimeout(stall);
-    } catch (e) {
-      clearTimeout(stall);
-      const code = (e && e.code) || "";
-      if (code === "auth/popup-blocked") { await signInRedirect(provider); return; }
-      const known = AUTH_ERRORS[code];
-      if (known === "") return; // benign: a second popup superseded the first
-      setAuthError(known || `Sign-in failed${code ? ` (${code})` : ""}. Try again, or reload the page.`);
+    if (!window.google || !window.google.accounts || !window.google.accounts.oauth2) {
+      setAuthError("Google sign-in is still loading. Wait a moment, then try again."); return;
     }
+    setAuthError(""); setAuthStalled(false);
+    const client = window.google.accounts.oauth2.initTokenClient({
+      client_id: GOOGLE_CLIENT_ID,
+      scope: "openid email profile",
+      callback: async (response) => {
+        if (!response || response.error || !response.access_token) {
+          setAuthError("Google sign-in did not finish. Try again."); return;
+        }
+        try {
+          const credential = window.firebase.auth.GoogleAuthProvider.credential(null, response.access_token);
+          await fbAuth.signInWithCredential(credential);
+        } catch (e) {
+          const code = (e && e.code) || "";
+          setAuthError(AUTH_ERRORS[code] || "Google sign-in could not be completed. Try again.");
+        }
+      },
+      error_callback: () => setAuthError("Google sign-in window could not be opened. Try again."),
+    });
+    client.requestAccessToken({ prompt: "select_account" });
   };
   const signOutGoogle = async () => {
     if (!fbAuth) return;
