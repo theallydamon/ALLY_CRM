@@ -1955,7 +1955,7 @@ function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, onDeleteEven
    Module scope on purpose: it is a constant lookup, and signInGoogle plus the redirect-result
    handler both need it. Empty string means "benign, say nothing". */
 const AUTH_ERRORS = {
-  "auth/popup-blocked": "Your browser blocked the sign-in popup. Retrying with a full-page redirect…",
+  "auth/popup-blocked": "Your browser blocked the Google sign-in window. Allow popups for this CRM, then try again.",
   "auth/popup-closed-by-user": "Sign-in window was closed before finishing. Tap to try again.",
   "auth/cancelled-popup-request": "",
   "auth/unauthorized-domain": "This address is not on the Firebase authorised domains list, so Google sign-in is refused here. Add this exact origin in Firebase Auth settings.",
@@ -2343,12 +2343,6 @@ function AllyCRM() {
   useEffect(() => {
     if (!fbAuth) { setAuthReady(true); return; }
     const unsub = fbAuth.onAuthStateChanged((u) => { setUser(u); setAuthReady(true); });
-    /* If signInGoogle fell back to a redirect, the answer arrives on the NEXT page load rather than
-       as a resolved promise, so it has to be collected here or the failure is invisible again. */
-    fbAuth.getRedirectResult().catch((e) => {
-      const code = (e && e.code) || "";
-      if (code) setAuthError(AUTH_ERRORS[code] || `Sign-in failed (${code}). Try again, or reload the page.`);
-    });
     return unsub;
   }, []);
 
@@ -2370,15 +2364,6 @@ function AllyCRM() {
      Hence the stall timer: if the popup has not produced an answer in STALL_MS, we say so and
      offer the redirect flow, which does not depend on a popup at all. */
   const STALL_MS = 9000;
-  const signInRedirect = async () => {
-    if (!fbAuth) return;
-    setAuthError(""); setAuthStalled(false);
-    try { await fbAuth.signInWithRedirect(new window.firebase.auth.GoogleAuthProvider()); }
-    catch (e) {
-      const code = (e && e.code) || "";
-      setAuthError(AUTH_ERRORS[code] || `Full-page sign-in failed${code ? ` (${code})` : ""}.`);
-    }
-  };
   const signInGoogle = async () => {
     if (!fbAuth) { setAuthError("Firebase failed to load, so sign-in is unavailable. Check your connection and reload."); return; }
     setAuthError(""); setAuthStalled(false);
@@ -2393,7 +2378,6 @@ function AllyCRM() {
     } catch (e) {
       clearTimeout(stall);
       const code = (e && e.code) || "";
-      if (code === "auth/popup-blocked") { setAuthError(AUTH_ERRORS[code]); await signInRedirect(); return; }
       const known = AUTH_ERRORS[code];
       if (known === "") return; // benign: a second popup superseded the first
       setAuthError(known || `Sign-in failed${code ? ` (${code})` : ""}. Try again, or reload the page.`);
@@ -2728,11 +2712,6 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
           {authError && (
             <div role="alert" style={{ marginTop: 14, padding: "9px 11px", borderRadius: 10, background: C.accentBg, border: `1px solid ${C.accentLine}`, fontSize: 11.5, lineHeight: 1.45, color: C.ink, textAlign: "left" }}>
               {authError}
-              {authStalled && (
-                <button onClick={signInRedirect} style={{ ...pillDark, marginTop: 9, padding: "7px 12px", fontSize: 12, width: "100%" }}>
-                  Sign in without a popup
-                </button>
-              )}
               <div style={{ marginTop: 6, color: MUT, fontSize: 10.5 }}>Origin: {window.location.origin}</div>
             </div>
           )}
