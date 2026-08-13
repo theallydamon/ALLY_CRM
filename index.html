@@ -1205,6 +1205,15 @@ function useCalendarAuth(crmUser) {
     connect(true);
   }, [gisReady, crmUser, connected, connect]);
 
+  /* Google can be momentarily unavailable while the CRM is restoring a signed in session. Keep
+     retrying silently until the durable account consent returns a fresh token, just as the Sheet
+     registry does. This never opens a permission window and stops after an explicit disconnect. */
+  useEffect(() => {
+    if (!gisReady || !crmUser || connected || revokedRef.current) return;
+    const id = setInterval(() => connect(true), 30000);
+    return () => clearInterval(id);
+  }, [gisReady, crmUser, connected, connect]);
+
   /* Background renewal. Re-requests a token shortly before the current one lapses, so a session
      left open all day never lands on an expired token mid-drag. Same silent path, so still no UI.
      Runs off the actual expiry rather than a fixed interval, because Google's lifetime is not
