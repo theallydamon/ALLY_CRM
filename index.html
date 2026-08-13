@@ -2343,6 +2343,12 @@ function AllyCRM() {
   useEffect(() => {
     if (!fbAuth) { setAuthReady(true); return; }
     const unsub = fbAuth.onAuthStateChanged((u) => { setUser(u); setAuthReady(true); });
+    /* Safari web apps do not preserve a popup opener reliably. Their login uses a full-page
+       redirect and lands back here, so collect that result before rendering the sign-in screen. */
+    fbAuth.getRedirectResult().catch((e) => {
+      const code = (e && e.code) || "";
+      if (code) setAuthError(AUTH_ERRORS[code] || `Sign-in failed (${code}). Try again.`);
+    });
     return unsub;
   }, []);
 
@@ -2364,10 +2370,19 @@ function AllyCRM() {
      Hence the stall timer: if the popup has not produced an answer in STALL_MS, we say so and
      offer the redirect flow, which does not depend on a popup at all. */
   const STALL_MS = 9000;
+  const isSavedWebApp = () => !!(window.navigator.standalone || (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches));
+  const signInRedirect = async (provider) => {
+    try { await fbAuth.signInWithRedirect(provider || new window.firebase.auth.GoogleAuthProvider()); }
+    catch (e) {
+      const code = (e && e.code) || "";
+      setAuthError(AUTH_ERRORS[code] || `Sign-in failed${code ? ` (${code})` : ""}. Try again.`);
+    }
+  };
   const signInGoogle = async () => {
     if (!fbAuth) { setAuthError("Firebase failed to load, so sign-in is unavailable. Check your connection and reload."); return; }
     setAuthError(""); setAuthStalled(false);
     const provider = new window.firebase.auth.GoogleAuthProvider();
+    if (isSavedWebApp()) { await signInRedirect(provider); return; }
     const stall = setTimeout(() => {
       setAuthStalled(true);
       setAuthError("The Google popup did not come back. This usually means the browser blocked it, or is blocking third-party storage for the sign-in window.");
@@ -2378,6 +2393,7 @@ function AllyCRM() {
     } catch (e) {
       clearTimeout(stall);
       const code = (e && e.code) || "";
+      if (code === "auth/popup-blocked") { await signInRedirect(provider); return; }
       const known = AUTH_ERRORS[code];
       if (known === "") return; // benign: a second popup superseded the first
       setAuthError(known || `Sign-in failed${code ? ` (${code})` : ""}. Try again, or reload the page.`);
