@@ -4136,8 +4136,8 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
                     </div>}
                     {col !== "Posted" && <PriorityControls item={i} onChange={(p) => updateItem(i.id, p)} hideDue />}
                     <div className="flex items-center gap-1 mt-1.5"><span className="ml-auto flex gap-1">
-                      {col === "Posted" ? <button onClick={(e) => { e.stopPropagation(); updateItem(i.id, { status: "Ready to Post", postedAt: null }); }} style={{ ...iconBtn, padding: 2 }} title="Restore to Ready to Post">Restore</button> : col !== "Ideas" && <button onClick={(e) => { e.stopPropagation(); move(i.id, -1); }} style={{ ...iconBtn, padding: 2 }} aria-label="Back">←</button>}
-                      {col !== "Posted" && col !== "Ready to Post" && <button onClick={(e) => { e.stopPropagation(); move(i.id, 1); }} style={{ ...iconBtn, padding: 2, color: C.mint }} aria-label="Forward">→</button>}
+                      {col === "Posted" ? <button onClick={(e) => { e.stopPropagation(); updateItem(i.id, { status: "Ready to Post", postedAt: null }); }} style={{ ...iconBtn, padding: 2, color: C.mint }} title="Restore to Ready to Post">←</button> : col !== "Ideas" && <button onClick={(e) => { e.stopPropagation(); move(i.id, -1); }} style={{ ...iconBtn, padding: 2, color: C.mint }} aria-label="Back" title="Move to previous stage">←</button>}
+                      {col !== "Posted" && <button onClick={(e) => { e.stopPropagation(); col === "Ready to Post" ? markPosted(i.id) : move(i.id, 1); }} style={{ ...iconBtn, padding: 2, color: C.mint }} aria-label="Forward" title={col === "Ready to Post" ? "Move to posted archive" : "Move to next stage"}>→</button>}
                       <button onClick={(e) => { e.stopPropagation(); remove(i.id); }} style={{ ...iconBtn, padding: 2 }} aria-label="Delete"><X size={11} /></button>
                     </span></div>
                   </div>
