@@ -480,6 +480,7 @@ const isApartmentUnlocked = (ally) => !!ally.apartment.unlockedOverride || ally.
 
 /* ---------- pipeline constants ---------- */
 const CONTENT_COLS = ["Ideas", "To Film", "To Edit", "Ready to Post"];
+const CONTENT_STAGES = [...CONTENT_COLS, "Posted"];
 const CONTENT_TINT = { Ideas: C.lilac, "To Film": C.amber, "To Edit": C.mint, "Ready to Post": C.sky, Posted: FAINT };
 const PIPELINE_TINT = { content: C.sky, musicContent: C.lilac, brandContent: C.rose };
 const PIPELINE_LABEL = { content: "Content", musicContent: "Music", brandContent: "Brand deals" };
@@ -1638,7 +1639,8 @@ function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, onDeleteEven
         if (ev.status === "cancelled" || !ev.start) return;
         const writable = c.role === "owner" || c.role === "writer";
         if (ev.start.date) {
-          out.push({ id: `${c.id}::${ev.id}`, title: ev.summary || "(no title)", calId: c.id, calName: c.name, writable, allDay: true,
+          const crmContentId = (((ev.extendedProperties || {}).private) || {}).allyCrmContentId || null;
+          out.push({ id: `${c.id}::${ev.id}`, crmContentId, title: ev.summary || "(no title)", calId: c.id, calName: c.name, writable, allDay: true,
             start: new Date(`${ev.start.date}T00:00:00`), end: new Date(`${(ev.end && ev.end.date) || ev.start.date}T00:00:00`) });
           return;
         }
@@ -1736,8 +1738,8 @@ function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, onDeleteEven
               {allDay.length > 0 && (
                 <div className="flex flex-col" style={{ gap: 2, padding: "3px 3px 0" }}>
                   {allDay.map((e) => (
-                    <span key={e.id} title={`${e.title} · ${e.calName} · all day`}
-                      style={{ fontSize: 9, padding: "1px 5px", borderRadius: 4, background: FILL, border: `1px solid ${LINE}`, color: MUT, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.title}</span>
+                    <button key={e.id} onClick={(ev) => { ev.stopPropagation(); if (e.crmContentId) onOpenTask && onOpenTask(e.crmContentId); }} title={`${e.title} · ${e.calName} · all day${e.crmContentId ? " · click to open card" : ""}`}
+                      style={{ fontFamily: "inherit", cursor: e.crmContentId ? "pointer" : "default", fontSize: 9, padding: "1px 5px", borderRadius: 4, background: FILL, border: `1px solid ${LINE}`, color: MUT, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.title}</button>
                   ))}
                 </div>
               )}
@@ -3176,9 +3178,17 @@ function CalendarChip({ cal, registry, crmEmail }) {
    this no longer has any subtabs. The calendar day grid lands directly above PriorityDashboard in
    step 3 — connection state lives in the header chip, not here, so the grid gets the full width. */
 function PersonalModule({ ally, mama, setAlly, setMama, go, q, navRequest, navigateToTask, completeTask, cal, onSchedule, onMove, onResize, onUnschedule, onDeleteEvent, syncTick }) {
+  const openCalendarTask = (id) => {
+    const parts = String(id || "").split(":");
+    if (parts.length === 2 && ["content", "brandContent", "musicContent"].includes(parts[0])) {
+      const item = ((ally[parts[0]] || {}).items || []).find((i) => i.id === parts[1]);
+      if (item) { navigateToTask({ id: item.id, navTab: "content", navSub: parts[0] === "brandContent" ? "brandDeals" : parts[0], navOpenId: item.id }); return; }
+    }
+    navigateToTask(collectPriorityTasks(ally, mama).find((task) => task.id === id));
+  };
   return (
     <section style={{ width: "100%", margin: 0, textAlign: "left" }}>
-      {cal && <DayGrid cal={cal} onSchedule={onSchedule} onMove={onMove} onResize={onResize} onUnschedule={onUnschedule} onDeleteEvent={onDeleteEvent} onOpenTask={(id) => navigateToTask(collectPriorityTasks(ally, mama).find((task) => task.id === id))} syncTick={syncTick} schedule={ally.schedule || {}} />}
+      {cal && <DayGrid cal={cal} onSchedule={onSchedule} onMove={onMove} onResize={onResize} onUnschedule={onUnschedule} onDeleteEvent={onDeleteEvent} onOpenTask={openCalendarTask} syncTick={syncTick} schedule={ally.schedule || {}} />}
       <PriorityDashboard ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} navigateToTask={navigateToTask} completeTask={completeTask} schedule={currentSchedule(ally.schedule)} />
     </section>
   );
@@ -3892,10 +3902,17 @@ function ScriptBox({ value, isHtml, open, onFocus, onChange, onToggle, big, plac
 
 function ContentModule({ data, setData, q, navRequest, onContentSchedule, registry }) {
 const [subtab, setSubtab] = useState("content");
+const [stageByPipeline, setStageByPipeline] = useState({ content: "Ideas", brandContent: "Ideas", musicContent: "Ideas" });
 const [calendarFocus, setCalendarFocus] = useState(null);
 /* a dashboard task pointing at the Music (or another) subtab needs this tab to actually land
 on that subtab, not just the default Board — same navRequest pattern Mama/Deals/LifeAdmin use. */
-useEffect(() => { if (navRequest && navRequest.navTab === "content" && navRequest.navSub) setSubtab(navRequest.navSub); }, [navRequest]);
+useEffect(() => {
+  if (!navRequest || navRequest.navTab !== "content" || !navRequest.navSub) return;
+  setSubtab(navRequest.navSub);
+  const pipelineKey = navRequest.navSub === "brandDeals" ? "brandContent" : navRequest.navSub;
+  const item = navRequest.navOpenId && ((data[pipelineKey] || {}).items || []).find((i) => i.id === navRequest.navOpenId);
+  if (item) setStageByPipeline((s) => ({ ...s, [pipelineKey]: item.status === "Posted" ? "Posted" : CONTENT_COLS.includes(item.status) ? item.status : "Ideas" }));
+}, [navRequest, data]);
 const tabs = [
 { id: "content", label: "Board" },
 { id: "brandDeals", label: "Brand Deals" },
@@ -3920,11 +3937,18 @@ return (
 <div className="flex items-center gap-2 mb-4 flex-wrap" style={{ fontSize: 11.5, color: registry.state === "synced" ? C.mint : registry.state === "error" ? C.rose : MUT }}>
   <span>{registry.state === "synced" ? "Skit registry synced" : registry.state === "syncing" ? "Saving skit registry" : registry.state === "connecting" ? "Connecting skit registry" : registry.active ? "Skit registry waiting for Google" : "Skit registry not connected"}</span>
   {registry.state !== "synced" && <button onClick={() => registry.connect(false)} disabled={!registry.ready} className="rounded-full px-2.5 py-1" style={{ cursor: registry.ready ? "pointer" : "wait", fontFamily: "inherit", fontSize: 10.5, background: C.lilacBg, border: `1px solid ${C.lilac}55`, color: C.lilac }}>{registry.active ? "Reconnect Sheet" : "Connect Sheet"}</button>}
-  {registry.error && <span style={{ color: C.rose }}>{registry.error}</span>}
+{registry.error && <span style={{ color: C.rose }}>{registry.error}</span>}
 </div>
-{subtab === "content" && <ContentPipeline data={data} setData={setData} q={q} pipelineKey="content" heading={null} onContentSchedule={onContentSchedule} />}
-{subtab === "brandDeals" && <ContentPipeline data={data} setData={setData} q={q} pipelineKey="brandContent" heading="Brand Deals" onContentSchedule={onContentSchedule} />}
-{subtab === "musicContent" && <ContentPipeline data={data} setData={setData} q={q} pipelineKey="musicContent" heading="Music" onContentSchedule={onContentSchedule} />}
+{["content", "brandDeals", "musicContent"].includes(subtab) && (() => {
+  const pipelineKey = subtab === "brandDeals" ? "brandContent" : subtab;
+  const stage = stageByPipeline[pipelineKey] || "Ideas";
+  return <>
+    <nav className="flex gap-2 mb-4 flex-wrap" style={{ justifyContent: "flex-start" }}>
+      {CONTENT_STAGES.map((stageId) => <button key={stageId} onClick={() => setStageByPipeline((s) => ({ ...s, [pipelineKey]: stageId }))} className="rounded-full px-3 py-1.5" style={{ background: stage === stageId ? CONTENT_TINT[stageId] || C.dark : C.card, border: `1px solid ${stage === stageId ? CONTENT_TINT[stageId] || C.dark : LINE}`, color: stage === stageId ? "#fff" : C.ink, cursor: "pointer", fontSize: 12, fontWeight: stage === stageId ? 700 : 500, fontFamily: "inherit" }}>{stageId === "Ideas" ? "Idea" : stageId === "Ready to Post" ? "To post" : stageId === "Posted" ? "Posted" : stageId}</button>)}
+    </nav>
+    <ContentPipeline data={data} setData={setData} q={q} pipelineKey={pipelineKey} heading={pipelineKey === "brandContent" ? "Brand Deals" : pipelineKey === "musicContent" ? "Music" : null} activeStage={stage} onContentSchedule={onContentSchedule} />
+  </>;
+})()}
 {calendarFocus && (() => {
 const item = ((data[calendarFocus.pipelineKey] || {}).items || []).find((z) => z.id === calendarFocus.id);
 if (!item) return null;
@@ -3949,7 +3973,7 @@ return (
 </section>
 );
 }
-function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = null, onContentSchedule }) {
+function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = null, activeStage = "Ideas", onContentSchedule }) {
   const content = data[pipelineKey];
   const h = contentHealth(content);
   const [title, setTitle] = useState("");
@@ -3978,7 +4002,9 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
   const remove = (id) => patch({ items: content.items.filter((i) => i.id !== id) });
   const updateItem = (id, p) => patch({ items: content.items.map((i) => (i.id === id ? { ...i, ...p } : i)) });
   const setPostDate = (item, date) => {
-    updateItem(item.id, { scheduledFor: date || null, schedOff: false });
+    /* A post date is the handoff into Ready to Post. Persist both values in the same update so the
+       card cannot remain in an old stage while Upcoming content reads a different state. */
+    updateItem(item.id, { status: "Ready to Post", scheduledFor: date || null, schedOff: false, scheduledAt: date ? todayISO() : null });
     if (onContentSchedule) onContentSchedule({ pipelineKey, itemId: item.id, date: date || null, title: item.title, description: item.desc || "" });
   };
   /* used to filter the item straight out of `items` — same as a permanent delete, just with no
@@ -4003,7 +4029,7 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
      board view automatically. The dedicated Content Calendar tab keeps its own unfiltered list, so
      nothing is actually deleted — it just stops showing here once its date has gone by. */
   /* reads through livePost so a muted post date drops out of Upcoming without losing the value */
-  const scheduled = content.items.filter((i) => i.status !== "Posted" && livePost(i) && i.scheduledFor >= todayISO()).sort((a, b) => a.scheduledFor.localeCompare(b.scheduledFor));
+  const scheduled = content.items.filter((i) => i.status === "Ready to Post" && livePost(i) && i.scheduledFor >= todayISO()).sort((a, b) => a.scheduledFor.localeCompare(b.scheduledFor));
 
 
   return (
@@ -4036,7 +4062,7 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
       </div>
       )}
 
-      <div className="rounded-2xl mb-4" style={{ ...card, borderRadius: 12, padding: 12 }}>
+      {activeStage === "Ideas" && <div className="rounded-2xl mb-4" style={{ ...card, borderRadius: 12, padding: 12 }}>
         <div className="flex gap-2 flex-wrap mb-2">
           <input value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} placeholder="Drop a skit idea in the bank…" className="flex-1 rounded-lg px-3 py-2" style={{ ...inputStyle, minWidth: 200, fontSize: 13.5 }} />
         </div>
@@ -4044,9 +4070,9 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
           <GrowingTextarea value={description} onChange={setDescription} placeholder="Description (optional) — the actual detail. Keeps the title short." rows={2} className="flex-1 rounded-lg px-3 py-2" style={{ ...inputStyle, minWidth: 200, fontSize: 13.5, lineHeight: 1.45 }} />
           <button onClick={add} style={{ ...pillDark, fontSize: 13, padding: "8px 16px" }}><Plus size={13} style={{ display: "inline", marginRight: 4 }} />Add idea</button>
         </div>
-      </div>
+      </div>}
 
-      {scheduled.length > 0 && (
+      {activeStage === "Ready to Post" && scheduled.length > 0 && (
         <div className="rounded-2xl mb-4" style={{ ...card, borderRadius: 12, padding: 16 }}>
           <div className="flex items-center gap-2 mb-2.5">
             <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 12.5, letterSpacing: "0.05em", textTransform: "uppercase", color: C.sky }}>Upcoming content</span>
@@ -4065,7 +4091,7 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
       )}
 
       <div className="grid gap-0" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", background: LINE, gap: 1, border: `1px solid ${LINE}`, borderRadius: 14, overflow: "hidden" }}>
-        {CONTENT_COLS.map((col) => {
+        {[activeStage].map((col) => {
           let cItems = content.items.filter((i) => i.status === col);
           if (ql) cItems = cItems.filter((i) => i.title.toLowerCase().includes(ql));
           const setColumnCards = (open) => setOpenDesc((o) => ({ ...o, ...Object.fromEntries(cItems.map((i) => [i.id, open])) }));
@@ -4086,7 +4112,7 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
                   <div key={i.id} data-nav-id={i.id} draggable onDragStart={(e) => { e.dataTransfer.setData("text/plain", i.id); e.dataTransfer.effectAllowed = "move"; }} onClick={toggleDesc} className="rounded-lg" style={{ cursor: "pointer", background: "rgba(255,255,255,0.035)", border: `1px solid ${LINE}`, borderLeft: `2px solid ${CONTENT_TINT[col]}`, borderRadius: 10, padding: "11px 13px" }}>
                     <InlineEdit value={i.title} onChange={(v) => updateItem(i.id, { title: v })} strong bubbleClicks />{livePost(i) && <span title={"Posts on " + i.scheduledFor} style={{ marginLeft: 6, fontSize: 12 }}>📅</span>}<button onClick={(e) => { e.stopPropagation(); setExpandedId(i.id); }} style={{ ...iconBtn, padding: 2, marginLeft: 6 }} aria-label="Expand description" title="Expand description to full screen">⤢</button>
                     <ScriptBox value={i.desc || ""} isHtml={!!i.descHtml} open={descOpen} onFocus={() => openIfNot(i.id)} onChange={(v) => updateItem(i.id, { desc: v, descHtml: true })} onToggle={toggleDesc} />
-                    <div className="flex items-center gap-2 mt-1.5 flex-wrap" style={{ fontSize: 10.5 }}>
+                    {col !== "Posted" && <div className="flex items-center gap-2 mt-1.5 flex-wrap" style={{ fontSize: 10.5 }}>
                       {/* TWO DIFFERENT DATES, and they were being mistaken for each other. Each now sits
                           in its own bordered, colour-coded block with an unambiguous name:
                             DO BY   (amber) — finish this stage's work
@@ -4106,12 +4132,12 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
                         <input type="date" value={i.scheduledFor || ""} onClick={(e) => e.stopPropagation()} onChange={(e) => setPostDate(i, e.target.value)} className="rounded-md" style={{ ...darkInput, fontSize: 10.5, padding: "2px 4px", opacity: i.schedOff ? 0.45 : 1 }} aria-label="Post on — publish date" title="Publish it on this date" />
                         <DueChip due={i.scheduledFor} off={i.schedOff} onToggle={() => updateItem(i.id, { schedOff: !i.schedOff })} />
                       </span>
-                      {col === "To Edit" && <button onClick={(e) => { e.stopPropagation(); markPosted(i.id); }} className="rounded-full px-2 py-0.5" style={{ fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", background: `${C.mint}1a`, border: `1px solid ${C.mint}55`, color: C.mint }} title="Log it as posted">✓ Posted</button>}
-                    </div>
-                    <PriorityControls item={i} onChange={(p) => updateItem(i.id, p)} hideDue />
+                      {col === "Ready to Post" && <button onClick={(e) => { e.stopPropagation(); markPosted(i.id); }} className="rounded-full px-2 py-0.5" style={{ fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", background: `${C.mint}1a`, border: `1px solid ${C.mint}55`, color: C.mint }} title="Move to posted archive">✓ Posted</button>}
+                    </div>}
+                    {col !== "Posted" && <PriorityControls item={i} onChange={(p) => updateItem(i.id, p)} hideDue />}
                     <div className="flex items-center gap-1 mt-1.5"><span className="ml-auto flex gap-1">
-                      {col !== "Idea" && <button onClick={(e) => { e.stopPropagation(); move(i.id, -1); }} style={{ ...iconBtn, padding: 2 }} aria-label="Back">←</button>}
-                      {CONTENT_COLS.indexOf(col) < CONTENT_COLS.length - 1 && <button onClick={(e) => { e.stopPropagation(); move(i.id, 1); }} style={{ ...iconBtn, padding: 2, color: C.mint }} aria-label="Forward">→</button>}
+                      {col === "Posted" ? <button onClick={(e) => { e.stopPropagation(); updateItem(i.id, { status: "Ready to Post", postedAt: null }); }} style={{ ...iconBtn, padding: 2 }} title="Restore to Ready to Post">Restore</button> : col !== "Ideas" && <button onClick={(e) => { e.stopPropagation(); move(i.id, -1); }} style={{ ...iconBtn, padding: 2 }} aria-label="Back">←</button>}
+                      {col !== "Posted" && col !== "Ready to Post" && <button onClick={(e) => { e.stopPropagation(); move(i.id, 1); }} style={{ ...iconBtn, padding: 2, color: C.mint }} aria-label="Forward">→</button>}
                       <button onClick={(e) => { e.stopPropagation(); remove(i.id); }} style={{ ...iconBtn, padding: 2 }} aria-label="Delete"><X size={11} /></button>
                     </span></div>
                   </div>
