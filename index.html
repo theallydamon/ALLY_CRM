@@ -2908,7 +2908,7 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
               {tab === "content" && <ContentModule data={ally} setData={setAlly} q={q} navRequest={navRequest} onContentSchedule={syncContentCalendar} registry={registry} />}
               {tab === "lifeAdmin" && <LifeAdminModule data={ally} setData={setAlly} q={q} />}
               {tab === "deals" && <DealsModule data={ally} setData={setAlly} q={q} navRequest={navRequest} />}
-              {tab === "mama" && <MamaModule data={mama} setData={setMama} q={q} navRequest={navRequest} navigateToTask={navigateToTask} completeTask={completeTask} />}
+              {tab === "mama" && <MamaModule data={mama} setData={setMama} ally={ally} setAlly={setAlly} q={q} navRequest={navRequest} navigateToTask={navigateToTask} completeTask={completeTask} />}
             </div>
           </div>
 
@@ -3193,10 +3193,10 @@ function CalendarChip({ cal, registry, crmEmail }) {
 /* HOME keeps one task category visible at a time. This gives every category its own larger
    chip board instead of squeezing four cards into one row. */
 function PersonalModule({ ally, mama, setAlly, setMama, go, q, navRequest, navigateToTask, completeTask, cal, onSchedule, onMove, onResize, onUnschedule, onDeleteEvent, syncTick }) {
-  const [sub, setSub] = useState("lifeAdmin");
+  const [sub, setSub] = useState("calendar");
   const subs = [
-    { id: "lifeAdmin", emoji: "✅", label: "General Tasks" },
-    { id: "aiTasks", emoji: "✨", label: "AI Tasks" },
+    { id: "calendar", emoji: "📅", label: "Calendar" },
+    { id: "lifeAdmin", emoji: "✅", label: "Life Admin" },
     { id: "content", emoji: "🎬", label: "Comedy Content" },
     { id: "music", emoji: "🎵", label: "Music Content" },
     { id: "mama", emoji: "🧑‍🎤", label: "Mama" },
@@ -3211,15 +3211,14 @@ function PersonalModule({ ally, mama, setAlly, setMama, go, q, navRequest, navig
   };
   return (
     <section style={{ width: "100%", margin: 0, textAlign: "left" }}>
-      {cal && <DayGrid cal={cal} onSchedule={onSchedule} onMove={onMove} onResize={onResize} onUnschedule={onUnschedule} onDeleteEvent={onDeleteEvent} onOpenTask={openCalendarTask} syncTick={syncTick} schedule={ally.schedule || {}} />}
       <nav className="flex gap-2 mb-6 flex-wrap">
         {subs.map(({ id, emoji, label }) => {
           const on = sub === id;
           return <button key={id} onClick={() => setSub(id)} className="flex items-center gap-2 rounded-full px-4 py-2" style={{ background: on ? C.dark : C.card, border: `1px solid ${on ? C.dark : LINE}`, color: on ? C.canvas : C.ink, cursor: "pointer", fontSize: 14, fontWeight: on ? 600 : 400, fontFamily: "inherit" }}><span>{emoji}</span><span>{label}</span></button>;
         })}
       </nav>
-      {sub === "aiTasks"
-        ? <LifeAdminModule data={ally} setData={setAlly} q={q} boardKey="aiTasks" boardTitle="AI tasks" subtitle="AI-assisted work, kept separate from your general tasks so the full task chips stay easy to scan." />
+      {sub === "calendar"
+        ? cal && <DayGrid cal={cal} onSchedule={onSchedule} onMove={onMove} onResize={onResize} onUnschedule={onUnschedule} onDeleteEvent={onDeleteEvent} onOpenTask={openCalendarTask} syncTick={syncTick} schedule={ally.schedule || {}} />
         : <PriorityDashboard ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} navigateToTask={navigateToTask} completeTask={completeTask} schedule={currentSchedule(ally.schedule)} onlyPillar={sub} />}
     </section>
   );
@@ -3264,7 +3263,7 @@ const onSetStatus = ({ id, pipe, from }, status) => {
 return (
 <section>
 <div style={{ marginBottom: 16 }}>
-<h1 className="page-h1" style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700 }}>{onlyPillar ? (onlyPillar === "lifeAdmin" ? "General tasks" : MODULES[onlyPillar].label) : "Priorities right now"}</h1>
+<h1 className="page-h1" style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700 }}>{onlyPillar ? (onlyPillar === "lifeAdmin" ? "Life Admin" : onlyPillar === "music" ? MUSIC_CONTENT_MOD.label : MODULES[onlyPillar].label) : "Priorities right now"}</h1>
 </div>
 
 {/* ALL FOUR PILLARS ON ONE ROW, deliberately a fixed 4-up rather than auto-fit.
@@ -4834,7 +4833,7 @@ function DealsModule({ data, setData, q, navRequest }) {
 }
 
 /* ================= MAMA ================= */
-function MamaModule({ data, setData, q, navRequest, navigateToTask, completeTask }) {
+function MamaModule({ data, setData, ally, setAlly, q, navRequest, navigateToTask, completeTask }) {
   /* The "Task Dashboard" subtab was removed 29 Jul 2026 — HOME's Mama card already shows the same
      open-task rollup, so this was a second, competing dashboard. Creators and Admin Tasks are the
      two subtabs that hold actual data. Default landing is now Creators. */
@@ -4842,7 +4841,8 @@ function MamaModule({ data, setData, q, navRequest, navigateToTask, completeTask
   const openAdminTasks = data.tasks.filter((t) => t.status !== "Done").length;
   const subs = [
     { id: "creators", emoji: "🧑‍🎤", label: "Creators", count: data.creators.length },
-    { id: "adminTasks", emoji: "✅", label: "Admin Tasks", count: openAdminTasks },
+    { id: "adminTasks", emoji: "✅", label: "Life Admin", count: openAdminTasks },
+    { id: "aiTasks", emoji: "✨", label: "AI Tasks", count: ((ally.aiTasks || {}).items || []).filter((t) => t.status !== "Done").length },
   ];
   /* a dashboard task (this tab's own mini one, or the main Priorities hub) targets a specific
      subtab via navRequest.navSub — jump there the moment that request lands, then
@@ -4865,6 +4865,7 @@ function MamaModule({ data, setData, q, navRequest, navigateToTask, completeTask
       </nav>
       {sub === "creators" && <Creators data={data} setData={setData} q={q} navRequest={navRequest} />}
       {sub === "adminTasks" && <AdminTasks data={data} setData={setData} />}
+      {sub === "aiTasks" && <LifeAdminModule data={ally} setData={setAlly} q={q} boardKey="aiTasks" boardTitle="AI Tasks" subtitle="AI work, separate from Mama life admin so its tasks stay easy to scan." />}
     </section>
   );
 }
