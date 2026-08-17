@@ -1,5 +1,8 @@
 name: Deploy to GitHub Pages
 
+# Retry marker: this publish is intentionally retriggered after GitHub's runner failed to fetch
+# the deploy-pages action with transient 429/503 responses.
+
 on:
   push:
     branches: [main]
