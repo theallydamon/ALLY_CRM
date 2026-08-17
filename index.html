@@ -604,6 +604,46 @@ function migrateMamaTasks(tasks) {
     return { ...rest, status: t.status === "Doing" ? "To do" : t.status };
   });
 }
+
+const AI_PROJECT_NAMES = [
+  "DRIVE DUPLICATION (alexa)",
+  "AMPLIFIED BRIEFING (chan brief automation tool)",
+  "MAMA BRIEFING (zissy)",
+  "AMPLIFIED REPORTING (cassidies reporting tool)",
+  "MAMA VOICES",
+];
+const aiProjectForMamaTask = (task) => {
+  const text = `${task.title || ""} ${task.description || ""}`.toLowerCase();
+  if (/drive.*duplicat|duplicat.*drive|alexa/.test(text)) return AI_PROJECT_NAMES[0];
+  if (/amplified.*brief|chan|brief.*automation/.test(text)) return AI_PROJECT_NAMES[1];
+  if (/mama.*brief|ziss/.test(text)) return AI_PROJECT_NAMES[2];
+  if (/amplified.*report|cassid/.test(text)) return AI_PROJECT_NAMES[3];
+  if (/mama.*voice|voice/.test(text)) return AI_PROJECT_NAMES[4];
+  return "Unsorted Mama Admin";
+};
+function moveMamaAdminTasksToAi(ally, mama) {
+  if (!ally || !mama) return { ally, mama };
+  const projects = ((ally.aiTasks || {}).projects || []).map((project) => ({ ...project, tasks: project.tasks || [] }));
+  const byName = new Map(projects.map((project) => [project.name, project]));
+  AI_PROJECT_NAMES.concat("Unsorted Mama Admin").forEach((name) => {
+    if (byName.has(name)) return;
+    const project = { id: uid(), name, tasks: [], created: todayISO() };
+    projects.push(project); byName.set(name, project);
+  });
+  const generalTasks = (ally.lifeAdmin && ally.lifeAdmin.items || []).slice();
+  (mama.tasks || []).forEach((task) => {
+    if (/film\s*io/i.test(`${task.title || ""} ${task.description || ""}`)) {
+      if (!generalTasks.some((item) => item.id === task.id)) generalTasks.push({ ...task, status: task.status || "To do" });
+      return;
+    }
+    const project = byName.get(aiProjectForMamaTask(task));
+    if (!project.tasks.some((item) => item.id === task.id)) project.tasks.push({ ...task, done: task.done !== undefined ? task.done : task.status === "Done" });
+  });
+  return {
+    ally: { ...ally, lifeAdmin: { ...(ally.lifeAdmin || {}), items: generalTasks }, aiTasks: { ...(ally.aiTasks || {}), projects } },
+    mama: { ...mama, tasks: [] },
+  };
+}
 const DEAL_STAGES = ["Brief", "Script", "Script approval", "Film", "Edit", "Final approval", "Posted"];
 /* Reel production stages. Each carries its own per-stage deadline (deal.stageDue[key]); the
    current stage (deal.stage) is what surfaces in the Priorities hub, titled by `hub`. When the
@@ -2020,6 +2060,7 @@ function AllyCRM() {
          once, the first time this loads after the change. */
       m = { ...m, tasks: (m.tasks || []).map((t) => t.links !== undefined ? t : { ...t, links: t.link ? [{ id: uid(), url: t.link, label: t.link.replace(/^https?:\/\//, "").slice(0, 30) }] : [] }) };
       m = { ...m, tasks: migrateMamaTasks(m.tasks) };
+      ({ ally: a, mama: m } = moveMamaAdminTasksToAi(a, m));
       setAlly(a); setMama(m); loaded.current = true; setLocalLoaded(true);
     })();
   }, []);
@@ -2435,7 +2476,8 @@ function AllyCRM() {
         const snap = await docRef.get();
         const remote = snap.exists ? snap.data() : null;
         if (remote && remote.ally && remote.mama) {
-          setAlly(migrateAlly(remote.ally)); setMama({ ...remote.mama, tasks: migrateMamaTasks(remote.mama.tasks) });
+          const migrated = moveMamaAdminTasksToAi(migrateAlly(remote.ally), { ...remote.mama, tasks: migrateMamaTasks(remote.mama.tasks) });
+          setAlly(migrated.ally); setMama(migrated.mama);
         } else {
           await docRef.set({ ally: allyRef.current, mama: mamaRef.current, updatedAt: Date.now() });
         }
@@ -4889,7 +4931,7 @@ function MamaModule({ data, setData, ally, setAlly, q, navRequest, navigateToTas
   const openAdminTasks = data.tasks.filter((t) => t.status !== "Done").length;
   const subs = [
     { id: "creators", emoji: "🧑‍🎤", label: "Creators", count: data.creators.length },
-    { id: "adminTasks", emoji: "✅", label: "Life Admin", count: openAdminTasks },
+    { id: "adminTasks", emoji: "✅", label: "Admin Tasks", count: openAdminTasks },
     { id: "aiTasks", emoji: "✨", label: "AI Tasks", count: ((ally.aiTasks || {}).projects || []).reduce((total, project) => total + (project.tasks || []).filter((t) => !t.done).length, 0) },
   ];
   /* a dashboard task (this tab's own mini one, or the main Priorities hub) targets a specific
