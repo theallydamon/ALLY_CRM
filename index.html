@@ -554,6 +554,11 @@ out = { ...out, musicContent: { ...out.musicContent, cadence: out.musicContent.c
   if (!out.lifeAdmin || !Array.isArray(out.lifeAdmin.items)) {
     out = { ...out, lifeAdmin: { items: (out.lifeAdmin && out.lifeAdmin.items) || [] } };
   }
+  /* AI work has its own Home board. Keep it separate from general tasks so its chips remain
+     readable at the larger single-board scale, while using the same task shape and priority rules. */
+  if (!out.aiTasks || !Array.isArray(out.aiTasks.items)) {
+    out = { ...out, aiTasks: { items: (out.aiTasks && out.aiTasks.items) || [] } };
+  }
   /* Brand deals moved from a single 7-step stage string ("Brief"..."Posted") to the Reel/Story
      model: a content piece, per-stage deadlines, and a Script box. Fold any old deal over once —
      map its old stage onto the nearest new Reel stage, carry its single `due` onto that stage's
@@ -980,6 +985,7 @@ const ALLY_SEED = {
   },
   deals: { deals: [], clients: [] },
   lifeAdmin: { items: [] },
+  aiTasks: { items: [] },
   /* MUSIC: two independent gated chains. Each step only opens once the one before it is ticked. */
   music: {
     chains: [
@@ -1429,7 +1435,14 @@ function useSkitRegistry(crmUser, ally) {
     clientRef.current.requestAccessToken({ prompt: silent ? "" : "consent" });
   }, [crmUser, ready]);
 
-  useEffect(() => { if (ready && crmUser && !tokenRef.current) connect(true); }, [ready, crmUser, connect]);
+  /* Calendar and Sheets use separate in-memory tokens. Start the registry immediately after the
+     calendar's silent request has been handed to GIS, rather than waiting for the 30-second
+     renewal loop or competing with that first request. */
+  useEffect(() => {
+    if (!ready || !crmUser || tokenRef.current) return;
+    const id = setTimeout(() => connect(true), 350);
+    return () => clearTimeout(id);
+  }, [ready, crmUser, connect]);
   useEffect(() => {
     if (!ready || !crmUser) return;
     const id = setInterval(() => { if (!tokenRef.current || Date.now() >= tokenExpiryRef.current) connect(true); }, 30000);
@@ -2366,7 +2379,10 @@ function AllyCRM() {
     setAuthError(""); setAuthStalled(false);
     const client = window.google.accounts.oauth2.initTokenClient({
       client_id: GOOGLE_CLIENT_ID,
-      scope: "openid email profile",
+      /* One deliberate sign-in grants the identity, Calendar and Skit Registry scopes together.
+         The two feature hooks then silently obtain and renew their own memory-only tokens for the
+         rest of this open-app session; no 30-second stagger or second permission prompt. */
+      scope: `openid email profile ${CAL_SCOPES} ${SKIT_SCOPE}`,
       callback: async (response) => {
         if (!response || response.error || !response.access_token) {
           setAuthError("Google sign-in did not finish. Try again."); return;
@@ -3174,10 +3190,17 @@ function CalendarChip({ cal, registry, crmEmail }) {
   );
 }
 
-/* HOME. Life Admin used to live here as a subtab; it is now a top-level tab in its own right, so
-   this no longer has any subtabs. The calendar day grid lands directly above PriorityDashboard in
-   step 3 — connection state lives in the header chip, not here, so the grid gets the full width. */
+/* HOME keeps one task category visible at a time. This gives every category its own larger
+   chip board instead of squeezing four cards into one row. */
 function PersonalModule({ ally, mama, setAlly, setMama, go, q, navRequest, navigateToTask, completeTask, cal, onSchedule, onMove, onResize, onUnschedule, onDeleteEvent, syncTick }) {
+  const [sub, setSub] = useState("lifeAdmin");
+  const subs = [
+    { id: "lifeAdmin", emoji: "✅", label: "General Tasks" },
+    { id: "aiTasks", emoji: "✨", label: "AI Tasks" },
+    { id: "content", emoji: "🎬", label: "Comedy Content" },
+    { id: "music", emoji: "🎵", label: "Music Content" },
+    { id: "mama", emoji: "🧑‍🎤", label: "Mama" },
+  ];
   const openCalendarTask = (id) => {
     const parts = String(id || "").split(":");
     if (parts.length === 2 && ["content", "brandContent", "musicContent"].includes(parts[0])) {
@@ -3189,13 +3212,21 @@ function PersonalModule({ ally, mama, setAlly, setMama, go, q, navRequest, navig
   return (
     <section style={{ width: "100%", margin: 0, textAlign: "left" }}>
       {cal && <DayGrid cal={cal} onSchedule={onSchedule} onMove={onMove} onResize={onResize} onUnschedule={onUnschedule} onDeleteEvent={onDeleteEvent} onOpenTask={openCalendarTask} syncTick={syncTick} schedule={ally.schedule || {}} />}
-      <PriorityDashboard ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} navigateToTask={navigateToTask} completeTask={completeTask} schedule={currentSchedule(ally.schedule)} />
+      <nav className="flex gap-2 mb-6 flex-wrap">
+        {subs.map(({ id, emoji, label }) => {
+          const on = sub === id;
+          return <button key={id} onClick={() => setSub(id)} className="flex items-center gap-2 rounded-full px-4 py-2" style={{ background: on ? C.dark : C.card, border: `1px solid ${on ? C.dark : LINE}`, color: on ? C.canvas : C.ink, cursor: "pointer", fontSize: 14, fontWeight: on ? 600 : 400, fontFamily: "inherit" }}><span>{emoji}</span><span>{label}</span></button>;
+        })}
+      </nav>
+      {sub === "aiTasks"
+        ? <LifeAdminModule data={ally} setData={setAlly} q={q} boardKey="aiTasks" boardTitle="AI tasks" subtitle="AI-assisted work, kept separate from your general tasks so the full task chips stay easy to scan." />
+        : <PriorityDashboard ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} navigateToTask={navigateToTask} completeTask={completeTask} schedule={currentSchedule(ally.schedule)} onlyPillar={sub} />}
     </section>
   );
 }
 
 /* ================= PRIORITY DASHBOARD ================= */
-function PriorityDashboard({ ally, mama, go, setAlly, setMama, navigateToTask, completeTask, schedule }) {
+function PriorityDashboard({ ally, mama, go, setAlly, setMama, navigateToTask, completeTask, schedule, onlyPillar }) {
 const tasks = collectPriorityTasks(ally, mama);
 const byPillar = Object.fromEntries(PRIORITY_PILLARS.map((k) => [k, tasks.filter((t) => t.pillar === k)]));
 const contentPostUrgency = computeContentUrgency(ally.content);
@@ -3212,7 +3243,7 @@ computePillarFillPercent(byPillar[k])]));
    dragged out of them onto the calendar. The rings still show urgency; only the position is frozen.
    The number badge is therefore position, not rank. */
 const CARD_ORDER = ["lifeAdmin", "content", "music", "mama"];
-const ranked = CARD_ORDER.filter((k) => PRIORITY_PILLARS.includes(k));
+const ranked = CARD_ORDER.filter((k) => PRIORITY_PILLARS.includes(k) && (!onlyPillar || k === onlyPillar));
 const rankOf = Object.fromEntries(ranked.map((k, i) => [k, i + 1]));
 const onDropPriority = (pillar, id, patch) => setPillarItemPriority(setAlly, setMama, pillar, id, patch);
 
@@ -3233,7 +3264,7 @@ const onSetStatus = ({ id, pipe, from }, status) => {
 return (
 <section>
 <div style={{ marginBottom: 16 }}>
-<h1 className="page-h1" style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700 }}>Priorities right now</h1>
+<h1 className="page-h1" style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700 }}>{onlyPillar ? (onlyPillar === "lifeAdmin" ? "General tasks" : MODULES[onlyPillar].label) : "Priorities right now"}</h1>
 </div>
 
 {/* ALL FOUR PILLARS ON ONE ROW, deliberately a fixed 4-up rather than auto-fit.
@@ -3242,7 +3273,7 @@ is dragged from a card UP into the calendar, so a card on a lower row would forc
 travel across two other cards to get there. Fixed columns keep every card the same distance from
 the grid. The class (not inline style) is so the media queries below can collapse it on narrow
 screens, where a 4-up would be unusable and there is no dragging anyway. */}
-<div className="grid gap-3 pillar-grid">
+<div className={`grid gap-3${onlyPillar ? "" : " pillar-grid"}`} style={onlyPillar ? { gridTemplateColumns: "minmax(0, 1fr)" } : undefined}>
 {ranked.map((k) => (
 k === "content"
 ? <ContentPillarCard key={k} content={ally.content} pipelineKey="content" mod={MODULES.content} go={go} rank={rankOf[k]} taskPct={contentTaskPct} postPct={contentPostUrgency.pct} onNavigate={navigateToTask} onComplete={completeTask} extraItems={ally.brandContent.items} schedule={schedule} onSetStatus={onSetStatus} />
@@ -4451,21 +4482,21 @@ function ApartmentModule({ data, setData, unlocked, go, q }) {
 /* Personal catch-all pillar: a flat kanban of your own life stuff (paperwork, errands, calls to
    make), sharing the exact same due-date/priority engine as every other pillar (PriorityControls,
    computeUrgency) so it feeds the main Priorities dashboard with zero special-casing. */
-function LifeAdminModule({ data, setData, q }) {
+function LifeAdminModule({ data, setData, q, boardKey = "lifeAdmin", boardTitle = "General tasks", subtitle = "Your own stuff: paperwork, errands, calls to make. Same due date and priority logic as everywhere else." }) {
   const [title, setTitle] = useState(""); const [description, setDescription] = useState(""); const [due, setDue] = useState("");
   const [openDesc, setOpenDesc] = useState({});
-  const items = data.lifeAdmin.items || [];
+  const items = (data[boardKey] && data[boardKey].items) || [];
   const ql = (q || "").toLowerCase();
   const add = () => {
     const t = title.trim(); if (!t) return;
     const taskDue = due || defaultTaskDue();
-    setData((d) => ({ ...d, lifeAdmin: { ...d.lifeAdmin, items: [{ id: uid(), title: t, description: description.trim(), status: "To do", created: todayISO(), due: taskDue, priority: priorityForNewTask(taskDue), lastProgress: null }, ...(d.lifeAdmin.items || [])] } }));
+    setData((d) => ({ ...d, [boardKey]: { ...(d[boardKey] || { items: [] }), items: [{ id: uid(), title: t, description: description.trim(), status: "To do", created: todayISO(), due: taskDue, priority: priorityForNewTask(taskDue), lastProgress: null }, ...((d[boardKey] || {}).items || [])] } }));
     setTitle(""); setDescription(""); setDue("");
   };
-  const toggleDone = (id) => setData((d) => ({ ...d, lifeAdmin: { ...d.lifeAdmin, items: d.lifeAdmin.items.map((t) => { if (t.id !== id) return t; const done = t.status === "Done"; return { ...t, status: done ? "To do" : "Done", doneAt: done ? null : Date.now() }; }) } }));
-  const update = (id, p) => setData((d) => ({ ...d, lifeAdmin: { ...d.lifeAdmin, items: d.lifeAdmin.items.map((t) => (t.id === id ? { ...t, ...p } : t)) } }));
-  const remove = (id) => setData((d) => ({ ...d, lifeAdmin: { ...d.lifeAdmin, items: d.lifeAdmin.items.filter((t) => t.id !== id) } }));
-  const clearDone = () => setData((d) => ({ ...d, lifeAdmin: { ...d.lifeAdmin, items: d.lifeAdmin.items.filter((t) => t.status !== "Done") } }));
+  const toggleDone = (id) => setData((d) => ({ ...d, [boardKey]: { ...d[boardKey], items: d[boardKey].items.map((t) => { if (t.id !== id) return t; const done = t.status === "Done"; return { ...t, status: done ? "To do" : "Done", doneAt: done ? null : Date.now() }; }) } }));
+  const update = (id, p) => setData((d) => ({ ...d, [boardKey]: { ...d[boardKey], items: d[boardKey].items.map((t) => (t.id === id ? { ...t, ...p } : t)) } }));
+  const remove = (id) => setData((d) => ({ ...d, [boardKey]: { ...d[boardKey], items: d[boardKey].items.filter((t) => t.id !== id) } }));
+  const clearDone = () => setData((d) => ({ ...d, [boardKey]: { ...d[boardKey], items: d[boardKey].items.filter((t) => t.status !== "Done") } }));
   const matched = ql ? items.filter((t) => t.title.toLowerCase().includes(ql) || (t.description || "").toLowerCase().includes(ql)) : items;
   const visible = matched.filter((t) => t.status !== "Done");
 const __groupDefs = [{ key: "High", label: "High priority" }, { key: "Medium", label: "Medium priority" }, { key: "Low", label: "Low priority" }];
@@ -4491,7 +4522,7 @@ return (
 
   return (
     <section>
-      <SectionHead title="Life admin" sub="Your own stuff: paperwork, errands, calls to make. Same due date and priority logic as everywhere else." />
+      <SectionHead title={boardTitle} sub={subtitle} />
       <div className="rounded-2xl p-4 mb-6" style={{ ...card, borderRadius: 16 }}>
         <div className="flex gap-2 flex-wrap mb-2">
           <input value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} placeholder="What needs doing?" className="flex-1 rounded-lg px-3 py-2" style={{ ...inputStyle, minWidth: 200 }} />
