@@ -4892,6 +4892,7 @@ function AITaskProjects({ data, setData, q }) {
   };
   const update = (id, patch) => patchProjects(projects.map((p) => p.id === id ? { ...p, ...patch } : p));
   const remove = (id) => patchProjects(projects.filter((p) => p.id !== id));
+  const toggleProject = (id, isOpen) => setClosed({ ...closed, [id]: isOpen });
   return (
     <section>
       <SectionHead title="AI Tasks" sub="Create a project first, then keep all of its AI tasks together underneath." />
@@ -4908,7 +4909,7 @@ function AITaskProjects({ data, setData, q }) {
           const remaining = tasks.filter((t) => !t.done).length;
           return <div key={project.id} className="rounded-2xl p-4" style={{ ...card, borderRadius: 16, borderLeft: `3px solid ${C.sky}` }}>
             <div className="flex items-center gap-2">
-              <button onClick={() => setClosed((s) => ({ ...s, [project.id]: open }))} style={{ ...iconBtn, padding: 2 }} aria-label={open ? "Collapse project" : "Expand project" }}>{open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}</button>
+              <button onClick={() => toggleProject(project.id, open)} style={{ ...iconBtn, padding: 2 }} aria-label={open ? "Collapse project" : "Expand project"}>{open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}</button>
               <div className="flex-1 min-w-0"><InlineEdit value={project.name} onChange={(v) => update(project.id, { name: v })} strong /></div>
               <span style={{ fontSize: 11, color: MUT }}>{remaining} open</span>
               <button onClick={() => remove(project.id)} style={{ ...iconBtn, padding: 2 }} aria-label="Delete project"><X size={13} /></button>
