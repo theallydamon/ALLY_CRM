@@ -554,10 +554,12 @@ out = { ...out, musicContent: { ...out.musicContent, cadence: out.musicContent.c
   if (!out.lifeAdmin || !Array.isArray(out.lifeAdmin.items)) {
     out = { ...out, lifeAdmin: { items: (out.lifeAdmin && out.lifeAdmin.items) || [] } };
   }
-  /* AI work has its own Home board. Keep it separate from general tasks so its chips remain
-     readable at the larger single-board scale, while using the same task shape and priority rules. */
-  if (!out.aiTasks || !Array.isArray(out.aiTasks.items)) {
-    out = { ...out, aiTasks: { items: (out.aiTasks && out.aiTasks.items) || [] } };
+  /* AI work is grouped into projects. Preserve any earlier flat list by moving it into one
+     General AI Tasks project, and translate the older Life Admin completion field. */
+  if (!out.aiTasks || !Array.isArray(out.aiTasks.projects)) {
+    const oldItems = (out.aiTasks && out.aiTasks.items) || [];
+    const tasks = oldItems.map((t) => ({ ...t, done: t.done !== undefined ? t.done : t.status === "Done" }));
+    out = { ...out, aiTasks: { projects: tasks.length ? [{ id: uid(), name: "General AI Tasks", tasks }] : [] } };
   }
   /* Brand deals moved from a single 7-step stage string ("Brief"..."Posted") to the Reel/Story
      model: a content piece, per-stage deadlines, and a Script box. Fold any old deal over once —
@@ -985,7 +987,7 @@ const ALLY_SEED = {
   },
   deals: { deals: [], clients: [] },
   lifeAdmin: { items: [] },
-  aiTasks: { items: [] },
+  aiTasks: { projects: [] },
   /* MUSIC: two independent gated chains. Each step only opens once the one before it is ticked. */
   music: {
     chains: [
@@ -4833,6 +4835,51 @@ function DealsModule({ data, setData, q, navRequest }) {
   );
 }
 
+/* ================= AI TASK PROJECTS ================= */
+function AITaskProjects({ data, setData, q }) {
+  const [name, setName] = useState("");
+  const [closed, setClosed] = useState({});
+  const projects = ((data.aiTasks || {}).projects || []);
+  const ql = (q || "").toLowerCase();
+  const shown = ql ? projects.filter((p) => p.name.toLowerCase().includes(ql) || (p.tasks || []).some((t) => `${t.title || ""} ${t.description || ""}`.toLowerCase().includes(ql))) : projects;
+  const patchProjects = (projects) => setData((d) => ({ ...d, aiTasks: { ...(d.aiTasks || {}), projects } }));
+  const add = () => {
+    const projectName = name.trim(); if (!projectName) return;
+    patchProjects([{ id: uid(), name: projectName, tasks: [], created: todayISO() }, ...projects]);
+    setName("");
+  };
+  const update = (id, patch) => patchProjects(projects.map((p) => p.id === id ? { ...p, ...patch } : p));
+  const remove = (id) => patchProjects(projects.filter((p) => p.id !== id));
+  return (
+    <section>
+      <SectionHead title="AI Tasks" sub="Create a project first, then keep all of its AI tasks together underneath." />
+      <div className="rounded-2xl p-4 mb-6" style={{ ...card, borderRadius: 16 }}>
+        <div className="flex gap-2">
+          <input value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} placeholder="New AI project…" className="flex-1 rounded-lg px-3 py-2" style={inputStyle} />
+          <button onClick={add} style={pillDark}><Plus size={14} style={{ display: "inline", marginRight: 4 }} />Add project</button>
+        </div>
+      </div>
+      <div className="flex flex-col gap-3">
+        {shown.map((project) => {
+          const open = !closed[project.id];
+          const tasks = project.tasks || [];
+          const remaining = tasks.filter((t) => !t.done).length;
+          return <div key={project.id} className="rounded-2xl p-4" style={{ ...card, borderRadius: 16, borderLeft: `3px solid ${C.sky}` }}>
+            <div className="flex items-center gap-2">
+              <button onClick={() => setClosed((s) => ({ ...s, [project.id]: open }))} style={{ ...iconBtn, padding: 2 }} aria-label={open ? "Collapse project" : "Expand project" }}>{open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}</button>
+              <div className="flex-1 min-w-0"><InlineEdit value={project.name} onChange={(v) => update(project.id, { name: v })} strong /></div>
+              <span style={{ fontSize: 11, color: MUT }}>{remaining} open</span>
+              <button onClick={() => remove(project.id)} style={{ ...iconBtn, padding: 2 }} aria-label="Delete project"><X size={13} /></button>
+            </div>
+            {open && <div className="mt-3" style={{ marginLeft: 26 }}><MiniTaskList tasks={tasks} onChange={(tasks) => update(project.id, { tasks })} composerAtBottom /></div>}
+          </div>;
+        })}
+        {shown.length === 0 && <Empty text={ql ? "No AI project matches your search." : "No AI projects yet. Add one above."} />}
+      </div>
+    </section>
+  );
+}
+
 /* ================= MAMA ================= */
 function MamaModule({ data, setData, ally, setAlly, q, navRequest, navigateToTask, completeTask }) {
   /* The "Task Dashboard" subtab was removed 29 Jul 2026 — HOME's Mama card already shows the same
@@ -4843,7 +4890,7 @@ function MamaModule({ data, setData, ally, setAlly, q, navRequest, navigateToTas
   const subs = [
     { id: "creators", emoji: "🧑‍🎤", label: "Creators", count: data.creators.length },
     { id: "adminTasks", emoji: "✅", label: "Life Admin", count: openAdminTasks },
-    { id: "aiTasks", emoji: "✨", label: "AI Tasks", count: ((ally.aiTasks || {}).items || []).filter((t) => t.status !== "Done").length },
+    { id: "aiTasks", emoji: "✨", label: "AI Tasks", count: ((ally.aiTasks || {}).projects || []).reduce((total, project) => total + (project.tasks || []).filter((t) => !t.done).length, 0) },
   ];
   /* a dashboard task (this tab's own mini one, or the main Priorities hub) targets a specific
      subtab via navRequest.navSub — jump there the moment that request lands, then
@@ -4866,7 +4913,7 @@ function MamaModule({ data, setData, ally, setAlly, q, navRequest, navigateToTas
       </nav>
       {sub === "creators" && <Creators data={data} setData={setData} q={q} navRequest={navRequest} />}
       {sub === "adminTasks" && <AdminTasks data={data} setData={setData} />}
-      {sub === "aiTasks" && <LifeAdminModule data={ally} setData={setAlly} q={q} boardKey="aiTasks" boardTitle="AI Tasks" subtitle="AI work, separate from Mama life admin so its tasks stay easy to scan." />}
+      {sub === "aiTasks" && <AITaskProjects data={ally} setData={setAlly} q={q} />}
     </section>
   );
 }
