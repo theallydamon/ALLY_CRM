@@ -832,6 +832,13 @@ pushContentTasks(ally.musicContent.items, "music", computeContentUrgency(ally.mu
     priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
     sourceType: "mamaCreator", navTab: "mama", navSub: "creators", navOpenId: cr.id, chaseOn: t.chaseOn || null,
   })));
+  /* AI work belongs to MAMA too: preserve the project in the chip title, then feed it through
+     the exact same urgency and High/Medium/Low lanes as creator and admin tasks. */
+  ((ally.aiTasks || {}).projects || []).forEach((project) => (project.tasks || []).filter((t) => !t.done && !t.paused).forEach((t) => out.push({
+    id: t.id, pillar: "mama", title: `${t.title} (${project.name})`, due: t.due || null,
+    priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
+    sourceType: "aiTask", navTab: "mama", navSub: "aiTasks", navOpenId: project.id, chaseOn: t.chaseOn || null,
+  })));
 (ally.lifeAdmin.items || []).filter((t) => t.status !== "Done" && !t.paused).forEach((t) => out.push({
     id: t.id, pillar: "lifeAdmin", title: t.title, due: t.due || null,
     priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
@@ -3034,6 +3041,14 @@ function setPillarItemPriority(setAlly, setMama, pillar, id, patch) {
       tasks: d.tasks.map((t) => (t.id === id ? { ...t, ...patch } : t)),
       creators: d.creators.map((cr) => ((cr.tasks || []).some((t) => t.id === id) ? { ...cr, tasks: cr.tasks.map((t) => (t.id === id ? { ...t, ...patch } : t)), updatedAt: Date.now() } : cr)),
     }));
+    setAlly((d) => ({
+      ...d,
+      aiTasks: { ...(d.aiTasks || {}), projects: ((d.aiTasks || {}).projects || []).map((project) => (
+        (project.tasks || []).some((t) => t.id === id)
+          ? { ...project, tasks: project.tasks.map((t) => (t.id === id ? { ...t, ...patch } : t)) }
+          : project
+      )) },
+    }));
     return;
   }
   if (pillar === "lifeAdmin") { setAlly((d) => ({ ...d, lifeAdmin: { ...d.lifeAdmin, items: d.lifeAdmin.items.map((t) => (t.id === id ? { ...t, ...patch } : t)) } })); return; } /* content has no draggable per-item priority — it's a single master signal, not handled here */
@@ -3079,6 +3094,16 @@ function completePriorityTask(setAlly, setMama, task) {
       return;
     case "mamaCreator":
       setMama((d) => ({ ...d, creators: d.creators.map((cr) => ((cr.tasks || []).some((t) => t.id === task.id) ? { ...cr, tasks: cr.tasks.map((t) => (t.id === task.id ? { ...t, done: true, doneAt: now } : t)), updatedAt: now } : cr)) }));
+      return;
+    case "aiTask":
+      setAlly((d) => ({
+        ...d,
+        aiTasks: { ...(d.aiTasks || {}), projects: ((d.aiTasks || {}).projects || []).map((project) => (
+          (project.tasks || []).some((t) => t.id === task.id)
+            ? { ...project, tasks: project.tasks.map((t) => (t.id === task.id ? { ...t, done: true, doneAt: now } : t)) }
+            : project
+        )) },
+      }));
       return;
 /* content's two hub lists ("To Film" deadlines, "To Edit" deadlines) each have their own
        "done" mechanism on the Content tab itself: ticking a "To Film" item advances it straight
