@@ -1,0 +1,413 @@
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+ --bg:#121215;--card:#1A1A1F;--card2:#212127;--line:#2E2E36;--line2:#3A3A44;
+ --ink:#EDECEF;--ink2:#B9B7C0;--mute:#8E8C97;
+ --red:#F04351;--red-dim:#8C2530;--red-soft:rgba(240,67,81,.12);
+ --mono:'Roboto Mono',ui-monospace,monospace;
+}
+body{background:var(--bg);color:var(--ink);font-family:'Roboto',system-ui,sans-serif;
+ font-size:16px;line-height:1.6;padding:0 0 100px;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1000px;margin:0 auto;padding:0 20px}
+
+header{padding:40px 0 22px}
+.eyebrow{font-family:var(--mono);font-size:11.5px;letter-spacing:.18em;text-transform:uppercase;color:var(--red)}
+h1{font-size:38px;font-weight:700;letter-spacing:-.02em;margin:10px 0 10px;line-height:1.1}
+h1 span{color:var(--red)}
+.sub{color:var(--ink2);font-size:15.5px;max-width:620px;font-weight:300;line-height:1.65}
+
+.bar{position:sticky;top:0;z-index:30;background:rgba(18,18,21,.96);backdrop-filter:blur(10px);
+ border-bottom:1px solid var(--line);padding:16px 0;margin-top:24px;
+ display:flex;gap:18px;align-items:center;flex-wrap:wrap}
+.track{flex:1;min-width:130px;height:5px;background:var(--line);border-radius:3px;display:flex;overflow:hidden}
+.tg{height:100%;background:var(--red);width:0;transition:width .3s}
+.ta{height:100%;background:var(--red-dim);width:0;transition:width .3s}
+.count{font-family:var(--mono);font-size:12.5px;color:var(--ink2);white-space:nowrap;letter-spacing:.02em}
+.key{display:flex;gap:16px;flex-wrap:wrap;font-size:13px;color:var(--mute)}
+.k{display:flex;align-items:center;gap:7px}
+.kd{width:10px;height:10px;border-radius:50%;border:1.5px solid var(--line2)}
+.kd.o{background:var(--red-dim);border-color:var(--red-dim)}
+.kd.g{background:var(--red);border-color:var(--red)}
+
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;margin-top:26px}
+.room{background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden;
+ transition:border-color .16s}
+.room:not(.open):hover{border-color:var(--line2)}
+.room.open{grid-column:1/-1;border-color:var(--line2)}
+.edge{height:3px;background:var(--ac)}
+.rhead{padding:20px 22px;display:flex;align-items:center;gap:15px;cursor:pointer;user-select:none}
+.ring{width:40px;height:40px;flex:none;border-radius:50%;display:grid;place-items:center}
+.ringin{background:var(--card);width:31px;height:31px;border-radius:50%;display:grid;place-items:center;font-size:16px}
+.rname{font-size:17px;font-weight:500;letter-spacing:.005em;color:var(--ink)}
+.rmeta{font-family:var(--mono);font-size:12px;color:var(--mute);margin-top:3px;letter-spacing:.01em}
+.chev{margin-left:auto;font-size:13px;color:var(--mute);white-space:nowrap}
+.chips{display:flex;flex-wrap:wrap;gap:7px;padding:0 22px 20px}
+.chip{font-size:13px;padding:5px 11px;border-radius:14px;background:var(--card2);color:var(--ink2);
+ border:1px solid transparent;white-space:nowrap;max-width:190px;overflow:hidden;text-overflow:ellipsis}
+.chip.o{border-color:var(--red-dim);color:#E4A3AA}
+.chip.g{background:var(--red-soft);border-color:var(--red);color:#FF8B95}
+
+.list{padding:0 22px 8px}
+.row{display:grid;grid-template-columns:14px 1fr;gap:14px;padding:18px 0;border-top:1px solid var(--line)}
+.row .mark{width:11px;height:11px;border-radius:50%;border:1.5px solid var(--line2);margin-top:7px;
+ cursor:pointer;flex:none;transition:.15s}
+.row.o .mark{background:var(--red-dim);border-color:var(--red-dim)}
+.row.g .mark{background:var(--red);border-color:var(--red)}
+.nm{font-size:16px;line-height:1.45;color:var(--ink);font-weight:400}
+.row.g .nm{color:#fff}
+.pr{font-family:var(--mono);font-size:13px;color:var(--mute);margin-left:10px;white-space:nowrap}
+.nt{font-size:13.5px;color:var(--ink2);margin-top:6px;line-height:1.55;font-weight:300;
+ padding-left:11px;border-left:2px solid var(--red-dim)}
+.ctl{display:flex;gap:8px;align-items:center;margin-top:13px;flex-wrap:wrap}
+.pill{font-size:12px;letter-spacing:.05em;padding:7px 14px;border-radius:6px;border:1px solid var(--line2);
+ background:none;cursor:pointer;color:var(--ink2);transition:.15s;font-family:'Roboto',sans-serif}
+.pill:hover{border-color:var(--mute);color:var(--ink)}
+.pill[aria-pressed="true"][data-s="TEMU"]{background:#F5610A;border-color:#F5610A;color:#15100A;font-weight:500}
+.pill[aria-pressed="true"][data-s="SHEIN"]{background:var(--ink);border-color:var(--ink);color:#15151A;font-weight:500}
+.pill[aria-pressed="true"][data-s="LOCAL"]{background:#4A90E2;border-color:#4A90E2;color:#0B1420;font-weight:500}
+input.lk{flex:1;min-width:190px;font-family:var(--mono);font-size:13px;padding:8px 12px;
+ border:1px solid var(--line2);border-radius:6px;background:var(--bg);color:var(--ink)}
+input.lk::placeholder{color:var(--mute)}
+input.lk:focus{outline:none;border-color:var(--red)}
+.op{font-size:13px;color:#7FB3F0;text-decoration:none;padding:0 4px}
+.got{font-size:12px;letter-spacing:.05em;border:1px solid var(--red-dim);color:#E4A3AA;background:none;
+ padding:7px 14px;border-radius:6px;cursor:pointer;font-family:'Roboto',sans-serif}
+.got:hover{border-color:var(--red);color:var(--red)}
+.row.g .got{background:var(--red);color:#fff;border-color:var(--red)}
+.del{font-size:15px;color:#4A4A55;background:none;border:none;cursor:pointer;padding:6px 8px;line-height:1}
+.del:hover{color:var(--red)}
+.add{display:flex;gap:10px;padding:18px 0 22px;border-top:1px solid var(--line)}
+.add input{flex:1;font-size:15px;padding:11px 14px;border:1px solid var(--line);border-radius:8px;
+ background:var(--card2);color:var(--ink);font-family:'Roboto',sans-serif}
+.add input::placeholder{color:var(--mute)}
+.add input:focus{outline:none;border-color:var(--line2)}
+.add button{font-size:13px;letter-spacing:.06em;border:1px solid var(--line2);background:none;
+ padding:0 20px;border-radius:8px;cursor:pointer;color:var(--ink2);font-family:'Roboto',sans-serif}
+.add button:hover{border-color:var(--red);color:var(--red)}
+.tagnew{font-family:var(--mono);font-size:10px;letter-spacing:.1em;color:var(--red);
+ border:1px solid var(--red-dim);padding:2px 7px;border-radius:4px;margin-left:10px;vertical-align:2px}
+footer{margin-top:48px;padding-top:20px;border-top:1px solid var(--line);font-size:13.5px;color:var(--mute);
+ display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.rs{font-size:13px;color:var(--mute);background:none;border:none;cursor:pointer;padding:0}
+.rs:hover{color:var(--red)}
+@media(max-width:560px){h1{font-size:30px}.grid{grid-template-columns:1fr}
+ .rhead{padding:17px 18px}.list,.chips{padding-left:18px;padding-right:18px}}
+</style>
+
+<div class="wrap">
+<header>
+  <div class="eyebrow">The Ilex &middot; Newinbosch &middot; move-in 24 August</div>
+  <h1>Furnishing <span>Board</span></h1>
+  <div class="sub">Open a room, set where you'll buy each thing, paste the link. Mark it decided only once you've actually committed. Items tagged NEW are gaps you hadn't listed.</div>
+</header>
+
+<div class="bar">
+  <div class="track"><div class="tg" id="tg"></div><div class="ta" id="ta"></div></div>
+  <span class="count" id="ct"></span>
+  <span class="key">
+    <span class="k"><span class="kd"></span>Open</span>
+    <span class="k"><span class="kd o"></span>Shortlisted</span>
+    <span class="k"><span class="kd g"></span>Decided</span>
+  </span>
+</div>
+
+<div class="grid" id="grid"></div>
+
+<footer><span id="stamp">Saved automatically.</span><button class="rs" id="rs">Clear everything</button></footer>
+</div>
+
+<script>
+const D=[
+["Bedroom","🛏","#F04351",[
+["bed","Double bed set, Sealy Crawford Firm 137×188","R5,999","LOCAL","Order by Thursday. Confirm second-floor delivery.",0],
+["prot","Mattress protector, waterproof","","LOCAL","Required for the 100-night comfort exchange.",0],
+["pill","Pillows ×2","","LOCAL","",0],
+["duv","Duvet inner, double","","LOCAL","",0],
+["dcov","Duvet cover set","","SHEIN","",0],
+["sheet","Fitted sheets ×2 sets","","SHEIN","Two sets. There is no washing machine.",0],
+["bside","Bedside table","","","",0],
+["blamp","USB RGB bedside lamp, water wave","R77","SHEIN","",0],
+["curt","Blackout curtains","","","Top priority. The bed sits at full-height glass.",0],
+["rail","Curtain rail or tension rod","","","Measure the door reveal first.",0],
+["led1","24-key RGB LED strip, 10 m","R82","SHEIN","",0],
+["hang","Coat hangers ×30","","LOCAL","",0],
+["boxes","Storage boxes for the built-in cupboard","","","",0],
+["mirr","Full-length mirror","","","",0],
+["undbed","Under-bed storage bags","","","The only real extra storage you have.",1],
+["bedrug","Small rug beside the bed","","","Porcelain floors are cold underfoot.",1]
+]],
+["Bathroom","🚿","#38B6C4",[
+["bmat","Chenille bath mat, black 40×60","R66","SHEIN","",0],
+["shrack","Corner shower rack, wall-mounted black","R94","TEMU","",0],
+["btow","Bath towels ×2","","","",0],
+["htow","Hand towels ×2","","","",0],
+["tbrush","Toilet brush","","LOCAL","",0],
+["bbin","Small bathroom bin","","LOCAL","",0],
+["plung","Plunger","","LOCAL","",0],
+["thook","Adhesive towel hooks","","","",0],
+["tooth","Toothbrush holder","","","",0],
+["btoil","Loo paper, hand soap, shampoo","","LOCAL","",0],
+["squee","Shower squeegee","","","Stops limescale building on the glass.",1],
+["curtsh","Shower curtain and rings","","","Only if the shower has no door.",1],
+["hairdry","Hairdryer","","LOCAL","",1],
+["smallbag","Small bin liners","","LOCAL","",1]
+]],
+["Kitchen","🍳","#F0801A",[
+["fridge","Bar fridge with a real freezer compartment","R2,399+","LOCAL","Measure the bay first: width, depth, height, door swing.",0],
+["airf","Air fryer oven, 9–11 L tray style","","LOCAL","Not the highest wattage. The circuit will trip.",0],
+["micro","Microwave","","","On your brother's list, was missing here.",1],
+["kett","Kettle","","LOCAL","",0],
+["toast","Toaster","","LOCAL","",0],
+["coffee","Coffee setup, French press or moka pot","","LOCAL","You work long hours and there is no coffee plan.",1],
+["sink","Sink organiser rack with towel bar","R92","SHEIN","Carbon steel next to a wet sink will rust.",0],
+["knife1","6pc non-stick coated knife set","~R80","TEMU","Duplicate. Pick one knife set.",0],
+["knife2","6pc stainless wave knife set","~R81","TEMU","Duplicate. Pick one knife set.",0],
+["dinner","16pc matte black stoneware dinner set","R823","TEMU","Biggest Temu line. Price it locally first.",0],
+["pan","Frying pan, 24–28 cm","","LOCAL","",0],
+["pot1","Saucepan with lid","","LOCAL","",0],
+["pot2","Small pot","","LOCAL","",0],
+["board","Chopping board","","LOCAL","Food contact. Local only.",0],
+["col","Colander","","LOCAL","",0],
+["bowl","Mixing bowl","","LOCAL","",0],
+["uten","Wooden spoon, spatula, tongs, ladle","","LOCAL","",0],
+["opener","Can opener, bottle opener, peeler","","LOCAL","",0],
+["grate","Grater","","LOCAL","",1],
+["scis","Kitchen scissors","","LOCAL","",1],
+["glass","Glasses ×6","","LOCAL","",0],
+["mug","Mugs ×4","","LOCAL","",0],
+["cutl","Cutlery set","","LOCAL","",0],
+["tupp","Food storage containers","","LOCAL","Food contact. Local only.",0],
+["jars","Dry storage jars for pasta, rice, coffee","","","No pantry. The counter run is only 2.5–3 m.",1],
+["coast","Japanese wooden coasters ×8","R68","TEMU","",0],
+["drack","Dish rack","","","",0],
+["spon","Sponges and scourers","","LOCAL","",0],
+["dsoap","Dishwashing liquid","","LOCAL","",0],
+["ttow","Tea towels ×3","","","",0],
+["ovg","Oven gloves or a thick cloth","","LOCAL","Air fryer trays come out hot.",1],
+["wrap","Cling film, foil, baking paper","","LOCAL","",0],
+["kbin","Kitchen bin with lid","","LOCAL","",0],
+["bags","Bin bags","","LOCAL","",0],
+["spice","Salt, pepper, oil, basic spices","","LOCAL","",0],
+["wbot","Reusable water bottle","","LOCAL","",1]
+]],
+["Office","💻","#9B7BFF",[
+["desk","Desk, wooden look charcoal","~R700","TEMU","Local warehouse only, 1–4 days.",0],
+["chair","Ergonomic chair","R5,399","LOCAL","Where not to save.",0],
+["mon","32\" curved QHD monitor","R4,999","LOCAL","",0],
+["arm","Monitor arm","","LOCAL","Will crush a 15–18 mm particleboard desktop.",0],
+["kb","Keyboard","R858","LOCAL","",0],
+["mouse","Mouse","R549","LOCAL","",0],
+["dmat","Desk mat, black and red","","SHEIN","",0],
+["tlamp","Task lamp, mains powered","","LOCAL","No window at the desk. The crystal lamp is not this.",0],
+["lstand","Laptop stand","R679","LOCAL","",0],
+["dock","USB-C dock","","LOCAL","Need your laptop model before buying.",0],
+["foot","Ergonomic footrest, adjustable","R107","SHEIN","",0],
+["step","Under-desk stepper","","","",0],
+["surge","Surge-protected multiplug","","LOCAL","Never Temu. Fire risk.",0],
+["ties","Reusable cable ties, 32 pack","R63","TEMU","",0],
+["hub","8-port USB charging hub, 66 W","R136","TEMU","Mains charger. Your own rule says local.",0],
+["ctrl","Controller and headset stand","R62","SHEIN","",0],
+["pen","3D dragon pen holder","R101","TEMU","",0],
+["tray","Dragon desktop organiser tray","R52","TEMU","",0],
+["orug","Small rug, charcoal","","","",0],
+["eth","Ethernet cable, 5 m","","LOCAL","Wired beats WiFi for all-day calls.",0],
+["ringl","Ring light or key light","","","You film daily and the desk has no window.",1],
+["tripod","Phone tripod or clamp mount","","","You film vertical video every day.",1],
+["mic","USB microphone","","LOCAL","Calls all day plus content. The laptop mic is the weak link.",1],
+["ssd","External SSD for video files","","LOCAL","Daily video fills a laptop fast.",1],
+["chairmat","Chair mat","","","Castors on porcelain tile skid and scratch.",1]
+]],
+["Living","🛋","#F0629E",[
+["couch","Two-seater couch, compact","","","Zone is 1.7 × 2.7 m. Couch, table, chair and desk will not all fit.",0],
+["rtable","Small round table","","","",0],
+["lrug","Rug","","","",0],
+["bons","Potted pine bonsai","R78","SHEIN","",0],
+["palm","Large artificial fan palm, 92 cm","R101","SHEIN","",0],
+["palmpot","Pot for the fan palm","","","The listing says pot not included.",1],
+["cush","Japanese landscape pillowcases ×2","R103","TEMU","Pre-order, 5–15 days. Will arrive late.",0],
+["cushin","Cushion inserts 45×45 ×2","","","Your pillowcases ship without inserts.",1],
+["throw","Throw blanket","","","",1],
+["flamp","Floor lamp","","","",0],
+["ext","Extension cord, 3 m","","LOCAL","",0]
+]],
+["Art and decor","🖼","#E0B92E",[
+["jp3","Japanese landscape prints ×3, black and red, framed","R377","SHEIN","The one item fully on brief.",0],
+["mafia","Gangster Legends canvas, 50×70","R76","SHEIN","",0],
+["drag","Dark fantasy dragon canvas, 50×70","R35","SHEIN","",0],
+["think","Faceless thinker figurines ×2","R49","SHEIN","",0],
+["ninja","Zen meditating ninja figurine","R67","TEMU","",0],
+["cand1","LED flameless candles ×3, grey","R154","SHEIN","Grey. Off palette.",0],
+["cand2","Lavender scented candle","R141","TEMU","",0],
+["clamp","Crystal desk lamp, rose RGB","R70","SHEIN","Rose. Off palette, and not a task lamp.",0],
+["cabl","LED sensor cabinet light, 20 cm","R40","SHEIN","",0],
+["cmd","3M Command picture hanging strips","","LOCAL","Real 3M. Wait 7 days after painting.",0],
+["hook1","Adhesive wall hooks ×8","R27","TEMU","",0],
+["hook2","No-drill picture hanging hooks ×2","R25","TEMU","",0],
+["batt","Batteries, AA and AAA","","LOCAL","Candles, both remotes and the sensor light all need them.",1],
+["level","Small spirit level","","LOCAL","Adhesive strips give you one attempt at straight.",1]
+]],
+["Household","🧹","#3FBF8F",[
+["broom","Broom, dustpan and brush","","LOCAL","",0],
+["mop","Mop and bucket","","LOCAL","",0],
+["clean","All-purpose, bathroom and glass cleaner","","LOCAL","",0],
+["cloth","Cloths and rubber gloves","","LOCAL","",0],
+["dmat2","Door mat","","","",0],
+["lbag","Laundry bag, soft not rigid","","","Laundry facilities are on site at Newinbosch Square.",0],
+["dry","Clothes drying rack","R304","TEMU","Local warehouse, 1–4 days.",0],
+["tools","Basic tool kit","","LOCAL","Everything arrives flat-packed.",0],
+["torch","Torch or headlamp","","LOCAL","Load-shedding.",0],
+["pbank","Power bank","","LOCAL","",0],
+["faid","First aid kit","","LOCAL","",0],
+["fireb","Fire blanket or small extinguisher","","LOCAL","",0],
+["steam","Handheld clothes steamer","","LOCAL","Beats an iron and board in 24 m².",0],
+["keys","Spare keys cut","","LOCAL","",0],
+["stool","Folding step stool","","","Ceiling track lighting and high cupboards.",1],
+["vac","Handheld vacuum","","LOCAL","A broom alone will not do a rug.",1],
+["bulbs","Spare light bulbs","","LOCAL","Check the track lighting fitting type.",1],
+["shoe","Shoe rack or tray by the door","","","",1],
+["umb","Umbrella","","LOCAL","Winelands winter.",1]
+]],
+["Admin and move-in","📋","#5B9BF0",[
+["isp","Fibre ISP sign-up","R389–R729/m","","30/30 symmetric minimum.",0],
+["fno","Confirm the fibre network and line status with Marcel","","","Is the line already run into the unit?",0],
+["lease","Countersigned lease","","","Check what the ISP accepts as proof of address.",0],
+["stmt","Account statement, deposit and first rent","","","",1],
+["deliv","Confirm second-floor delivery with Dial-a-Bed","","","Surcharge? Stairs? Lift dimensions?",1],
+["ins","Contents insurance quote","","","",1],
+["meter","Photograph meter readings on day one","","","Protects you from someone else's bill.",1],
+["snag","Snag list with photos on day one","","","Protects your deposit.",1],
+["night1","Night-one box: loo roll, soap, towel, charger, kettle","","LOCAL","Buy this Saturday.",1]
+]]
+];
+
+const KEY='ilex-board-v3';
+let S={del:{},add:{},it:{}}, open=null;
+/* Codex supplies window.storage while the hosted CRM uses normal browser storage. */
+const store=window.storage||{
+  async set(key,value){localStorage.setItem(key,value)},
+  async get(key){const value=localStorage.getItem(key);return value===null?null:{value}}
+};
+
+function all(){return D.map(([r,ic,ac,items])=>{
+  const base=items.filter(i=>!S.del[i[0]]);
+  const extra=(S.add[r]||[]).map(o=>[o.id,o.name,"","","",0]);
+  return [r,ic,ac,base.concat(extra)];})}
+function st(id){const o=S.it[id];if(!o)return'n';if(o.got)return'g';
+  return(o.src&&o.link&&o.link.trim())?'o':'n'}
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;')}
+
+/* Keeps the clicked card visually anchored across the re-render instead of jumping
+   the page. Measure its distance from the top of the viewport before, measure again
+   after, scroll by the difference. No smooth behaviour, so there is no visible slide. */
+function keepAnchored(room, fn){
+  const before=document.querySelector('[data-room="'+CSS.escape(room)+'"]');
+  const top=before?before.getBoundingClientRect().top:null;
+  fn();
+  if(top===null)return;
+  const after=document.querySelector('[data-room="'+CSS.escape(room)+'"]');
+  if(!after)return;
+  const delta=after.getBoundingClientRect().top-top;
+  if(delta) window.scrollBy(0,delta);
+}
+
+function render(){
+  const g=document.getElementById('grid');g.innerHTML='';
+  let T=0,G=0,O=0;
+  all().forEach(([room,icon,ac,items])=>{
+    let gg=0,oo=0;
+    items.forEach(i=>{const s=st(i[0]);if(s==='g')gg++;else if(s==='o')oo++});
+    T+=items.length;G+=gg;O+=oo;
+    const isOpen=open===room, pct=items.length?Math.round(gg/items.length*100):0;
+    const card=document.createElement('div');
+    card.className='room'+(isOpen?' open':'');card.dataset.room=room;card.style.setProperty('--ac',ac);
+    let h='<div class="edge"></div><div class="rhead" data-toggle="'+esc(room)+'">'+
+      '<div class="ring" style="background:conic-gradient(var(--red) '+pct+'%, #2E2E36 0)">'+
+      '<span class="ringin">'+icon+'</span></div><div><div class="rname">'+esc(room)+'</div>'+
+      '<div class="rmeta">'+gg+' decided &nbsp;·&nbsp; '+oo+' shortlisted &nbsp;·&nbsp; '+
+      (items.length-gg-oo)+' open</div></div>'+
+      '<span class="chev">'+(isOpen?'Close':'Open')+'</span></div>';
+    if(!isOpen){
+      h+='<div class="chips">'+items.slice(0,6).map(i=>'<span class="chip '+st(i[0])+'">'+
+        esc(i[1].split(',')[0])+'</span>').join('')+
+        (items.length>6?'<span class="chip">+'+(items.length-6)+' more</span>':'')+'</div>';
+    }else{
+      h+='<div class="list">';
+      items.forEach(([id,name,price,dsrc,note,isnew])=>{
+        const o=S.it[id]||{src:dsrc||'',link:'',got:false};const s=st(id);
+        h+='<div class="row '+s+'"><div class="mark" data-got="'+id+'"></div><div>'+
+          '<div class="nm">'+esc(name)+(price?'<span class="pr">'+esc(price)+'</span>':'')+
+          (isnew?'<span class="tagnew">NEW</span>':'')+'</div>'+
+          (note?'<div class="nt">'+esc(note)+'</div>':'')+'<div class="ctl">'+
+          ['SHEIN','TEMU','LOCAL'].map(x=>'<button class="pill" data-s="'+x+'" data-id="'+id+
+            '" aria-pressed="'+(o.src===x)+'">'+x+'</button>').join('')+
+          '<input class="lk" data-id="'+id+'" placeholder="paste link" value="'+esc(o.link||'')+'">'+
+          (o.link&&/^https?:\/\//.test(o.link.trim())?'<a class="op" target="_blank" href="'+
+            esc(o.link.trim())+'">open ↗</a>':'')+
+          '<button class="got" data-got="'+id+'">'+(o.got?'Decided':'Mark decided')+'</button>'+
+          '<button class="del" data-del="'+id+'" title="Remove">✕</button></div></div></div>';
+      });
+      h+='</div><div class="add" style="margin:0 22px"><input placeholder="Add an item to '+
+        esc(room)+'" data-addr="'+esc(room)+'"><button data-addb="'+esc(room)+'">Add</button></div>';
+    }
+    card.innerHTML=h;g.appendChild(card);
+  });
+  document.getElementById('ct').textContent=G+' decided  ·  '+O+' shortlisted  ·  '+T+' total';
+  document.getElementById('tg').style.width=(T?G/T*100:0)+'%';
+  document.getElementById('ta').style.width=(T?O/T*100:0)+'%';
+}
+
+async function save(){
+  try{await store.set(KEY,JSON.stringify(S));
+    document.getElementById('stamp').textContent='Saved automatically.';}
+  catch(e){document.getElementById('stamp').textContent='Not saving. Entries last this session only.';}
+}
+
+document.addEventListener('click',e=>{
+  const t=e.target;
+  if(t.dataset.got){const id=t.dataset.got;const o=S.it[id]||{src:'',link:'',got:false};
+    o.got=!o.got;S.it[id]=o;keepAnchored(open,render);save();return}
+  if(t.dataset.del){S.del[t.dataset.del]=1;
+    Object.keys(S.add).forEach(r=>S.add[r]=(S.add[r]||[]).filter(x=>x.id!==t.dataset.del));
+    keepAnchored(open,render);save();return}
+  if(t.classList.contains('pill')){const id=t.dataset.id;const o=S.it[id]||{src:'',link:'',got:false};
+    o.src=o.src===t.dataset.s?'':t.dataset.s;S.it[id]=o;keepAnchored(open,render);save();return}
+  if(t.dataset.addb){const r=t.dataset.addb;
+    const inp=document.querySelector('[data-addr="'+CSS.escape(r)+'"]');
+    const v=(inp.value||'').trim();if(!v)return;
+    S.add[r]=S.add[r]||[];S.add[r].push({id:'c'+Date.now(),name:v});
+    keepAnchored(open,render);save();return}
+  if(t.id==='rs'){S={del:{},add:{},it:{}};open=null;render();save();return}
+  const head=t.closest('.rhead');
+  if(head){const room=head.dataset.toggle;
+    keepAnchored(room,()=>{open=(open===room)?null:room;render();});return}
+});
+document.addEventListener('keydown',e=>{
+  if(e.key==='Enter'&&e.target.dataset.addr)
+    document.querySelector('[data-addb="'+CSS.escape(e.target.dataset.addr)+'"]').click();
+});
+let tm;
+document.addEventListener('input',e=>{
+  if(!e.target.classList.contains('lk'))return;
+  const id=e.target.dataset.id;const o=S.it[id]||{src:'',link:'',got:false};
+  o.link=e.target.value;S.it[id]=o;
+  clearTimeout(tm);tm=setTimeout(()=>{save();
+    const el=document.activeElement, focusId=el&&el.dataset?el.dataset.id:null,
+          pos=el&&el.selectionStart;
+    keepAnchored(open,render);
+    if(focusId){const re=document.querySelector('input.lk[data-id="'+CSS.escape(focusId)+'"]');
+      if(re){re.focus();try{re.setSelectionRange(pos,pos)}catch(x){}}}
+  },700);
+});
+
+(async()=>{
+  try{const r=await store.get(KEY);if(r&&r.value)S=Object.assign({del:{},add:{},it:{}},JSON.parse(r.value));}
+  catch(e){}
+  D.forEach(([,,,items])=>items.forEach(([id,,,dsrc])=>{
+    if(!S.it[id])S.it[id]={src:dsrc||'',link:'',got:false};}));
+  render();
+})();
+</script>

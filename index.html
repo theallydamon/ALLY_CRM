@@ -396,6 +396,7 @@ const MODULES = {
   /* not in the bottom strip; reached from cards/chains but still need identity when rendered */
   unlocks:   { icon: "unlocks",   label: "Unlocks",    accent: C.accent, bg: C.accentBg },
   apartment: { icon: "apartment", label: "Apartment",  accent: C.accent, bg: C.accentBg },
+  furnishing:{ icon: "furnishing",label: "APARTMENT", accent: C.accent, bg: C.accentBg },
   deals:     { icon: "deals",     label: "Deals",      accent: C.accent, bg: C.accentBg },
 };
 /* pseudo-module descriptor for the Music CONTENT pipeline card/subtab — deliberately not added
@@ -408,8 +409,12 @@ const MUSIC_CONTENT_MOD = { icon: "music", label: "MUSIC CONTENT", accent: C.acc
    rather than an accident — do not "fix" it by reordering.
    Removed entirely, data untouched in Firestore and still in the JSON export: "series" and "anchor",
    and "music" (the song-roadmap tab — music work now lives under Content's Music subtab).
-   "deals" pulled earlier; re-add here to bring the tab back. */
-const TAB_ORDER = ["lifeAdmin", "overview", "mama", "content"];
+   "deals" pulled earlier; re-add here to bring the tab back.
+   18 Aug 2026: "furnishing" added on the far right as a fifth tab, at the owner's explicit
+   instruction. It supersedes the older "apartment" module, which stays in the file but is no
+   longer the thing being maintained. Furnishing is deliberately NOT wired into PRIORITY_PILLARS,
+   priorityTaskCounts, or any HOME card, and it keeps its own storage key. */
+const TAB_ORDER = ["lifeAdmin", "overview", "mama", "content", "furnishing"];
 
 /* ---------- custom nav glyphs ----------
    Hand-drawn so the strip isn't emoji. Same Ico() contract as the icons above (size/color/
@@ -423,6 +428,7 @@ const NAV_ICONS = {
   lifeAdmin: Ico(<><rect x="4" y="3.5" width="16" height="17" rx="2"/><path d="M8.5 9h7"/><path d="M8.5 13h7"/><path d="M8.5 17h4"/></>),
   unlocks: Ico(<><rect x="4" y="10.5" width="16" height="10" rx="2"/><path d="M8 10.5V7a4 4 0 0 1 7.4-2"/></>),
   apartment: Ico(<><path d="M3 20.5V9l9-5.5L21 9v11.5"/><path d="M9.5 20.5v-6h5v6"/></>),
+  furnishing: Ico(<><path d="M3 11.5V8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v3.5"/><path d="M2 12.5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2V18H2z"/><path d="M6 18v2"/><path d="M18 18v2"/></>),
   deals: Ico(<><path d="M3 12.5l4-4 3.5 3.5a2 2 0 0 0 2.8 0L17 8.5l4 4"/><path d="M3 12.5V19a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-6.5"/></>),
 };
 
@@ -2712,6 +2718,7 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
     navSeq.current += 1;
     setNavRequest({ id: null, navTab: "mama", navSub: "creators", navOpenId: null, seq: navSeq.current });
   };
+  const goApartment = () => { window.location.href = "apartment.html"; };
   useEffect(() => {
     if (!navRequest) return;
     if (navRequest.id) scrollAndHighlight(navRequest.id);
@@ -2974,7 +2981,7 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
               const isHome = t === "overview";
               const Glyph = NAV_ICONS[info.icon];
               return (
-                <button key={t} className={`navbtn${isHome ? " navbtn-home" : ""}`} onClick={() => (t === "mama" ? goMamaCreators() : go(t))} title={info.label} aria-label={info.label} aria-current={on ? "page" : undefined}
+                <button key={t} className={`navbtn${isHome ? " navbtn-home" : ""}`} onClick={() => (t === "mama" ? goMamaCreators() : t === "furnishing" ? goApartment() : go(t))} title={info.label} aria-label={info.label} aria-current={on ? "page" : undefined}
                   style={{ width: isHome ? 84 : 76, padding: isHome ? "8px 0 6px" : "7px 0 6px", borderRadius: 14, cursor: "pointer", position: "relative",
                     display: "flex", flexDirection: "column", alignItems: "center", gap: 4, fontFamily: "inherit",
                     border: `1px solid ${on ? (isHome ? C.accentLine : LINE) : "transparent"}`,
@@ -4467,6 +4474,93 @@ function UnlocksModule({ data, setData }) {
     </section>
   );
 }
+
+/* ================= FURNISHING =================
+   The Ilex, Newinbosch. Added 18 Aug 2026. Self-contained on purpose:
+   - own storage key (FURNISH_KEY), so it never touches the ally/mama documents
+   - no PRIORITY_PILLARS entry, no priorityTaskCounts, no HOME card
+   - supersedes ApartmentModule below, which is left in place but unmaintained
+   Three states per item: open (nothing chosen), shortlisted (source + link saved),
+   decided (owner has actually committed). Shortlisted is the important one — most of
+   the Shein/Temu cart is options, not decisions. */
+const FURNISH_KEY = "ally_furnishing_v1";
+const FURNISH_SOURCES = ["SHEIN", "TEMU", "LOCAL"];
+const SRC_TINT = { SHEIN: C.ink, TEMU: "#F5610A", LOCAL: C.sky };
+
+const FURNISH_ROOMS = [
+  { key: "bedroom", label: "Bedroom", tint: C.rose, items: [
+    ["bed", "Double bed set, Sealy Crawford Firm 137×188", "R5,999", "LOCAL", "Order by Thursday. Confirm second-floor delivery."],
+    ["prot", "Mattress protector, waterproof", "", "LOCAL", "Required for the 100-night exchange."],
+    ["pill", "Pillows ×2", "", "LOCAL", ""],
+    ["duv", "Duvet inner, double", "", "LOCAL", ""],
+    ["dcov", "Duvet cover set", "", "SHEIN", ""],
+    ["sheet", "Fitted sheets ×2 sets", "", "SHEIN", "Two sets. No washing machine."],
+    ["bside", "Bedside table", "", "", ""],
+    ["blamp", "USB RGB bedside lamp, water wave", "R77", "SHEIN", ""],
+    ["curt", "Blackout curtains", "", "", "Top priority. Bed sits at full-height glass."],
+    ["rail", "Curtain rail or tension rod", "", "", "Measure the door reveal first."],
+    ["led1", "24-key RGB LED strip, 10 m", "R82", "SHEIN", ""],
+    ["hang", "Coat hangers ×30", "", "LOCAL", ""],
+    ["boxes", "Storage boxes for the built-in cupboard", "", "", ""],
+    ["mirr", "Full-length mirror", "", "", ""],
+    ["undbed", "Under-bed storage bags", "", "", "Only real extra storage you have."],
+    ["bedrug", "Small rug beside the bed", "", "", "Porcelain floors are cold underfoot."],
+  ]},
+  { key: "bathroom", label: "Bathroom", tint: C.sky, items: [
+    ["bmat", "Chenille bath mat, black 40×60", "R66", "SHEIN", ""],
+    ["shrack", "Corner shower rack, wall-mounted black", "R94", "TEMU", ""],
+    ["btow", "Bath towels ×2", "", "", ""],
+    ["htow", "Hand towels ×2", "", "", ""],
+    ["tbrush", "Toilet brush", "", "LOCAL", ""],
+    ["bbin", "Small bathroom bin", "", "LOCAL", ""],
+    ["plung", "Plunger", "", "LOCAL", ""],
+    ["thook", "Adhesive towel hooks", "", "", ""],
+    ["tooth", "Toothbrush holder", "", "", ""],
+    ["btoil", "Loo paper, hand soap, shampoo", "", "LOCAL", ""],
+    ["squee", "Shower squeegee", "", "", "Stops limescale on the glass."],
+    ["curtsh", "Shower curtain and rings", "", "", "Only if the shower has no door."],
+    ["hairdry", "Hairdryer", "", "LOCAL", ""],
+    ["smallbag", "Small bin liners", "", "LOCAL", ""],
+  ]},
+  { key: "kitchen", label: "Kitchen", tint: C.peach, items: [
+    ["fridge", "Bar fridge with a real freezer compartment", "R2,399+", "LOCAL", "Measure the bay: width, depth, height, door swing."],
+    ["airf", "Air fryer oven, 9–11 L tray style", "", "LOCAL", "Not the highest wattage. Circuit will trip."],
+    ["micro", "Microwave", "", "", "On your brother's list."],
+    ["kett", "Kettle", "", "LOCAL", ""],
+    ["toast", "Toaster", "", "LOCAL", ""],
+    ["coffee", "Coffee setup, French press or moka pot", "", "LOCAL", "You work long hours. There is no coffee plan."],
+    ["sink", "Sink organiser rack with towel bar", "R92", "SHEIN", "Carbon steel next to a wet sink rusts."],
+    ["knife1", "6pc non-stick coated knife set", "~R80", "TEMU", "Duplicate. Pick one knife set."],
+    ["knife2", "6pc stainless wave knife set", "~R81", "TEMU", "Duplicate. Pick one knife set."],
+    ["dinner", "16pc matte black stoneware dinner set", "R823", "TEMU", "Biggest Temu line. Price it locally first."],
+    ["pan", "Frying pan, 24–28 cm", "", "LOCAL", ""],
+    ["pot1", "Saucepan with lid", "", "LOCAL", ""],
+    ["pot2", "Small pot", "", "LOCAL", ""],
+    ["board", "Chopping board", "", "LOCAL", "Food contact. Local only."],
+    ["col", "Colander", "", "LOCAL", ""],
+    ["bowl", "Mixing bowl", "", "LOCAL", ""],
+    ["uten", "Wooden spoon, spatula, tongs, ladle", "", "LOCAL", ""],
+    ["opener", "Can opener, bottle opener, peeler", "", "LOCAL", ""],
+    ["grate", "Grater", "", "LOCAL", ""],
+    ["scis", "Kitchen scissors", "", "LOCAL", ""],
+    ["glass", "Glasses ×6", "", "LOCAL", ""],
+    ["mug", "Mugs ×4", "", "LOCAL", ""],
+    ["cutl", "Cutlery set", "", "LOCAL", ""],
+    ["tupp", "Food storage containers", "", "LOCAL", "Food contact. Local only."],
+    ["jars", "Dry storage jars for pasta, rice, coffee", "", "", "No pantry. Counter run is 2.5–3 m."],
+    ["coast", "Japanese wooden coasters ×8", "R68", "TEMU", ""],
+    ["drack", "Dish rack", "", "", ""],
+    ["spon", "Sponges and scourers", "", "LOCAL", ""],
+    ["dsoap", "Dishwashing liquid", "", "LOCAL", ""],
+    ["ttow", "Tea towels ×3", "", "", ""],
+    ["ovg", "Oven gloves or a thick cloth", "", "LOCAL", "Air fryer trays come out hot."],
+    ["wrap", "Cling film, foil, baking paper", "", "LOCAL", ""],
+    ["kbin", "Kitchen bin with lid", "", "LOCAL", ""],
+    ["bags", "Bin bags", "", "LOCAL", ""],
+    ["spice", "Salt, pepper, oil, basic spices", "", "LOCAL", ""],
+    ["wbot", "Reusable water bottle", "", "LOCAL", ""],
+  ]},
+];
 
 /* ================= APARTMENT ================= */
 function ApartmentModule({ data, setData, unlocked, go, q }) {
