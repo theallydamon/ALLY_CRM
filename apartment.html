@@ -15,6 +15,8 @@ body{background:var(--bg);color:var(--ink);font-family:'Roboto',system-ui,sans-s
 .wrap{max-width:1000px;margin:0 auto;padding:0 20px}
 
 header{padding:40px 0 22px}
+.back{display:inline-flex;align-items:center;gap:7px;margin-bottom:22px;padding:8px 12px;border:1px solid var(--line2);border-radius:8px;color:var(--ink2);text-decoration:none;font-size:13px;letter-spacing:.04em}
+.back:hover{border-color:var(--red);color:var(--red)}
 .eyebrow{font-family:var(--mono);font-size:11.5px;letter-spacing:.18em;text-transform:uppercase;color:var(--red)}
 h1{font-size:38px;font-weight:700;letter-spacing:-.02em;margin:10px 0 10px;line-height:1.1}
 h1 span{color:var(--red)}
@@ -100,6 +102,7 @@ footer{margin-top:48px;padding-top:20px;border-top:1px solid var(--line);font-si
 
 <div class="wrap">
 <header>
+  <a class="back" href="index.html" aria-label="Back to the CRM">← Back to CRM</a>
   <div class="eyebrow">The Ilex &middot; Newinbosch &middot; move-in 24 August</div>
   <h1>Furnishing <span>Board</span></h1>
   <div class="sub">Open a room, set where you'll buy each thing, paste the link. Mark it decided only once you've actually committed. Items tagged NEW are gaps you hadn't listed.</div>
