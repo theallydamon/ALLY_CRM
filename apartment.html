@@ -34,6 +34,13 @@ h1 span{color:var(--red)}
 .kd{width:10px;height:10px;border-radius:50%;border:1.5px solid var(--line2)}
 .kd.o{background:var(--red-dim);border-color:var(--red-dim)}
 .kd.g{background:var(--red);border-color:var(--red)}
+.search{display:flex;align-items:center;gap:8px;min-width:220px;flex:1 1 260px;max-width:360px;padding:7px 10px;border:1px solid var(--line2);border-radius:7px;background:var(--card)}
+.search:focus-within{border-color:var(--red)}
+.search input{min-width:0;flex:1;border:0;outline:0;background:transparent;color:var(--ink);font:13px var(--mono)}
+.search input::placeholder{color:var(--mute)}
+.clear-search{border:0;background:none;color:var(--mute);cursor:pointer;font-size:17px;line-height:1;padding:0 2px}
+.clear-search:hover{color:var(--red)}
+.no-results{grid-column:1/-1;padding:34px 20px;text-align:center;border:1px dashed var(--line2);border-radius:14px;color:var(--ink2)}
 
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;margin-top:26px}
 .room{background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden;
@@ -109,6 +116,7 @@ footer{margin-top:48px;padding-top:20px;border-top:1px solid var(--line);font-si
 </header>
 
 <div class="bar">
+  <label class="search"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Search furniture and essentials" autocomplete="off"><button class="clear-search" id="clear-search" type="button" aria-label="Clear search" hidden>×</button></label>
   <div class="track"><div class="tg" id="tg"></div><div class="ta" id="ta"></div></div>
   <span class="count" id="ct"></span>
   <span class="key">
@@ -288,7 +296,7 @@ const D=[
 ];
 
 const KEY='ilex-board-v3';
-let S={del:{},add:{},it:{}}, open=null;
+let S={del:{},add:{},it:{}}, open=null, query='';
 /* Codex supplies window.storage while the hosted CRM uses normal browser storage. */
 const store=window.storage||{
   async set(key,value){localStorage.setItem(key,value)},
@@ -319,27 +327,30 @@ function keepAnchored(room, fn){
 
 function render(){
   const g=document.getElementById('grid');g.innerHTML='';
-  let T=0,G=0,O=0;
+  let T=0,G=0,O=0,matching=0;
   all().forEach(([room,icon,ac,items])=>{
+    const shown=query?items.filter(i=>[room,i[1],i[2],i[3],i[4]].join(' ').toLowerCase().includes(query)):items;
+    if(!shown.length)return;
+    matching+=shown.length;
     let gg=0,oo=0;
-    items.forEach(i=>{const s=st(i[0]);if(s==='g')gg++;else if(s==='o')oo++});
-    T+=items.length;G+=gg;O+=oo;
-    const isOpen=open===room, pct=items.length?Math.round(gg/items.length*100):0;
+    shown.forEach(i=>{const s=st(i[0]);if(s==='g')gg++;else if(s==='o')oo++});
+    T+=shown.length;G+=gg;O+=oo;
+    const isOpen=open===room||!!query, pct=shown.length?Math.round(gg/shown.length*100):0;
     const card=document.createElement('div');
     card.className='room'+(isOpen?' open':'');card.dataset.room=room;card.style.setProperty('--ac',ac);
     let h='<div class="edge"></div><div class="rhead" data-toggle="'+esc(room)+'">'+
       '<div class="ring" style="background:conic-gradient(var(--red) '+pct+'%, #2E2E36 0)">'+
       '<span class="ringin">'+icon+'</span></div><div><div class="rname">'+esc(room)+'</div>'+
       '<div class="rmeta">'+gg+' decided &nbsp;·&nbsp; '+oo+' shortlisted &nbsp;·&nbsp; '+
-      (items.length-gg-oo)+' open</div></div>'+
+      (shown.length-gg-oo)+' open</div></div>'+
       '<span class="chev">'+(isOpen?'Close':'Open')+'</span></div>';
     if(!isOpen){
-      h+='<div class="chips">'+items.slice(0,6).map(i=>'<span class="chip '+st(i[0])+'">'+
+      h+='<div class="chips">'+shown.slice(0,6).map(i=>'<span class="chip '+st(i[0])+'">'+
         esc(i[1].split(',')[0])+'</span>').join('')+
-        (items.length>6?'<span class="chip">+'+(items.length-6)+' more</span>':'')+'</div>';
+        (shown.length>6?'<span class="chip">+'+(shown.length-6)+' more</span>':'')+'</div>';
     }else{
       h+='<div class="list">';
-      items.forEach(([id,name,price,dsrc,note,isnew])=>{
+      shown.forEach(([id,name,price,dsrc,note,isnew])=>{
         const o=S.it[id]||{src:dsrc||'',link:'',got:false};const s=st(id);
         h+='<div class="row '+s+'"><div class="mark" data-got="'+id+'"></div><div>'+
           '<div class="nm">'+esc(name)+(price?'<span class="pr">'+esc(price)+'</span>':'')+
@@ -358,9 +369,11 @@ function render(){
     }
     card.innerHTML=h;g.appendChild(card);
   });
-  document.getElementById('ct').textContent=G+' decided  ·  '+O+' shortlisted  ·  '+T+' total';
+  if(!matching)g.innerHTML='<div class="no-results">No furniture or essentials match “'+esc(query)+'”.</div>';
+  document.getElementById('ct').textContent=G+' decided  ·  '+O+' shortlisted  ·  '+T+(query?' matching':' total');
   document.getElementById('tg').style.width=(T?G/T*100:0)+'%';
   document.getElementById('ta').style.width=(T?O/T*100:0)+'%';
+  document.getElementById('clear-search').hidden=!query;
 }
 
 async function save(){
@@ -394,6 +407,9 @@ document.addEventListener('keydown',e=>{
 });
 let tm;
 document.addEventListener('input',e=>{
+  if(e.target.id==='search'){
+    query=e.target.value.trim().toLowerCase();render();return;
+  }
   if(!e.target.classList.contains('lk'))return;
   const id=e.target.dataset.id;const o=S.it[id]||{src:'',link:'',got:false};
   o.link=e.target.value;S.it[id]=o;
@@ -404,6 +420,10 @@ document.addEventListener('input',e=>{
     if(focusId){const re=document.querySelector('input.lk[data-id="'+CSS.escape(focusId)+'"]');
       if(re){re.focus();try{re.setSelectionRange(pos,pos)}catch(x){}}}
   },700);
+});
+
+document.getElementById('clear-search').addEventListener('click',()=>{
+  query='';const input=document.getElementById('search');input.value='';render();input.focus();
 });
 
 (async()=>{

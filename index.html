@@ -403,18 +403,16 @@ const MODULES = {
 to MODULES itself, since MODULES.music already means the unrelated song-roadmap tab. */
 const MUSIC_CONTENT_MOD = { icon: "music", label: "MUSIC CONTENT", accent: C.accent, bg: C.accentBg };
 
-/* Bottom nav strip order, set explicitly by the owner 29 Jul 2026: HOME second from the left, with
-   Life Admin to its left and Mama and Content to its right. HOME stays the visually dominant entry.
-   With four tabs there is no true centre slot, and this asymmetry is the owner's deliberate choice
-   rather than an accident — do not "fix" it by reordering.
+/* Bottom nav strip order: HOME is centred, with two equally weighted tabs on either side. HOME
+   stays the visually dominant entry.
    Removed entirely, data untouched in Firestore and still in the JSON export: "series" and "anchor",
    and "music" (the song-roadmap tab — music work now lives under Content's Music subtab).
    "deals" pulled earlier; re-add here to bring the tab back.
-   18 Aug 2026: "furnishing" added on the far right as a fifth tab, at the owner's explicit
+   18 Aug 2026: "furnishing" added as a fifth tab, at the owner's explicit
    instruction. It supersedes the older "apartment" module, which stays in the file but is no
    longer the thing being maintained. Furnishing is deliberately NOT wired into PRIORITY_PILLARS,
    priorityTaskCounts, or any HOME card, and it keeps its own storage key. */
-const TAB_ORDER = ["lifeAdmin", "overview", "mama", "content", "furnishing"];
+const TAB_ORDER = ["lifeAdmin", "mama", "overview", "content", "furnishing"];
 
 /* ---------- custom nav glyphs ----------
    Hand-drawn so the strip isn't emoji. Same Ico() contract as the icons above (size/color/
