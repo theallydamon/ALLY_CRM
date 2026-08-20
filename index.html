@@ -513,7 +513,7 @@ const livePost = (i) => (i && i.scheduledFor && !i.schedOff ? i.scheduledFor : n
 const liveDate = (i) => liveDue(i) || livePost(i);
 
 const CONTENT_STATUS_MIGRATE ={ Scripted: "Ideas", Filmed: "To Film", Edited: "To Edit", "In Edit": "To Edit" };
-function migrateAlly(a) {
+function migrateAlly(a, legacyFurnishingRaw = null) {
   if (!a) return a;
   let out = a;
   if (out.content && Array.isArray(out.content.items)) {
@@ -589,6 +589,12 @@ out = { ...out, musicContent: { ...out.musicContent, cadence: out.musicContent.c
   }
   if (!out.series || typeof out.series !== "object") {
     out = { ...out, series: ALLY_SEED.series };
+  }
+  /* Furnishing used to be a separate page with a separate browser-only storage key. Fold that
+     page's saved links and decisions into the CRM document the first time this version opens,
+     so they are included in the normal local backup and signed-in Firestore sync. */
+  if (!out.furnishing || !out.furnishing.rooms) {
+    out = { ...out, furnishing: makeFurnishingData(legacyFurnishingRaw) };
   }
   return out;
 }
@@ -2061,7 +2067,10 @@ function AllyCRM() {
          saved data from before scheduling existed does not read as undefined everywhere. */
       if (!a.schedule || typeof a.schedule !== "object") a.schedule = {};
       if (!a.contentSchedule || typeof a.contentSchedule !== "object") a.contentSchedule = {};
-      a = migrateAlly(a);
+      /* Read the retired board once so existing product URLs are brought into the CRM record.
+         Afterwards furnishing changes travel through setAlly like every other CRM edit. */
+      const legacyFurnishing = await store.get("ally_furnishing_v1");
+      a = migrateAlly(a, legacyFurnishing);
       m = { ...m, creators: (m.creators || []).map((c) => c.goals ? c : { ...c, goals: c.goal ? [{ id: uid(), text: c.goal }] : [] }) };
       m = { ...m, creators: (m.creators || []).map((c) => ({ ...c, bio: c.bio || "", nextSteps: c.nextSteps || "", notes: typeof c.notes === "string" ? c.notes : Array.isArray(c.notes) ? c.notes.map((n) => typeof n === "string" ? n : (n && n.text) || "").filter(Boolean).join("\n") : "" })) };
       m = { ...m, tasks: (m.tasks || []).map((t) => t.description !== undefined ? t : { ...t, description: "" }) };
@@ -2487,7 +2496,11 @@ function AllyCRM() {
         const snap = await docRef.get();
         const remote = snap.exists ? snap.data() : null;
         if (remote && remote.ally && remote.mama) {
-          const migrated = moveMamaAdminTasksToAi(migrateAlly(remote.ally), { ...remote.mama, tasks: migrateMamaTasks(remote.mama.tasks) });
+          const remoteAlly = migrateAlly(remote.ally);
+          /* A cloud record from before furnishing existed must not erase the local one-time
+             import of the separate board's links. The normal cloud save immediately follows. */
+          if (!remote.ally.furnishing && allyRef.current && allyRef.current.furnishing) remoteAlly.furnishing = allyRef.current.furnishing;
+          const migrated = moveMamaAdminTasksToAi(remoteAlly, { ...remote.mama, tasks: migrateMamaTasks(remote.mama.tasks) });
           setAlly(migrated.ally); setMama(migrated.mama);
         } else {
           await docRef.set({ ally: allyRef.current, mama: mamaRef.current, updatedAt: Date.now() });
@@ -2716,7 +2729,6 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
     navSeq.current += 1;
     setNavRequest({ id: null, navTab: "mama", navSub: "creators", navOpenId: null, seq: navSeq.current });
   };
-  const goApartment = () => { window.location.href = "apartment.html"; };
   useEffect(() => {
     if (!navRequest) return;
     if (navRequest.id) scrollAndHighlight(navRequest.id);
@@ -2965,6 +2977,7 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
               {tab === "lifeAdmin" && <LifeAdminModule data={ally} setData={setAlly} q={q} />}
               {tab === "deals" && <DealsModule data={ally} setData={setAlly} q={q} navRequest={navRequest} />}
               {tab === "mama" && <MamaModule data={mama} setData={setMama} ally={ally} setAlly={setAlly} q={q} navRequest={navRequest} navigateToTask={navigateToTask} completeTask={completeTask} />}
+              {tab === "furnishing" && <FurnishingModule data={ally} setData={setAlly} q={q} />}
             </div>
           </div>
 
@@ -2979,7 +2992,7 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
               const isHome = t === "overview";
               const Glyph = NAV_ICONS[info.icon];
               return (
-                <button key={t} className={`navbtn${isHome ? " navbtn-home" : ""}`} onClick={() => (t === "mama" ? goMamaCreators() : t === "furnishing" ? goApartment() : go(t))} title={info.label} aria-label={info.label} aria-current={on ? "page" : undefined}
+                <button key={t} className={`navbtn${isHome ? " navbtn-home" : ""}`} onClick={() => (t === "mama" ? goMamaCreators() : go(t))} title={info.label} aria-label={info.label} aria-current={on ? "page" : undefined}
                   style={{ width: isHome ? 84 : 76, padding: isHome ? "8px 0 6px" : "7px 0 6px", borderRadius: 14, cursor: "pointer", position: "relative",
                     display: "flex", flexDirection: "column", alignItems: "center", gap: 4, fontFamily: "inherit",
                     border: `1px solid ${on ? (isHome ? C.accentLine : LINE) : "transparent"}`,
@@ -4559,6 +4572,81 @@ const FURNISH_ROOMS = [
     ["wbot", "Reusable water bottle", "", "LOCAL", ""],
   ]},
 ];
+
+function makeFurnishingData(legacyRaw = null) {
+  let legacy = null;
+  try { legacy = typeof legacyRaw === "string" ? JSON.parse(legacyRaw) : legacyRaw; } catch (e) {}
+  const legacyItems = (legacy && legacy.it) || {};
+  const deleted = (legacy && legacy.del) || {};
+  const added = (legacy && legacy.add) || {};
+  const rooms = {};
+  FURNISH_ROOMS.forEach((room) => {
+    const base = room.items.filter(([id]) => !deleted[id]).map(([id, name, price, source, note]) => {
+      const old = legacyItems[id] || {};
+      return { id, name, price: price || "", source: old.src !== undefined ? old.src : (source || ""), note: note || "", link: old.link || "", status: old.got ? "Decided" : ((old.link || "").trim() ? "Shortlisted" : "Open") };
+    });
+    const extras = (added[room.key] || []).map((item) => ({ id: item.id || uid(), name: item.name || "New item", price: "", source: "", note: "", link: "", status: "Open" }));
+    rooms[room.key] = base.concat(extras);
+  });
+  return { rooms };
+}
+
+function FurnishingModule({ data, setData, q }) {
+  const furnishing = data.furnishing || makeFurnishingData();
+  const rooms = furnishing.rooms || {};
+  const query = (q || "").trim().toLowerCase();
+  const [openRooms, setOpenRooms] = useState({});
+  const [newItems, setNewItems] = useState({});
+  const updateItem = (roomKey, id, patch) => setData((d) => ({ ...d, furnishing: { ...(d.furnishing || makeFurnishingData()), rooms: { ...((d.furnishing || {}).rooms || {}), [roomKey]: (((d.furnishing || {}).rooms || {})[roomKey] || []).map((item) => item.id === id ? { ...item, ...patch } : item) } } }));
+  const removeItem = (roomKey, id) => setData((d) => ({ ...d, furnishing: { ...(d.furnishing || makeFurnishingData()), rooms: { ...((d.furnishing || {}).rooms || {}), [roomKey]: (((d.furnishing || {}).rooms || {})[roomKey] || []).filter((item) => item.id !== id) } } }));
+  const addItem = (roomKey) => {
+    const name = (newItems[roomKey] || "").trim(); if (!name) return;
+    setData((d) => ({ ...d, furnishing: { ...(d.furnishing || makeFurnishingData()), rooms: { ...((d.furnishing || {}).rooms || {}), [roomKey]: [...(((d.furnishing || {}).rooms || {})[roomKey] || []), { id: uid(), name, price: "", source: "", note: "", link: "", status: "Open" }] } } }));
+    setNewItems((current) => ({ ...current, [roomKey]: "" }));
+  };
+  const allItems = Object.values(rooms).flat();
+  const decided = allItems.filter((item) => item.status === "Decided").length;
+  const shortlisted = allItems.filter((item) => item.status === "Shortlisted").length;
+  return (
+    <section>
+      <SectionHead title="Apartment furnishing" sub="Your furniture list lives in the CRM now. Links, sources, and decisions save with your normal CRM data." />
+      <div className="rounded-2xl p-5 mb-6 flex items-center gap-5 flex-wrap" style={{ ...card, borderRadius: 18 }}>
+        <Ring pct={allItems.length ? decided / allItems.length : 0} tint={C.accent} size={72} thick={8} label={`${decided}`} sub="DECIDED" />
+        <div style={{ fontSize: 13, color: MUT }}>{decided} decided · {shortlisted} shortlisted · {Math.max(0, allItems.length - decided - shortlisted)} still open</div>
+      </div>
+      <div className="flex flex-col gap-4">
+        {FURNISH_ROOMS.map((room) => {
+          const items = (rooms[room.key] || []).filter((item) => !query || [item.name, item.price, item.source, item.note, item.link].join(" ").toLowerCase().includes(query));
+          const open = !!openRooms[room.key] || !!query;
+          if (query && !items.length) return null;
+          return <div key={room.key} className="rounded-2xl" style={{ ...card, borderRadius: 18, overflow: "hidden", borderLeft: `4px solid ${room.tint}` }}>
+            <button onClick={() => setOpenRooms((current) => ({ ...current, [room.key]: !current[room.key] }))} className="w-full text-left px-5 py-4 flex items-center justify-between gap-3" style={{ cursor: "pointer", fontFamily: "inherit", background: "transparent", border: 0, color: C.ink }}>
+              <div><div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontSize: 17, fontWeight: 700 }}>{room.label}</div><div style={{ fontSize: 12, color: MUT, marginTop: 3 }}>{items.filter((item) => item.status === "Decided").length} decided · {items.filter((item) => item.status === "Shortlisted").length} shortlisted · {items.length} items</div></div>
+              {open ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+            </button>
+            {open && <div className="px-5 pb-5 flex flex-col gap-3">
+              {items.map((item) => <div key={item.id} className="rounded-xl p-4 flex flex-col gap-3" style={{ ...cardSoft, borderRadius: 13 }}>
+                <div className="flex items-start gap-3 flex-wrap">
+                  <div className="flex-1" style={{ minWidth: 220 }}><InlineEdit value={item.name} onChange={(value) => updateItem(room.key, item.id, { name: value })} strong /><InlineEdit value={item.note || ""} onChange={(value) => updateItem(room.key, item.id, { note: value })} placeholder="Note…" dim /></div>
+                  <select value={item.status || "Open"} onChange={(e) => updateItem(room.key, item.id, { status: e.target.value })} className="rounded-lg px-2 py-1.5" style={{ ...inputStyle, width: 118, fontSize: 12 }}><option>Open</option><option>Shortlisted</option><option>Decided</option></select>
+                  <button onClick={() => removeItem(room.key, item.id)} style={iconBtn} aria-label={`Remove ${item.name}`}><Trash2 size={15} /></button>
+                </div>
+                <div className="flex gap-2 flex-wrap items-center">
+                  {FURNISH_SOURCES.map((source) => <button key={source} onClick={() => updateItem(room.key, item.id, { source: item.source === source ? "" : source })} style={{ ...pillGhost, padding: "5px 9px", fontSize: 11, borderColor: item.source === source ? SRC_TINT[source] : LINE, color: item.source === source ? SRC_TINT[source] : MUT }}>{source}</button>)}
+                  <input value={item.price || ""} onChange={(e) => updateItem(room.key, item.id, { price: e.target.value })} placeholder="Price" className="rounded-lg px-2.5 py-1.5" style={{ ...inputStyle, width: 100, fontSize: 12 }} />
+                  <input value={item.link || ""} onChange={(e) => updateItem(room.key, item.id, { link: e.target.value, status: item.status === "Open" && e.target.value.trim() ? "Shortlisted" : item.status })} placeholder="Paste product URL" className="rounded-lg px-2.5 py-1.5 flex-1" style={{ ...inputStyle, minWidth: 180, fontSize: 12 }} />
+                  {/^https?:\/\//i.test((item.link || "").trim()) && <a href={item.link.trim()} target="_blank" rel="noreferrer" style={{ ...pillGhost, padding: "5px 9px", fontSize: 11 }}>Open ↗</a>}
+                </div>
+              </div>)}
+              <div className="flex gap-2"><input value={newItems[room.key] || ""} onChange={(e) => setNewItems((current) => ({ ...current, [room.key]: e.target.value }))} onKeyDown={(e) => { if (e.key === "Enter") addItem(room.key); }} placeholder={`Add a ${room.label.toLowerCase()} item`} className="rounded-lg px-3 py-2 flex-1" style={{ ...inputStyle, fontSize: 13 }} /><button onClick={() => addItem(room.key)} style={pillDark}>Add</button></div>
+            </div>}
+          </div>;
+        })}
+        {query && !FURNISH_ROOMS.some((room) => (rooms[room.key] || []).some((item) => [item.name, item.price, item.source, item.note, item.link].join(" ").toLowerCase().includes(query))) && <Empty text="No furnishing item matches your search." />}
+      </div>
+    </section>
+  );
+}
 
 /* ================= APARTMENT ================= */
 function ApartmentModule({ data, setData, unlocked, go, q }) {
