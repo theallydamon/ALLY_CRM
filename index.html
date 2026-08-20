@@ -1395,6 +1395,7 @@ function useSkitRegistry(crmUser, ally) {
   const silentRef = useRef(true);
   const previousRef = useRef(null);
   const queueRef = useRef(Promise.resolve());
+  const [tokenSeq, setTokenSeq] = useState(0);
   const [state, setState] = useState("off"); // off | connecting | syncing | synced | error
   const [error, setError] = useState("");
   const [ready, setReady] = useState(false);
@@ -1424,6 +1425,11 @@ function useSkitRegistry(crmUser, ally) {
       ...options,
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", ...(options.headers || {}) },
     });
+    if (response.status === 401 || response.status === 403) {
+      tokenRef.current = null; tokenExpiryRef.current = 0;
+      setActive(false); setState("off");
+      throw new Error("Google Sheets access token expired or revoked. Reconnect to carry on.");
+    }
     if (!response.ok) {
       let detail = "";
       try { const body = await response.json(); detail = body && body.error && body.error.message ? `, ${body.error.message}` : ""; } catch (e) {}
@@ -1470,7 +1476,10 @@ function useSkitRegistry(crmUser, ally) {
   const syncItems = useCallback(async (items) => {
     const current = new Map((items || []).map((item) => [item.id, skitSnapshot(item)]));
     const previous = previousRef.current;
-    if (previous && JSON.stringify([...previous]) === JSON.stringify([...current])) return;
+    if (previous && JSON.stringify([...previous]) === JSON.stringify([...current])) {
+      setState("synced");
+      return;
+    }
     setState("syncing");
     try {
       await ensureRegistry();
@@ -1495,17 +1504,32 @@ function useSkitRegistry(crmUser, ally) {
   const connect = useCallback((silent = false) => {
     if (!crmUser || !ready) { if (!silent) setError("Sign in to the CRM and wait for Google to load first."); return; }
     silentRef.current = !!silent;
-    setState("connecting"); setError("");
+    if (!silent) { setState("connecting"); setError(""); }
     if (!clientRef.current) clientRef.current = window.google.accounts.oauth2.initTokenClient({
       client_id: GOOGLE_CLIENT_ID, scope: SKIT_SCOPE,
       callback: (response) => {
-        if (!response || response.error || !response.access_token) { setState("off"); setActive(false); if (!silentRef.current) setError("Google Sheets access was not granted."); return; }
-        tokenRef.current = response.access_token; tokenExpiryRef.current = Date.now() + Math.max(60, Number(response.expires_in || 3600) - 120) * 1000; setActive(true); setState("syncing");
+        if (!response || response.error || !response.access_token) {
+          if (silentRef.current && tokenRef.current && Date.now() < tokenExpiryRef.current) return;
+          tokenRef.current = null; tokenExpiryRef.current = 0;
+          setState("off"); setActive(false);
+          if (!silentRef.current) setError("Google Sheets access was not granted.");
+          return;
+        }
+        tokenRef.current = response.access_token;
+        tokenExpiryRef.current = Date.now() + Math.max(60, Number(response.expires_in || 3600) - 120) * 1000;
+        setActive(true);
+        setTokenSeq((n) => n + 1);
+        if (state !== "synced") setState("syncing");
       },
-      error_callback: () => { setState("off"); setActive(false); if (!silentRef.current) setError("Google could not open the Sheets permission window."); },
+      error_callback: () => {
+        if (silentRef.current && tokenRef.current && Date.now() < tokenExpiryRef.current) return;
+        tokenRef.current = null; tokenExpiryRef.current = 0;
+        setState("off"); setActive(false);
+        if (!silentRef.current) setError("Google could not open the Sheets permission window.");
+      },
     });
     clientRef.current.requestAccessToken({ prompt: silent ? "" : "consent" });
-  }, [crmUser, ready]);
+  }, [crmUser, ready, state]);
 
   /* Calendar and Sheets use separate in-memory tokens. Start the registry immediately after the
      calendar's silent request has been handed to GIS, rather than waiting for the 30-second
@@ -1515,11 +1539,24 @@ function useSkitRegistry(crmUser, ally) {
     const id = setTimeout(() => connect(true), 350);
     return () => clearTimeout(id);
   }, [ready, crmUser, connect]);
+
+  /* Periodic reconnect when not active or token expired */
   useEffect(() => {
-    if (!ready || !crmUser) return;
-    const id = setInterval(() => { if (!tokenRef.current || Date.now() >= tokenExpiryRef.current) connect(true); }, 30000);
+    if (!ready || !crmUser || active) return;
+    const id = setInterval(() => connect(true), 30000);
     return () => clearInterval(id);
   }, [active, ready, crmUser, connect]);
+
+  /* Background token renewal before expiration */
+  useEffect(() => {
+    if (!active) return;
+    const expiry = tokenExpiryRef.current;
+    if (!expiry) return;
+    const due = Math.max(15000, expiry - Date.now() - 30000);
+    const id = setTimeout(() => connect(true), due);
+    return () => clearTimeout(id);
+  }, [active, tokenSeq, connect]);
+
   useEffect(() => {
     if (!active || !tokenRef.current || !ally) return;
     const id = setTimeout(() => { queueRef.current = queueRef.current.then(() => syncItems((ally.content || {}).items || [])); }, 650);
