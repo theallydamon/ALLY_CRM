@@ -596,6 +596,19 @@ out = { ...out, musicContent: { ...out.musicContent, cadence: out.musicContent.c
   if (!out.furnishing || !out.furnishing.rooms) {
     out = { ...out, furnishing: makeFurnishingData(legacyFurnishingRaw) };
   }
+  /* Rooms added to FURNISH_ROOMS after a document was already saved (Office, Living, Art and
+     decor, Household, Admin and move-in — 20 Aug 2026) are absent from that saved document, so
+     they would render as empty accordions. Seed only the rooms that are missing; rooms already
+     saved keep every edit, link and status exactly as they are. */
+  {
+    const missing = FURNISH_ROOMS.filter((room) => !Array.isArray(out.furnishing.rooms[room.key]));
+    if (missing.length) {
+      const seeded = makeFurnishingData();
+      const rooms = { ...out.furnishing.rooms };
+      missing.forEach((room) => { rooms[room.key] = seeded.rooms[room.key]; });
+      out = { ...out, furnishing: { ...out.furnishing, rooms } };
+    }
+  }
   return out;
 }
 /* Mama admin tasks, one-way fold-forward on every load (local AND the Firestore reconcile path, so
@@ -4570,6 +4583,95 @@ const FURNISH_ROOMS = [
     ["bags", "Bin bags", "", "LOCAL", ""],
     ["spice", "Salt, pepper, oil, basic spices", "", "LOCAL", ""],
     ["wbot", "Reusable water bottle", "", "LOCAL", ""],
+  ]},
+  { key: "office", label: "Office", tint: C.lilac, items: [
+    ["desk", "Small wooden desk", "", "", "Single monitor. Per the room render."],
+    ["chair", "Ergonomic chair", "R5,399", "LOCAL", "Where not to save."],
+    ["mon", "Samsung Odyssey G55C 32\" QHD curved", "R4,499", "LOCAL", "Makro, part LS32CG552EAXXA. Listing may say FHD; the part number is QHD."],
+    ["arm", "Monitor arm", "", "LOCAL", "Will crush a 15–18 mm particleboard desktop."],
+    ["kb", "Keyboard", "R858", "LOCAL", ""],
+    ["mouse", "Mouse", "R549", "LOCAL", ""],
+    ["dmat", "Desk mat, black and red", "", "SHEIN", ""],
+    ["tlamp", "Task lamp, mains powered", "", "LOCAL", "No window at the desk. The crystal lamp is not this."],
+    ["lstand", "Laptop stand", "R679", "LOCAL", ""],
+    ["dock", "USB-C dock", "", "LOCAL", "Need your laptop model before buying."],
+    ["foot", "Ergonomic footrest, adjustable", "R107", "SHEIN", ""],
+    ["step", "Under-desk stepper", "", "", ""],
+    ["surge", "Surge-protected multiplug", "", "LOCAL", "Never Temu. Fire risk."],
+    ["ties", "Reusable cable ties, 32 pack", "R63", "TEMU", ""],
+    ["hub", "8-port USB charging hub, 66 W", "R136", "TEMU", "Mains charger. Your own rule says local."],
+    ["ctrl", "Controller and headset stand", "R62", "SHEIN", ""],
+    ["pen", "3D dragon pen holder", "R101", "TEMU", ""],
+    ["tray", "Dragon desktop organiser tray", "R52", "TEMU", ""],
+    ["orug", "Small rug, charcoal", "", "", ""],
+    ["eth", "Ethernet cable, 5 m", "", "LOCAL", "Wired beats WiFi for all-day calls."],
+    ["ringl", "Ring light or key light", "", "", "You film daily and the desk has no window."],
+    ["tripod", "Phone tripod or clamp mount", "", "", "You film vertical video every day."],
+    ["mic", "USB microphone", "", "LOCAL", "Calls all day plus content. The laptop mic is the weak link."],
+    ["ssd", "External SSD for video files", "", "LOCAL", "Daily video fills a laptop fast."],
+    ["chairmat", "Chair mat", "", "", "Castors on porcelain tile skid and scratch."],
+  ]},
+  { key: "living", label: "Living", tint: C.pink, items: [
+    ["couch", "Two-seater couch, compact", "", "", "Couch, round table, armchair and desk all share the lounge end."],
+    ["rtable", "Small round table", "", "", ""],
+    ["armch", "Armchair", "", "", "In the room render."],
+    ["lrug", "Rug", "", "", ""],
+    ["bons", "Potted pine bonsai", "R78", "SHEIN", ""],
+    ["palm", "Large artificial fan palm, 92 cm", "R101", "SHEIN", ""],
+    ["palmpot", "Pot for the fan palm", "", "", "The listing says pot not included."],
+    ["cush", "Japanese landscape pillowcases ×2", "R103", "TEMU", "Pre-order, 5–15 days. Will arrive late."],
+    ["cushin", "Cushion inserts 45×45 ×2", "", "", "Your pillowcases ship without inserts."],
+    ["throw", "Throw blanket", "", "", ""],
+    ["flamp", "Floor lamp", "", "", ""],
+    ["ext", "Extension cord, 3 m", "", "LOCAL", ""],
+  ]},
+  { key: "decor", label: "Art and decor", tint: C.yellow, items: [
+    ["jp3", "Japanese landscape prints ×3, black and red, framed", "R377", "SHEIN", "The one item fully on brief."],
+    ["mafia", "Gangster Legends canvas, 50×70", "R76", "SHEIN", ""],
+    ["drag", "Dark fantasy dragon canvas, 50×70", "R35", "SHEIN", ""],
+    ["think", "Faceless thinker figurines ×2", "R49", "SHEIN", ""],
+    ["ninja", "Zen meditating ninja figurine", "R67", "TEMU", ""],
+    ["cand1", "LED flameless candles ×3, grey", "R154", "SHEIN", "Grey. Off palette."],
+    ["cand2", "Lavender scented candle", "R141", "TEMU", ""],
+    ["clamp", "Crystal desk lamp, rose RGB", "R70", "SHEIN", "Rose. Off palette, and not a task lamp."],
+    ["cabl", "LED sensor cabinet light, 20 cm", "R40", "SHEIN", ""],
+    ["cmd", "3M Command picture hanging strips", "", "LOCAL", "Real 3M. Wait 7 days after painting."],
+    ["hook1", "Adhesive wall hooks ×8", "R27", "TEMU", ""],
+    ["hook2", "No-drill picture hanging hooks ×2", "R25", "TEMU", ""],
+    ["batt", "Batteries, AA and AAA", "", "LOCAL", "Candles, both remotes and the sensor light need them."],
+    ["level", "Small spirit level", "", "LOCAL", "Adhesive strips give you one attempt at straight."],
+  ]},
+  { key: "household", label: "Household", tint: C.mint, items: [
+    ["broom", "Broom, dustpan and brush", "", "LOCAL", ""],
+    ["mop", "Mop and bucket", "", "LOCAL", ""],
+    ["clean", "All-purpose, bathroom and glass cleaner", "", "LOCAL", ""],
+    ["cloth", "Cloths and rubber gloves", "", "LOCAL", ""],
+    ["dmat2", "Door mat", "", "", ""],
+    ["lbag", "Laundry bag, soft not rigid", "", "", "Laundry is on site at Newinbosch Square."],
+    ["dry", "Clothes drying rack", "R304", "TEMU", "Local warehouse, 1–4 days."],
+    ["tools", "Basic tool kit", "", "LOCAL", "Everything arrives flat-packed."],
+    ["torch", "Torch or headlamp", "", "LOCAL", "Load-shedding."],
+    ["pbank", "Power bank", "", "LOCAL", ""],
+    ["faid", "First aid kit", "", "LOCAL", ""],
+    ["fireb", "Fire blanket or small extinguisher", "", "LOCAL", ""],
+    ["steam", "Handheld clothes steamer", "", "LOCAL", "Beats an iron and board in 19 m²."],
+    ["keys", "Spare keys cut", "", "LOCAL", ""],
+    ["stool", "Folding step stool", "", "", "Ceiling track lighting and high cupboards."],
+    ["vac", "Handheld vacuum", "", "LOCAL", "A broom alone will not do a rug."],
+    ["bulbs", "Spare light bulbs", "", "LOCAL", "Check the track lighting fitting type."],
+    ["shoe", "Shoe rack or tray by the door", "", "", ""],
+    ["umb", "Umbrella", "", "LOCAL", "Winelands winter."],
+  ]},
+  { key: "admin", label: "Admin and move-in", tint: C.brown, items: [
+    ["isp", "Fibre ISP sign-up", "R389–R729/m", "", "Thinkspeed network. Webafrica and Afrihost are both on the approved list."],
+    ["fno", "Confirm the line status with Marcel", "", "", "Is the Thinkspeed line already run into the unit?"],
+    ["lease", "Countersigned lease", "", "", "Check what the ISP accepts as proof of address."],
+    ["stmt", "Account statement, deposit and first rent", "", "", ""],
+    ["deliv", "Confirm delivery with The Bed Centre", "", "", "Surcharge? Stairs? Lift dimensions?"],
+    ["ins", "Contents insurance quote", "", "", ""],
+    ["meter", "Photograph meter readings on day one", "", "", "Protects you from someone else's bill."],
+    ["snag", "Snag list with photos on day one", "", "", "Protects your deposit."],
+    ["night1", "Night-one box: loo roll, soap, towel, charger, kettle", "", "LOCAL", ""],
   ]},
 ];
 
