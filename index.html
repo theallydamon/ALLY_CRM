@@ -1163,184 +1163,186 @@ const REVOKE_HELP_URL = "https://myaccount.google.com/permissions";
 const CAL_HIDE_PATTERNS = [/addressbook#contacts/i, /^adamon@amplified\.community$/i];
 const calHiddenByDefault = (id) => CAL_HIDE_PATTERNS.some((re) => re.test(id || ""));
 
-/* Hook owning the calendar connection. Returns everything the UI needs and nothing it doesn't —
-   note there is no getter that exposes the raw token to callers; the only way to use it is
-   calFetch, which keeps the token inside this closure. */
+const SKIT_REGISTRY_ID = "1fKzfNPPk-MSKrG74ApwhCeziq8N296bSeTraHH-FOL0";
+const SKIT_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
+const ALL_FEATURE_SCOPES = `${CAL_SCOPES} ${SKIT_SCOPE}`;
+const SKIT_API = "https://sheets.googleapis.com/v4/spreadsheets";
+const SKIT_TABS = ["Ideas", "To Film", "To Edit", "Ready to Post"];
+const skitTab = (status) => SKIT_TABS.includes(status) ? status : "Ready to Post";
+const scriptText = (value) => {
+  const box = document.createElement("div");
+  box.innerHTML = value || "";
+  return (box.innerText || box.textContent || "").replace(/\n{3,}/g, "\n\n").trim();
+};
+const skitRow = (item, updatedAt) => [item.id || "", item.title || "", scriptText(item.desc || ""), item.created || "", updatedAt || new Date().toISOString(), "ALLY CRM", ""];
+const skitSnapshot = (item) => ({ id: item.id || "", title: item.title || "", script: scriptText(item.desc || ""), status: item.status || "Ideas", created: item.created || "", pipeline: "Content" });
+
+/* Unified Google Token Manager: single source of truth for the Google access token for Calendar & Sheets. */
+const googleTokenManager = {
+  token: null, // { value, expiresAt }
+  listeners: new Set(),
+  client: null,
+  revoked: false,
+  silent: true,
+  connecting: false,
+
+  subscribe(fn) {
+    this.listeners.add(fn);
+    return () => this.listeners.delete(fn);
+  },
+
+  notify() {
+    this.listeners.forEach((fn) => fn());
+  },
+
+  setToken(accessToken, expiresInSeconds) {
+    const expiresAt = Date.now() + Math.max(60, (Number(expiresInSeconds) || 3600) - 120) * 1000;
+    this.token = { value: accessToken, expiresAt };
+    this.revoked = false;
+    this.notify();
+  },
+
+  clearToken() {
+    this.token = null;
+    this.notify();
+  },
+
+  getToken() {
+    if (this.token && Date.now() < this.token.expiresAt - CAL_EXPIRY_MARGIN_MS) {
+      return this.token.value;
+    }
+    return null;
+  },
+
+  isValid() {
+    return !!this.getToken();
+  },
+
+  requestToken(silent = true, prompt = "") {
+    if (this.revoked) return;
+    if (!window.google || !window.google.accounts || !window.google.accounts.oauth2) return;
+    this.silent = silent;
+    this.connecting = true;
+    this.notify();
+
+    if (!this.client) {
+      this.client = window.google.accounts.oauth2.initTokenClient({
+        client_id: GOOGLE_CLIENT_ID,
+        scope: ALL_FEATURE_SCOPES,
+        callback: (resp) => {
+          this.connecting = false;
+          if (resp && resp.access_token) {
+            this.setToken(resp.access_token, resp.expires_in);
+          } else {
+            this.notify();
+          }
+        },
+        error_callback: () => {
+          this.connecting = false;
+          this.notify();
+        },
+      });
+    }
+    this.client.requestAccessToken({ prompt: prompt !== undefined ? prompt : (silent ? "" : "consent") });
+  },
+
+  revoke() {
+    if (this.token && this.token.value && window.google && window.google.accounts && window.google.accounts.oauth2) {
+      try { window.google.accounts.oauth2.revoke(this.token.value); } catch (e) {}
+    }
+    this.revoked = true;
+    this.clearToken();
+  }
+};
+
+/* Unified Hook owning Google OAuth token lifecycle for both Calendar and Skit Registry */
 function useCalendarAuth(crmUser) {
-  const tokenRef = useRef(null);        // { value, expiresAt } — memory only, by design
-  const clientRef = useRef(null);       // the GIS token client, created once
-  const revokedRef = useRef(false);     // set by an explicit Disconnect, so the silent reconnect
-                                        // does not immediately reverse it within the same session
-  const silentRef = useRef(false);      // true while an auto-reconnect is in flight, so its
-                                        // failures stay quiet. A ref, not state, because the GIS
-                                        // callbacks are created once and would close over a stale
-                                        // state value.
-  const [connected, setConnected] = useState(false);
-  const [tokenSeq, setTokenSeq] = useState(0);
-  const [calendars, setCalendars] = useState(null); // lifted here so the day grid and the chip
-                                                    // share one fetch instead of racing two
-  const [account, setAccount] = useState("");   // primary calendar id, i.e. the granted account
+  const [tokenState, setTokenState] = useState(() => ({ value: googleTokenManager.getToken(), valid: googleTokenManager.isValid() }));
+  const [calendars, setCalendars] = useState(null);
+  const [account, setAccount] = useState("");
   const [calError, setCalError] = useState("");
   const [connecting, setConnecting] = useState(false);
   const [gisReady, setGisReady] = useState(false);
 
-  /* GIS is loaded async/defer, so it may not exist yet on first render. Poll briefly rather than
-     racing it, and give up with a clear message instead of leaving a dead button. */
+  useEffect(() => {
+    return googleTokenManager.subscribe(() => {
+      setTokenState({ value: googleTokenManager.getToken(), valid: googleTokenManager.isValid() });
+      setConnecting(googleTokenManager.connecting);
+    });
+  }, []);
+
   useEffect(() => {
     let tries = 0, id = null;
     const check = () => {
       if (window.google && window.google.accounts && window.google.accounts.oauth2) { setGisReady(true); return; }
-      if (++tries > 40) { setCalError("Google's authorisation library did not load. A privacy extension or blocker may be stopping accounts.google.com."); return; }
+      if (++tries > 40) { setCalError("Google's authorisation library did not load."); return; }
       id = setTimeout(check, 250);
     };
     check();
     return () => id && clearTimeout(id);
   }, []);
 
-  const clearToken = useCallback(() => {
-    tokenRef.current = null;
-    setConnected(false); setAccount("");
-  }, []);
+  /* Drop token on logout */
+  useEffect(() => { if (!crmUser) googleTokenManager.clearToken(); }, [crmUser]);
 
-  /* Signing out of the CRM must drop the calendar grant from memory too — otherwise the next
-     person to use this browser profile inherits a live token. */
-  useEffect(() => { if (!crmUser) clearToken(); }, [crmUser, clearToken]);
-
-  const tokenValid = () => {
-    const t = tokenRef.current;
-    return !!(t && t.value && Date.now() < t.expiresAt - CAL_EXPIRY_MARGIN_MS);
-  };
-
-  /* silent==true means "do not show any UI"; used by the auto-reconnect on load. */
-  const connect = useCallback((silent) => {
-    if (!silent) setCalError("");
-    if (!gisReady) { if (!silent) setCalError("Still loading Google's authorisation library — try again in a moment."); return; }
-    if (!silent) setConnecting(true);
-    if (!clientRef.current) {
-      clientRef.current = window.google.accounts.oauth2.initTokenClient({
-        client_id: GOOGLE_CLIENT_ID,
-        scope: CAL_SCOPES,
-        callback: (resp) => {
-          setConnecting(false);
-          if (resp && resp.error) {
-            setCalError(resp.error === "access_denied"
-              ? "Calendar access was declined. Nothing was changed."
-              : `Could not get calendar permission (${resp.error}).`);
-            return;
-          }
-          if (!resp || !resp.access_token) { setCalError("Google returned no access token. Try again."); return; }
-          /* Verify we actually got what we asked for. A user can untick individual permissions on
-             the consent screen, which returns a token that silently cannot do the job. */
-          const granted = (resp.scope || "").split(/\s+/);
-          if (!granted.includes(CAL_SCOPE_EVENTS)) {
-            setCalError("Permission to edit calendar events was not granted, so scheduling cannot work. Reconnect and leave both boxes ticked.");
-            return;
-          }
-          tokenRef.current = { value: resp.access_token, expiresAt: Date.now() + (Number(resp.expires_in) || 3600) * 1000 };
-          setConnected(true);
-          /* bumped on every successful token so the renewal timer below re-arms; `connected` alone
-             stays true through a renewal and would leave the effect dormant after the first one. */
-          setTokenSeq((n) => n + 1);
-          setCalError("");
-          if (!granted.includes(CAL_SCOPE_LIST)) setCalError("Connected, but permission to list your calendars was not granted, so only your main calendar will be available.");
-        },
-        error_callback: (err) => {
-          setConnecting(false);
-          const type = (err && err.type) || "";
-          /* A silent attempt failing is expected and normal — access revoked at Google, or offline.
-             Stay completely quiet: only the status dot changes. Surfacing this on page load is
-             exactly the re-prompting the owner does not want. */
-          if (silentRef.current) return;
-          setCalError(type === "popup_closed"
-            ? "The Google permission window was closed before finishing."
-            : type === "popup_failed_to_open"
-            ? "The browser blocked Google's permission window. Allow popups for this site and try again."
-            : "Could not open Google's permission window.");
-        },
-      });
-    }
-    silentRef.current = !!silent;
-    /* Always prompt: "" — never "consent". With consent already on the account this resolves with
-       no UI at all, which is the whole point. Without consent it fails quietly, and the owner can
-       grant from the chip's details popover, where "consent" IS used so the scopes stay reviewable. */
-    clientRef.current.requestAccessToken({ prompt: "" });
+  const connect = useCallback((silent = true) => {
+    if (!gisReady) return;
+    googleTokenManager.requestToken(silent, silent ? "" : "consent");
   }, [gisReady]);
 
-  /* Explicit first-time grant. The ONLY path that may show Google's consent screen, and it is only
-     ever reachable from a deliberate click in the chip popover — never from page load. */
   const grant = useCallback(() => {
-    if (!gisReady || !clientRef.current) { connect(false); return; }
-    setCalError(""); setConnecting(true); silentRef.current = false;
-    clientRef.current.requestAccessToken({ prompt: "consent" });
-  }, [gisReady, connect]);
+    if (!gisReady) return;
+    googleTokenManager.requestToken(false, "consent");
+  }, [gisReady]);
 
-  /* Silent connect on load. Unconditional whenever signed into the CRM: consent lives in the Google
-     account, not here, so there is nothing local to check and nothing that can fall out of sync.
-     If consent exists this is invisible. If it does not, it fails quietly. Either way the owner is
-     never asked anything. */
+  /* Silent connect on load */
   useEffect(() => {
-    if (!gisReady || !crmUser || connected) return;
-    if (revokedRef.current) return; // disconnected on purpose this session — do not undo it
+    if (!gisReady || !crmUser || tokenState.valid) return;
     connect(true);
-  }, [gisReady, crmUser, connected, connect]);
+  }, [gisReady, crmUser, tokenState.valid, connect]);
 
-  /* Google can be momentarily unavailable while the CRM is restoring a signed in session. Keep
-     retrying silently until the durable account consent returns a fresh token, just as the Sheet
-     registry does. This never opens a permission window and stops after an explicit disconnect. */
+  /* Background silent renewal timer */
   useEffect(() => {
-    if (!gisReady || !crmUser || connected || revokedRef.current) return;
-    const id = setInterval(() => connect(true), 30000);
+    if (!crmUser) return;
+    const id = setInterval(() => {
+      if (!googleTokenManager.isValid()) {
+        connect(true);
+      }
+    }, 30000);
     return () => clearInterval(id);
-  }, [gisReady, crmUser, connected, connect]);
+  }, [crmUser, connect]);
 
-  /* Background renewal. Re-requests a token shortly before the current one lapses, so a session
-     left open all day never lands on an expired token mid-drag. Same silent path, so still no UI.
-     Runs off the actual expiry rather than a fixed interval, because Google's lifetime is not
-     guaranteed to be exactly an hour. */
-  useEffect(() => {
-    if (!connected) return;
-    const t = tokenRef.current;
-    if (!t) return;
-    const due = Math.max(15000, t.expiresAt - Date.now() - CAL_EXPIRY_MARGIN_MS - 30000);
-    const id = setTimeout(() => connect(true), due);
-    return () => clearTimeout(id);
-  }, [connected, tokenSeq, connect]);
-
-  /* Single funnel for every Calendar API call. Keeps the token private, turns expiry into a
-     reconnect prompt rather than a silent failure, and never echoes the token in an error. */
   const calFetch = useCallback(async (path, options = {}) => {
-    /* `quiet` suppresses the on-screen error for calls where a failure is expected and meaningful
-       rather than exceptional — chiefly the sync check, where a 404 means "you deleted this event",
-       which is normal and must not be reported as a fault. It is stripped before fetch sees it. */
     const { quiet, ...init } = options;
     const shout = (msg) => { if (!quiet) setCalError(msg); };
-    if (!tokenValid()) { clearToken(); shout("Your calendar connection expired. Reconnect to carry on."); return { ok: false, expired: true }; }
+    let token = googleTokenManager.getToken();
+    if (!token) {
+      shout("Your calendar connection expired. Reconnecting...");
+      connect(true);
+      return { ok: false, expired: true };
+    }
     let res;
     try {
       res = await fetch(`${CAL_API}${path}`, {
         ...init,
-        headers: { Authorization: `Bearer ${tokenRef.current.value}`, "Content-Type": "application/json", ...(init.headers || {}) },
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", ...(init.headers || {}) },
       });
     } catch (e) {
       shout("Could not reach Google Calendar. Check your connection.");
       return { ok: false, network: true };
     }
     if (res.status === 401 || res.status === 403) {
-      clearToken();
-      shout(res.status === 401
-        ? "Your calendar connection expired. Reconnect to carry on."
-        : "Google refused that calendar request. The permission may have been revoked.");
+      googleTokenManager.clearToken();
+      connect(true);
+      shout("Calendar connection refreshed.");
       return { ok: false, expired: true, status: res.status };
     }
     if (!res.ok) { shout(`Google Calendar returned an error (${res.status}).`); return { ok: false, status: res.status }; }
     if (res.status === 204) return { ok: true, data: null };
     try { return { ok: true, data: await res.json() }; }
     catch (e) { return { ok: true, data: null }; }
-  }, [clearToken]);
+  }, [connect]);
 
-  /* showHidden=true matters: calendars unticked in Google Calendar's own sidebar are omitted by
-     default. minAccessRole=reader still drops freeBusy-only calendars, which are useless here since
-     they carry no event detail. `used` applies the owner's include/exclude decisions. */
   const loadCalendars = useCallback(async () => {
     const r = await calFetch("/users/me/calendarList?minAccessRole=reader&showHidden=true&maxResults=100");
     if (!r.ok) return;
@@ -1354,51 +1356,44 @@ function useCalendarAuth(crmUser) {
     if (primary) setAccount(primary.id);
   }, [calFetch]);
 
-  useEffect(() => { if (connected && !calendars) loadCalendars(); }, [connected, calendars, loadCalendars]);
+  useEffect(() => { if (tokenState.valid && !calendars) loadCalendars(); }, [tokenState.valid, calendars, loadCalendars]);
 
   const disconnect = useCallback(() => {
-    const t = tokenRef.current;
-    if (t && t.value && window.google && window.google.accounts && window.google.accounts.oauth2) {
-      try { window.google.accounts.oauth2.revoke(t.value); } catch (e) {}
-    }
-    /* revoke() withdraws consent at Google, so the silent reconnect above correctly stops working
-       rather than instantly undoing this. Reconnecting afterwards needs a real consent click. */
-    revokedRef.current = true;
-    clearToken(); setCalendars(null); setCalError("");
-  }, [clearToken]);
+    googleTokenManager.revoke();
+    setCalendars(null); setCalError("");
+  }, []);
 
-  return { connected, connecting, account, setAccount, calError, setCalError, gisReady, connect, grant, disconnect, calFetch, tokenValid, calendars, loadCalendars };
+  return {
+    connected: tokenState.valid,
+    connecting,
+    account,
+    setAccount,
+    calError,
+    setCalError,
+    gisReady,
+    connect,
+    grant,
+    disconnect,
+    calFetch,
+    tokenValid: () => googleTokenManager.isValid(),
+    calendars,
+    loadCalendars
+  };
 }
 
-/* ================= SKIT REGISTRY =================
-   The registry uses the owner's own short lived Google token to write directly to the dedicated
-   Sheet. No token or script content is sent to a third party, and no server or paid Firebase plan
-   is required. A skit keeps one ID while its current row moves between the four pipeline tabs.
-   Revision Log is append only, so moving or accidentally deleting a skit remains recoverable. */
-const SKIT_REGISTRY_ID = "1fKzfNPPk-MSKrG74ApwhCeziq8N296bSeTraHH-FOL0";
-const SKIT_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
-const SKIT_API = "https://sheets.googleapis.com/v4/spreadsheets";
-const SKIT_TABS = ["Ideas", "To Film", "To Edit", "Ready to Post"];
-const skitTab = (status) => SKIT_TABS.includes(status) ? status : "Ready to Post";
-const scriptText = (value) => {
-  const box = document.createElement("div");
-  box.innerHTML = value || "";
-  return (box.innerText || box.textContent || "").replace(/\n{3,}/g, "\n\n").trim();
-};
-const skitRow = (item, updatedAt) => [item.id || "", item.title || "", scriptText(item.desc || ""), item.created || "", updatedAt || new Date().toISOString(), "ALLY CRM", ""];
-const skitSnapshot = (item) => ({ id: item.id || "", title: item.title || "", script: scriptText(item.desc || ""), status: item.status || "Ideas", created: item.created || "", pipeline: "Content" });
-
 function useSkitRegistry(crmUser, ally) {
-  const tokenRef = useRef(null);
-  const tokenExpiryRef = useRef(0);
-  const clientRef = useRef(null);
-  const silentRef = useRef(true);
+  const [tokenValid, setTokenValid] = useState(() => googleTokenManager.isValid());
   const previousRef = useRef(null);
   const queueRef = useRef(Promise.resolve());
-  const [state, setState] = useState("off"); // off | connecting | syncing | synced | error
+  const [state, setState] = useState("off");
   const [error, setError] = useState("");
   const [ready, setReady] = useState(false);
-  const [active, setActive] = useState(false);
+
+  useEffect(() => {
+    return googleTokenManager.subscribe(() => {
+      setTokenValid(googleTokenManager.isValid());
+    });
+  }, []);
 
   useEffect(() => {
     let tries = 0, id = null;
@@ -1412,18 +1407,23 @@ function useSkitRegistry(crmUser, ally) {
   }, []);
 
   useEffect(() => {
-    if (crmUser) return;
-    tokenRef.current = null; tokenExpiryRef.current = 0; previousRef.current = null;
-    setActive(false); setState("off");
+    if (!crmUser) {
+      previousRef.current = null;
+      setState("off");
+    }
   }, [crmUser]);
 
   const sheetFetch = useCallback(async (path, options = {}) => {
-    const token = tokenRef.current;
+    const token = googleTokenManager.getToken();
     if (!token) throw new Error("No registry access token");
     const response = await fetch(`${SKIT_API}/${SKIT_REGISTRY_ID}${path.startsWith(":") ? "" : "/"}${path}`, {
       ...options,
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", ...(options.headers || {}) },
     });
+    if (response.status === 401 || response.status === 403) {
+      googleTokenManager.clearToken();
+      googleTokenManager.requestToken(true);
+    }
     if (!response.ok) {
       let detail = "";
       try { const body = await response.json(); detail = body && body.error && body.error.message ? `, ${body.error.message}` : ""; } catch (e) {}
@@ -1492,41 +1492,18 @@ function useSkitRegistry(crmUser, ally) {
     } catch (e) { setState("error"); setError(`The skit registry did not save, ${e.message || "unknown Google Sheets error"}. Your CRM data is still safe in Firebase.`); }
   }, [appendRevisions, ensureRegistry, writeCurrentTabs]);
 
-  const connect = useCallback((silent = false) => {
-    if (!crmUser || !ready) { if (!silent) setError("Sign in to the CRM and wait for Google to load first."); return; }
-    silentRef.current = !!silent;
-    setState("connecting"); setError("");
-    if (!clientRef.current) clientRef.current = window.google.accounts.oauth2.initTokenClient({
-      client_id: GOOGLE_CLIENT_ID, scope: SKIT_SCOPE,
-      callback: (response) => {
-        if (!response || response.error || !response.access_token) { setState("off"); setActive(false); if (!silentRef.current) setError("Google Sheets access was not granted."); return; }
-        tokenRef.current = response.access_token; tokenExpiryRef.current = Date.now() + Math.max(60, Number(response.expires_in || 3600) - 120) * 1000; setActive(true); setState("syncing");
-      },
-      error_callback: () => { setState("off"); setActive(false); if (!silentRef.current) setError("Google could not open the Sheets permission window."); },
-    });
-    clientRef.current.requestAccessToken({ prompt: silent ? "" : "consent" });
+  const connect = useCallback((silent = true) => {
+    if (!crmUser || !ready) return;
+    googleTokenManager.requestToken(silent, silent ? "" : "consent");
   }, [crmUser, ready]);
 
-  /* Calendar and Sheets use separate in-memory tokens. Start the registry immediately after the
-     calendar's silent request has been handed to GIS, rather than waiting for the 30-second
-     renewal loop or competing with that first request. */
   useEffect(() => {
-    if (!ready || !crmUser || tokenRef.current) return;
-    const id = setTimeout(() => connect(true), 350);
-    return () => clearTimeout(id);
-  }, [ready, crmUser, connect]);
-  useEffect(() => {
-    if (!ready || !crmUser) return;
-    const id = setInterval(() => { if (!tokenRef.current || Date.now() >= tokenExpiryRef.current) connect(true); }, 30000);
-    return () => clearInterval(id);
-  }, [active, ready, crmUser, connect]);
-  useEffect(() => {
-    if (!active || !tokenRef.current || !ally) return;
+    if (!tokenValid || !ally) return;
     const id = setTimeout(() => { queueRef.current = queueRef.current.then(() => syncItems((ally.content || {}).items || [])); }, 650);
     return () => clearTimeout(id);
-  }, [ally, active, syncItems]);
+  }, [ally, tokenValid, syncItems]);
 
-  return { state, error, connect, active, ready };
+  return { state: tokenValid ? (state === "off" ? "synced" : state) : "off", error, connect, active: tokenValid, ready };
 }
 
 /* ================= DAY GRID =================
@@ -2464,6 +2441,7 @@ function AllyCRM() {
           setAuthError("Google sign-in did not finish. Try again."); return;
         }
         try {
+          googleTokenManager.setToken(response.access_token, response.expires_in);
           const credential = window.firebase.auth.GoogleAuthProvider.credential(null, response.access_token);
           await fbAuth.signInWithCredential(credential);
         } catch (e) {
