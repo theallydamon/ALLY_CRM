@@ -2472,38 +2472,7 @@ function AllyCRM() {
     window.location.reload();
   };
 
-  /* one-time reconcile the moment we know who's signed in AND local data has finished loading:
-     if Firestore already has a saved doc for this uid, that becomes the live state (so a second
-     device picks up everything); otherwise this device's current data becomes the seed. */
-  useEffect(() => {
-    if (!fbDb || !user || !localLoaded) return;
-    if (cloudLoadedFor.current === user.uid) return;
-    cloudLoadedFor.current = user.uid;
-    reconcileDone.current = false;
-    (async () => {
-      setCloudState("loading");
-      try {
-        const docRef = fbDb.collection("users").doc(user.uid);
-        const snap = await docRef.get();
-        const remote = snap.exists ? snap.data() : null;
-        if (remote && remote.ally && remote.mama) {
-          const remoteAlly = migrateAlly(remote.ally);
-          /* A cloud record from before furnishing existed must not erase the local one-time
-             import of the separate board's links. The normal cloud save immediately follows. */
-          if (!remote.ally.furnishing && allyRef.current && allyRef.current.furnishing) remoteAlly.furnishing = allyRef.current.furnishing;
-          const migrated = moveMamaAdminTasksToAi(remoteAlly, { ...remote.mama, tasks: migrateMamaTasks(remote.mama.tasks) });
-          setAlly(migrated.ally); setMama(migrated.mama);
-        } else {
-          await docRef.set({ ally: allyRef.current, mama: mamaRef.current, updatedAt: Date.now() });
-        }
-        setCloudState("synced");
-      } catch (e) {
-        setCloudState("error");
-      } finally {
-        reconcileDone.current = true;
-      }
-    })();
-  }, [user, localLoaded]);
+  const lastCloudStr = useRef(null);
 
   /* Creator records carry their own edit time so an older browser session cannot overwrite a
      newer creator note by saving the full Mama record. Other Mama fields keep their local value,
@@ -2524,10 +2493,78 @@ function AllyCRM() {
     return { ...remote, ...local, creators };
   };
 
-  /* ongoing sync: same debounce shape as the localStorage save below, just a bit longer since
-     it's a network write, and only once the initial reconcile above has actually happened. */
+  /* Real-time sync & initial reconcile: subscribe to Firestore document changes on users/uid.
+     When signed in and local data is loaded, onSnapshot handles both the initial load and
+     real-time updates across multiple open devices. */
+  useEffect(() => {
+    if (!fbDb || !user || !localLoaded) return;
+    cloudLoadedFor.current = user.uid;
+    setCloudState("loading");
+
+    const docRef = fbDb.collection("users").doc(user.uid);
+    let initialHandled = false;
+
+    const unsub = docRef.onSnapshot(
+      async (snap) => {
+        if (!snap.exists) {
+          // If no remote doc exists yet, seed it with local data
+          try {
+            await docRef.set({ ally: allyRef.current, mama: mamaRef.current, updatedAt: Date.now() });
+            lastCloudStr.current = JSON.stringify({ ally: allyRef.current, mama: mamaRef.current });
+            setCloudState("synced");
+          } catch (e) {
+            setCloudState("error");
+          } finally {
+            reconcileDone.current = true;
+          }
+          return;
+        }
+
+        // Ignore local write echoes if hasPendingWrites is true
+        if (snap.metadata && snap.metadata.hasPendingWrites) {
+          reconcileDone.current = true;
+          return;
+        }
+
+        const remote = snap.data();
+        if (remote && remote.ally && remote.mama) {
+          const remoteAlly = migrateAlly(remote.ally);
+          if (!remote.ally.furnishing && allyRef.current && allyRef.current.furnishing) {
+            remoteAlly.furnishing = allyRef.current.furnishing;
+          }
+          const migrated = moveMamaAdminTasksToAi(remoteAlly, { ...remote.mama, tasks: migrateMamaTasks(remote.mama.tasks) });
+          const incomingStr = JSON.stringify({ ally: migrated.ally, mama: migrated.mama });
+
+          if (incomingStr !== lastCloudStr.current) {
+            lastCloudStr.current = incomingStr;
+            const currentAllyStr = JSON.stringify(allyRef.current);
+            const currentMamaStr = JSON.stringify(mamaRef.current);
+            if (JSON.stringify(migrated.ally) !== currentAllyStr) setAlly(migrated.ally);
+            if (JSON.stringify(migrated.mama) !== currentMamaStr) setMama(migrated.mama);
+          }
+          setCloudState("synced");
+        }
+        reconcileDone.current = true;
+      },
+      (err) => {
+        setCloudState("error");
+        reconcileDone.current = true;
+      }
+    );
+
+    return () => {
+      unsub();
+    };
+  }, [user, localLoaded]);
+
+  /* ongoing sync: send local changes to Firestore if they differ from the last synced state. */
   useEffect(() => {
     if (!fbDb || !user || !reconcileDone.current) return;
+    const currentStr = JSON.stringify({ ally, mama });
+    if (lastCloudStr.current && currentStr === lastCloudStr.current) {
+      setCloudState("synced");
+      return;
+    }
     setCloudState("saving"); clearTimeout(cloudTimer.current);
     cloudTimer.current = setTimeout(async () => {
       try {
@@ -2539,6 +2576,8 @@ function AllyCRM() {
           transaction.set(docRef, { ally, mama: resolvedMama, updatedAt: Date.now() });
           return resolvedMama;
         });
+        const finalStr = JSON.stringify({ ally, mama: mergedMama });
+        lastCloudStr.current = finalStr;
         if (JSON.stringify(mergedMama) !== JSON.stringify(mama)) setMama(mergedMama);
         setCloudState("synced");
       } catch (e) { setCloudState("error"); }
