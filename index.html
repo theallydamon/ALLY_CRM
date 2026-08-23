@@ -2535,14 +2535,24 @@ function AllyCRM() {
           const migrated = moveMamaAdminTasksToAi(remoteAlly, { ...remote.mama, tasks: migrateMamaTasks(remote.mama.tasks) });
           const incomingStr = JSON.stringify({ ally: migrated.ally, mama: migrated.mama });
 
-          if (incomingStr !== lastCloudStr.current) {
+          const localStr = JSON.stringify({ ally: allyRef.current, mama: mamaRef.current });
+
+          if (incomingStr === localStr) {
             lastCloudStr.current = incomingStr;
-            const currentAllyStr = JSON.stringify(allyRef.current);
-            const currentMamaStr = JSON.stringify(mamaRef.current);
-            if (JSON.stringify(migrated.ally) !== currentAllyStr) setAlly(migrated.ally);
-            if (JSON.stringify(migrated.mama) !== currentMamaStr) setMama(migrated.mama);
+            setCloudState("synced");
+          } else if (incomingStr !== lastCloudStr.current) {
+            // Only adopt remote data if local state has no unsaved pending changes
+            // (i.e. local state matches lastCloudStr, meaning the user isn't actively editing)
+            const hasUnsavedLocalEdits = localStr !== lastCloudStr.current;
+            if (!hasUnsavedLocalEdits) {
+              lastCloudStr.current = incomingStr;
+              if (JSON.stringify(migrated.ally) !== JSON.stringify(allyRef.current)) setAlly(migrated.ally);
+              if (JSON.stringify(migrated.mama) !== JSON.stringify(mamaRef.current)) setMama(migrated.mama);
+              setCloudState("synced");
+            }
+          } else {
+            setCloudState("synced");
           }
-          setCloudState("synced");
         }
         reconcileDone.current = true;
       },
@@ -2569,16 +2579,24 @@ function AllyCRM() {
     cloudTimer.current = setTimeout(async () => {
       try {
         const docRef = fbDb.collection("users").doc(user.uid);
+        const currentAlly = allyRef.current;
+        const currentMama = mamaRef.current;
+        const savingStr = JSON.stringify({ ally: currentAlly, mama: currentMama });
+
         const mergedMama = await fbDb.runTransaction(async (transaction) => {
           const snapshot = await transaction.get(docRef);
           const remoteMama = snapshot.exists ? snapshot.data().mama : null;
-          const resolvedMama = mergeMamaCreators(remoteMama, mama);
-          transaction.set(docRef, { ally, mama: resolvedMama, updatedAt: Date.now() });
+          const resolvedMama = mergeMamaCreators(remoteMama, currentMama);
+          transaction.set(docRef, { ally: currentAlly, mama: resolvedMama, updatedAt: Date.now() });
           return resolvedMama;
         });
-        const finalStr = JSON.stringify({ ally, mama: mergedMama });
+        const finalStr = JSON.stringify({ ally: currentAlly, mama: mergedMama });
         lastCloudStr.current = finalStr;
-        if (JSON.stringify(mergedMama) !== JSON.stringify(mama)) setMama(mergedMama);
+
+        // Only update local mama if user hasn't made newer changes since the transaction started
+        if (JSON.stringify(mergedMama.creators) !== JSON.stringify(mamaRef.current.creators)) {
+          setMama((prevMama) => mergeMamaCreators(mergedMama, prevMama));
+        }
         setCloudState("synced");
       } catch (e) { setCloudState("error"); }
     }, 600);
