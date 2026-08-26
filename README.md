@@ -29,7 +29,13 @@ Pushing to `main` triggers `.github/workflows/deploy.yml`, which uploads the rep
 
 ## Data and auth
 
-Google sign-in through Firebase Auth gates access to the app. State is held in the browser via `localStorage` and synced to Firestore at `users/<uid>`, one document per signed-in user. The app also runs as a Claude artifact unchanged: it detects `window.storage` and falls back to `localStorage` outside it.
+Google sign-in through Firebase Auth gates access to the app. Only `theallydamon@gmail.com` and `ally@mama.co.za` are admitted, and both sync the same CRM state through `workspaces/ally-crm` in Firestore. On the first primary-account login after this change, the app migrates the existing `users/<uid>` data into that shared workspace. The old user document is retained as a rollback copy.
+
+Deploy `firestore.rules` to the `ally-crm-cbdd1` Firebase project before deploying this version of the app. Those rules are the security boundary that restricts the shared workspace to the two approved, verified Google accounts. The matching allowlist in `index.html` only provides a friendly sign-in error.
+
+The `ALLY DAMON SKIT REGISTRY` Google Sheet is a separate shared mirror for skit items and their revision log; it is not the CRM database. The shared Firestore workspace is the live source of truth for the CRM. Each signed-in person authorises Sheets and Calendar access using their own Google account, so both accounts must retain access to that Sheet and any shared calendars they need.
+
+State is also held in the browser via `localStorage`. The app runs as a Claude artifact unchanged: it detects `window.storage` and falls back to `localStorage` outside it.
 
 ## Working on it
 

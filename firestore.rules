@@ -1,0 +1,25 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isApprovedCrmUser() {
+      return request.auth != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.email in [
+          'theallydamon@gmail.com',
+          'ally@mama.co.za'
+        ];
+    }
+
+    // Both approved accounts collaborate in this single real-time CRM workspace.
+    match /workspaces/ally-crm {
+      allow read, write: if isApprovedCrmUser();
+    }
+
+    // Preserve access to each account's legacy document for the one-time migration and rollback.
+    // No account can read or write another account's legacy document.
+    match /users/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+  }
+}

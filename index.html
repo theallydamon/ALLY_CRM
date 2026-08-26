@@ -462,6 +462,15 @@ const firebaseConfig = {
   messagingSenderId: "139362174943",
   appId: "1:139362174943:web:ea4df75838f6dfcf80a66a",
 };
+/* Both approved Google accounts work in one Firestore document. Authentication, Calendar and
+   Sheets tokens remain per-person; only the CRM state below is shared. The same allowlist is
+   enforced server-side in firestore.rules — this client-side check is for a clear sign-in error,
+   not a security boundary. */
+const CRM_WORKSPACE_ID = "ally-crm";
+const CRM_PRIMARY_EMAIL = "theallydamon@gmail.com";
+const CRM_ALLOWED_EMAILS = new Set([CRM_PRIMARY_EMAIL, "ally@mama.co.za"]);
+const normaliseEmail = (value) => String(value || "").trim().toLowerCase();
+const canAccessCRM = (user) => !!user && CRM_ALLOWED_EMAILS.has(normaliseEmail(user.email));
 let fbAuth = null, fbDb = null;
 try {
   if (typeof window !== "undefined" && window.firebase) {
@@ -2075,7 +2084,7 @@ function AllyCRM() {
     })();
   }, []);
 
-  /* ---------- cloud sync: Google Sign-In + Firestore (purely additive on top of localStorage) ---------- */
+  /* ---------- cloud sync: Google Sign-In + one shared Firestore workspace ---------- */
   const [user, setUser] = useState(null);
   const [authReady, setAuthReady] = useState(false); // becomes true once we've heard back from Firebase at least once
   const [cloudState, setCloudState] = useState("offline"); // offline | loading | saving | synced | error
@@ -2410,7 +2419,14 @@ function AllyCRM() {
 
   useEffect(() => {
     if (!fbAuth) { setAuthReady(true); return; }
-    const unsub = fbAuth.onAuthStateChanged((u) => { setUser(u); setAuthReady(true); });
+    const unsub = fbAuth.onAuthStateChanged(async (u) => {
+      if (u && !canAccessCRM(u)) {
+        setAuthError(`Access is limited to ${[...CRM_ALLOWED_EMAILS].join(" and ")}.`);
+        try { await fbAuth.signOut(); } catch (e) {}
+        setUser(null); setAuthReady(true); return;
+      }
+      setUser(u); setAuthReady(true);
+    });
     /* Safari web apps do not preserve a popup opener reliably. Their login uses a full-page
        redirect and lands back here, so collect that result before rendering the sign-in screen. */
     fbAuth.getRedirectResult().catch((e) => {
@@ -2493,29 +2509,54 @@ function AllyCRM() {
     return { ...remote, ...local, creators };
   };
 
-  /* Real-time sync & initial reconcile: subscribe to Firestore document changes on users/uid.
-     When signed in and local data is loaded, onSnapshot handles both the initial load and
-     real-time updates across multiple open devices. */
+  /* Real-time sync & initial reconcile: both approved accounts subscribe to the same workspace.
+     The first primary-account load after this change copies the old users/<uid> document into the
+     workspace, preserving the existing CRM. The secondary account cannot seed an empty workspace,
+     which prevents it from accidentally winning the migration race with default/local data. */
   useEffect(() => {
     if (!fbDb || !user || !localLoaded) return;
     cloudLoadedFor.current = user.uid;
     setCloudState("loading");
 
-    const docRef = fbDb.collection("users").doc(user.uid);
+    const docRef = fbDb.collection("workspaces").doc(CRM_WORKSPACE_ID);
     let initialHandled = false;
 
     const unsub = docRef.onSnapshot(
       async (snap) => {
         if (!snap.exists) {
-          // If no remote doc exists yet, seed it with local data
+          if (initialHandled) return;
+          initialHandled = true;
+          /* Only the established primary account may create the shared workspace. Prefer its old
+             cloud document over this browser's cache so a fresh device cannot replace real data
+             with the seed. The transaction also makes concurrent first loads harmless. */
+          if (normaliseEmail(user.email) !== CRM_PRIMARY_EMAIL) {
+            setCloudState("error");
+            reconcileDone.current = false;
+            return;
+          }
           try {
-            await docRef.set({ ally: allyRef.current, mama: mamaRef.current, updatedAt: Date.now() });
-            lastCloudStr.current = JSON.stringify({ ally: allyRef.current, mama: mamaRef.current });
+            const legacyRef = fbDb.collection("users").doc(user.uid);
+            await fbDb.runTransaction(async (transaction) => {
+              const workspaceSnap = await transaction.get(docRef);
+              if (workspaceSnap.exists) return;
+              const legacySnap = await transaction.get(legacyRef);
+              const legacy = legacySnap.exists ? legacySnap.data() : null;
+              const initialAlly = legacy && legacy.ally ? legacy.ally : allyRef.current;
+              const initialMama = legacy && legacy.mama ? legacy.mama : mamaRef.current;
+              transaction.set(docRef, {
+                ally: initialAlly,
+                mama: initialMama,
+                updatedAt: Date.now(),
+                migratedFromUid: user.uid,
+              });
+            });
             setCloudState("synced");
+            reconcileDone.current = true;
           } catch (e) {
             setCloudState("error");
-          } finally {
-            reconcileDone.current = true;
+            /* Keep writes gated if migration fails. Otherwise the ordinary save timer could create
+               the workspace from a browser's stale/local cache and bypass the legacy-cloud copy. */
+            reconcileDone.current = false;
           }
           return;
         }
@@ -2568,7 +2609,7 @@ function AllyCRM() {
     setCloudState("saving"); clearTimeout(cloudTimer.current);
     cloudTimer.current = setTimeout(async () => {
       try {
-        const docRef = fbDb.collection("users").doc(user.uid);
+        const docRef = fbDb.collection("workspaces").doc(CRM_WORKSPACE_ID);
         const mergedMama = await fbDb.runTransaction(async (transaction) => {
           const snapshot = await transaction.get(docRef);
           const remoteMama = snapshot.exists ? snapshot.data().mama : null;
