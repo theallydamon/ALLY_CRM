@@ -696,6 +696,7 @@ const AI_PROJECT_NAMES = [
   "AMPLIFIED REPORTING (cassidies reporting tool)",
   "MAMA VOICES",
 ];
+const MAMA_AI_MIGRATION_VERSION = 1;
 const aiProjectForMamaTask = (task) => {
   const text = `${task.title || ""} ${task.description || ""}`.toLowerCase();
   if (/drive.*duplicat|duplicat.*drive|alexa/.test(text)) return AI_PROJECT_NAMES[0];
@@ -707,24 +708,33 @@ const aiProjectForMamaTask = (task) => {
 };
 function moveMamaAdminTasksToAi(ally, mama) {
   if (!ally || !mama) return { ally, mama };
+  const incomingTasks = mama.tasks || [];
+  const migrationVersion = Number(((ally.aiTasks || {}).mamaAdminMigrationVersion) || 0);
+  /* This used to rebuild every named AI project on every Firestore snapshot. Deleting a project
+     therefore worked for a fraction of a second and then the "migration" recreated it. Once the
+     legacy Mama queue has been folded forward, an empty queue is proof there is nothing to migrate:
+     return the saved shape exactly, including deliberate project/task deletions. */
+  if (migrationVersion >= MAMA_AI_MIGRATION_VERSION && !incomingTasks.length) return { ally, mama };
+
   const projects = ((ally.aiTasks || {}).projects || []).map((project) => ({ ...project, tasks: project.tasks || [] }));
   const byName = new Map(projects.map((project) => [project.name, project]));
-  AI_PROJECT_NAMES.concat("Unsorted Mama Admin").forEach((name) => {
-    if (byName.has(name)) return;
+  const projectFor = (name) => {
+    if (byName.has(name)) return byName.get(name);
     const project = { id: uid(), name, tasks: [], created: todayISO() };
     projects.push(project); byName.set(name, project);
-  });
+    return project;
+  };
   const generalTasks = (ally.lifeAdmin && ally.lifeAdmin.items || []).slice();
-  (mama.tasks || []).forEach((task) => {
+  incomingTasks.forEach((task) => {
     if (/film\s*io/i.test(`${task.title || ""} ${task.description || ""}`)) {
       if (!generalTasks.some((item) => item.id === task.id)) generalTasks.push({ ...task, status: task.status || "To do" });
       return;
     }
-    const project = byName.get(aiProjectForMamaTask(task));
+    const project = projectFor(aiProjectForMamaTask(task));
     if (!project.tasks.some((item) => item.id === task.id)) project.tasks.push({ ...task, done: task.done !== undefined ? task.done : task.status === "Done" });
   });
   return {
-    ally: { ...ally, lifeAdmin: { ...(ally.lifeAdmin || {}), items: generalTasks }, aiTasks: { ...(ally.aiTasks || {}), projects } },
+    ally: { ...ally, lifeAdmin: { ...(ally.lifeAdmin || {}), items: generalTasks }, aiTasks: { ...(ally.aiTasks || {}), projects, mamaAdminMigrationVersion: MAMA_AI_MIGRATION_VERSION } },
     mama: { ...mama, tasks: [] },
   };
 }
