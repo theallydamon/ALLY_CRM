@@ -1,0 +1,35 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+
+    function isExplicitCollaborator() {
+      return signedIn() && request.auth.token.email in [
+        'ally@mama.co.za'
+      ];
+    }
+
+    // The original owner already has a users/<uid> document from the previous per-user backend.
+    // Using that as the owner marker migrates access without hard-coding or exposing their email.
+    function isLegacyOwner() {
+      return signedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    match /workspaces/{workspaceId} {
+      allow read, write: if workspaceId == 'ally-crm'
+        && (isLegacyOwner() || isExplicitCollaborator());
+    }
+
+    // Retained for one-time migration and backwards-compatible owner recovery only.
+    match /users/{userId} {
+      allow read, write: if signedIn() && request.auth.uid == userId;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

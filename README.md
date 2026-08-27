@@ -29,7 +29,11 @@ Pushing to `main` triggers `.github/workflows/deploy.yml`, which uploads the rep
 
 ## Data and auth
 
-Google sign-in through Firebase Auth gates access to the app. State is held in the browser via `localStorage` and synced to Firestore at `users/<uid>`, one document per signed-in user. The app also runs as a Claude artifact unchanged: it detects `window.storage` and falls back to `localStorage` outside it.
+Google sign-in through Firebase Auth gates access to the app. Every authorised user shares the live Firestore document at `workspaces/ally-crm`; `onSnapshot` updates open sessions immediately and transaction-based three-way merging prevents stale browsers from overwriting unrelated changes or resurrecting deleted tasks. `localStorage` remains an offline cache and emergency backup, not the primary backend.
+
+Firestore access is defined in `firestore.rules`. The original owner is recognised by the legacy `users/<uid>` document and `ally@mama.co.za` is an explicit collaborator. Deploy rule changes with `firebase deploy --only firestore:rules` before deploying app code that depends on a new access policy.
+
+The Google Sheet integration is a separate Content skit registry. It mirrors skit rows for workflow/reporting and is not the CRM database.
 
 ## Working on it
 

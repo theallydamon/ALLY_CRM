@@ -471,6 +471,67 @@ try {
   }
 } catch (e) { /* no cloud sync this session — local storage still works fully */ }
 
+/* Every authorised person works in this one shared CRM document. The previous users/<uid>
+   layout gave each Google account an isolated copy, so a collaborator could sign in but could
+   never see the owner's tasks. Keep the path stable: Firestore security rules and the one-time
+   legacy migration below both depend on it. */
+const CRM_WORKSPACE_ID = "ally-crm";
+const CRM_WORKSPACE_PATH = `workspaces/${CRM_WORKSPACE_ID}`;
+
+const jsonEqual = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const isRecord = (value) => !!value && typeof value === "object" && !Array.isArray(value);
+const isIdCollection = (value) => Array.isArray(value) && value.every((item) => isRecord(item) && item.id != null);
+
+/* Three-way merge used by every Firestore transaction:
+     base   = the last server version this browser saw
+     local  = the user's edits since base
+     remote = the newest server version, including somebody else's edits
+
+   Unchanged fields take remote, remotely unchanged fields take local, and object/ID-array changes
+   are merged recursively. This is what stops a stale full-document save from resurrecting deleted
+   tasks while still allowing two people to edit unrelated cards at the same time. */
+function mergeLiveValue(base, local, remote) {
+  if (jsonEqual(local, base)) return remote;
+  if (jsonEqual(remote, base)) return local;
+  if (jsonEqual(local, remote)) return local;
+
+  if (isIdCollection(base || []) && isIdCollection(local || []) && isIdCollection(remote || [])) {
+    const baseMap = new Map((base || []).map((item) => [String(item.id), item]));
+    const localMap = new Map((local || []).map((item) => [String(item.id), item]));
+    const remoteMap = new Map((remote || []).map((item) => [String(item.id), item]));
+    const order = [...(local || []).map((item) => String(item.id)), ...(remote || []).map((item) => String(item.id))]
+      .filter((id, index, all) => all.indexOf(id) === index);
+    return order.flatMap((id) => {
+      const hadBase = baseMap.has(id), hasLocal = localMap.has(id), hasRemote = remoteMap.has(id);
+      if (hadBase && !hasLocal) return []; // a local deletion stays deleted
+      if (hadBase && !hasRemote && jsonEqual(localMap.get(id), baseMap.get(id))) return []; // remote deletion
+      if (!hasLocal) return hasRemote ? [remoteMap.get(id)] : [];
+      if (!hasRemote) return hadBase ? [localMap.get(id)] : [localMap.get(id)];
+      return [mergeLiveValue(baseMap.get(id), localMap.get(id), remoteMap.get(id))];
+    });
+  }
+
+  if (isRecord(base || {}) && isRecord(local || {}) && isRecord(remote || {})) {
+    const out = {};
+    const keys = new Set([...Object.keys(base || {}), ...Object.keys(local || {}), ...Object.keys(remote || {})]);
+    keys.forEach((key) => {
+      const hadBase = Object.prototype.hasOwnProperty.call(base || {}, key);
+      const hasLocal = Object.prototype.hasOwnProperty.call(local || {}, key);
+      const hasRemote = Object.prototype.hasOwnProperty.call(remote || {}, key);
+      if (hadBase && !hasLocal) return; // local deletion
+      if (hadBase && !hasRemote && jsonEqual((local || {})[key], (base || {})[key])) return; // remote deletion
+      if (!hasLocal) { if (hasRemote) out[key] = remote[key]; return; }
+      if (!hasRemote) { out[key] = local[key]; return; }
+      out[key] = mergeLiveValue((base || {})[key], local[key], remote[key]);
+    });
+    return out;
+  }
+
+  /* Same-field conflicts are intentionally last-editor-wins. Disjoint fields and separate cards
+     have already been merged above, which is the common concurrent-use case. */
+  return local;
+}
+
 /* ---------- helpers ---------- */
 const uid = () => Math.random().toString(36).slice(2, 9);
 const hasTextSelection = () => { const sel = window.getSelection(); return !!(sel && sel.toString().length > 0); };
@@ -2079,6 +2140,7 @@ function AllyCRM() {
   const [user, setUser] = useState(null);
   const [authReady, setAuthReady] = useState(false); // becomes true once we've heard back from Firebase at least once
   const [cloudState, setCloudState] = useState("offline"); // offline | loading | saving | synced | error
+  const [workspaceError, setWorkspaceError] = useState("");
 
   /* Calendar authorisation. Separate from `user` above: `user` is who you are (Firebase), this is
      whether the app may touch your calendar (Google Identity Services). Passing `user` in lets the
@@ -2473,91 +2535,93 @@ function AllyCRM() {
   };
 
   const lastCloudStr = useRef(null);
+  const lastRemoteData = useRef(null);
 
-  /* Creator records carry their own edit time so an older browser session cannot overwrite a
-     newer creator note by saving the full Mama record. Other Mama fields keep their local value,
-     while each creator is resolved independently in favour of the newest edit. */
-  const mergeMamaCreators = (remoteMama, localMama) => {
-    const remote = remoteMama || {};
-    const local = localMama || {};
-    const remoteById = new Map((remote.creators || []).map((creator) => [creator.id, creator]));
-    const localById = new Map((local.creators || []).map((creator) => [creator.id, creator]));
-    const ids = [...localById.keys(), ...[...remoteById.keys()].filter((id) => !localById.has(id))];
-    const creators = ids.map((id) => {
-      const remoteCreator = remoteById.get(id);
-      const localCreator = localById.get(id);
-      if (!remoteCreator) return localCreator;
-      if (!localCreator) return remoteCreator;
-      return Number(localCreator.updatedAt || 0) > Number(remoteCreator.updatedAt || 0) ? localCreator : remoteCreator;
-    });
-    return { ...remote, ...local, creators };
+  const normaliseCloudData = (raw) => {
+    if (!raw || !raw.ally || !raw.mama) return null;
+    const remoteAlly = migrateAlly(raw.ally);
+    const migrated = moveMamaAdminTasksToAi(remoteAlly, { ...raw.mama, tasks: migrateMamaTasks(raw.mama.tasks) });
+    return { ally: migrated.ally, mama: migrated.mama };
   };
 
-  /* Real-time sync & initial reconcile: subscribe to Firestore document changes on users/uid.
-     When signed in and local data is loaded, onSnapshot handles both the initial load and
-     real-time updates across multiple open devices. */
+  /* Real-time shared workspace. Existing owners are recognised by their legacy users/<uid>
+     document and migrate that data into the shared workspace exactly once. Explicit collaborators
+     (currently ally@mama.co.za) join the already-created workspace and receive the same snapshot. */
   useEffect(() => {
     if (!fbDb || !user || !localLoaded) return;
     cloudLoadedFor.current = user.uid;
     setCloudState("loading");
+    setWorkspaceError("");
 
-    const docRef = fbDb.collection("users").doc(user.uid);
-    let initialHandled = false;
+    const docRef = fbDb.doc(CRM_WORKSPACE_PATH);
+    const legacyRef = fbDb.collection("users").doc(user.uid);
+    let unsub = () => {};
+    let cancelled = false;
 
-    const unsub = docRef.onSnapshot(
-      async (snap) => {
-        if (!snap.exists) {
-          // If no remote doc exists yet, seed it with local data
-          try {
-            await docRef.set({ ally: allyRef.current, mama: mamaRef.current, updatedAt: Date.now() });
-            lastCloudStr.current = JSON.stringify({ ally: allyRef.current, mama: mamaRef.current });
-            setCloudState("synced");
-          } catch (e) {
-            setCloudState("error");
-          } finally {
-            reconcileDone.current = true;
-          }
-          return;
-        }
-
-        // Ignore local write echoes if hasPendingWrites is true
-        if (snap.metadata && snap.metadata.hasPendingWrites) {
+    (async () => {
+      try {
+        /* Transaction prevents two first-time sessions from creating competing workspace copies. */
+        await fbDb.runTransaction(async (transaction) => {
+          const shared = await transaction.get(docRef);
+          if (shared.exists) return;
+          const legacy = await transaction.get(legacyRef);
+          const legacyData = legacy.exists ? normaliseCloudData(legacy.data()) : null;
+          const seed = legacyData || { ally: allyRef.current, mama: mamaRef.current };
+          transaction.set(docRef, {
+            ...seed,
+            workspaceId: CRM_WORKSPACE_ID,
+            updatedAt: window.firebase.firestore.FieldValue.serverTimestamp(),
+            updatedBy: user.email || user.uid,
+          });
+        });
+      } catch (e) {
+        if (!cancelled) {
+          setCloudState("error");
+          setWorkspaceError(e && e.code === "permission-denied"
+            ? `${user.email || "This account"} does not have access to the shared CRM.`
+            : "The shared CRM could not be opened. Check Firebase and reload.");
           reconcileDone.current = true;
-          return;
         }
+        return;
+      }
+      if (cancelled) return;
 
-        const remote = snap.data();
-        if (remote && remote.ally && remote.mama) {
-          const remoteAlly = migrateAlly(remote.ally);
-          if (!remote.ally.furnishing && allyRef.current && allyRef.current.furnishing) {
-            remoteAlly.furnishing = allyRef.current.furnishing;
-          }
-          const migrated = moveMamaAdminTasksToAi(remoteAlly, { ...remote.mama, tasks: migrateMamaTasks(remote.mama.tasks) });
-          const incomingStr = JSON.stringify({ ally: migrated.ally, mama: migrated.mama });
+      unsub = docRef.onSnapshot(
+      async (snap) => {
+        if (!snap.exists || (snap.metadata && snap.metadata.hasPendingWrites)) return;
+        const remote = normaliseCloudData(snap.data());
+        if (!remote) return;
+        const current = { ally: allyRef.current, mama: mamaRef.current };
+        const base = lastRemoteData.current;
+        const incoming = base ? mergeLiveValue(base, current, remote) : remote;
 
-          if (incomingStr !== lastCloudStr.current) {
-            lastCloudStr.current = incomingStr;
-            const currentAllyStr = JSON.stringify(allyRef.current);
-            const currentMamaStr = JSON.stringify(mamaRef.current);
-            if (JSON.stringify(migrated.ally) !== currentAllyStr) setAlly(migrated.ally);
-            if (JSON.stringify(migrated.mama) !== currentMamaStr) setMama(migrated.mama);
-          }
-          setCloudState("synced");
-        }
+        lastRemoteData.current = remote;
+        lastCloudStr.current = JSON.stringify(remote);
+        if (!jsonEqual(incoming.ally, allyRef.current)) setAlly(incoming.ally);
+        if (!jsonEqual(incoming.mama, mamaRef.current)) setMama(incoming.mama);
+        setWorkspaceError("");
+        setCloudState(jsonEqual(incoming, remote) ? "synced" : "saving");
         reconcileDone.current = true;
       },
       (err) => {
         setCloudState("error");
+        setWorkspaceError(err && err.code === "permission-denied"
+          ? `${user.email || "This account"} does not have access to the shared CRM.`
+          : "Live sync was interrupted. Changes remain saved on this device while it reconnects.");
         reconcileDone.current = true;
       }
-    );
+      );
+    })();
 
     return () => {
+      cancelled = true;
       unsub();
     };
   }, [user, localLoaded]);
 
-  /* ongoing sync: send local changes to Firestore if they differ from the last synced state. */
+  /* Ongoing sync writes through a transaction. The merge is calculated against the newest server
+     snapshot inside that transaction, so an edit made by another user during our 300 ms debounce
+     is incorporated instead of overwritten. */
   useEffect(() => {
     if (!fbDb || !user || !reconcileDone.current) return;
     const currentStr = JSON.stringify({ ally, mama });
@@ -2568,20 +2632,36 @@ function AllyCRM() {
     setCloudState("saving"); clearTimeout(cloudTimer.current);
     cloudTimer.current = setTimeout(async () => {
       try {
-        const docRef = fbDb.collection("users").doc(user.uid);
-        const mergedMama = await fbDb.runTransaction(async (transaction) => {
+        const docRef = fbDb.doc(CRM_WORKSPACE_PATH);
+        const local = { ally, mama };
+        const merged = await fbDb.runTransaction(async (transaction) => {
           const snapshot = await transaction.get(docRef);
-          const remoteMama = snapshot.exists ? snapshot.data().mama : null;
-          const resolvedMama = mergeMamaCreators(remoteMama, mama);
-          transaction.set(docRef, { ally, mama: resolvedMama, updatedAt: Date.now() });
-          return resolvedMama;
+          const remote = snapshot.exists ? normaliseCloudData(snapshot.data()) : null;
+          const base = lastRemoteData.current || remote || local;
+          const resolved = remote ? mergeLiveValue(base, local, remote) : local;
+          transaction.set(docRef, {
+            ally: resolved.ally,
+            mama: resolved.mama,
+            workspaceId: CRM_WORKSPACE_ID,
+            updatedAt: window.firebase.firestore.FieldValue.serverTimestamp(),
+            updatedBy: user.email || user.uid,
+          });
+          return resolved;
         });
-        const finalStr = JSON.stringify({ ally, mama: mergedMama });
+        const finalStr = JSON.stringify(merged);
+        lastRemoteData.current = merged;
         lastCloudStr.current = finalStr;
-        if (JSON.stringify(mergedMama) !== JSON.stringify(mama)) setMama(mergedMama);
+        if (!jsonEqual(merged.ally, allyRef.current)) setAlly(merged.ally);
+        if (!jsonEqual(merged.mama, mamaRef.current)) setMama(merged.mama);
+        setWorkspaceError("");
         setCloudState("synced");
-      } catch (e) { setCloudState("error"); }
-    }, 600);
+      } catch (e) {
+        setCloudState("error");
+        setWorkspaceError(e && e.code === "permission-denied"
+          ? `${user.email || "This account"} does not have permission to edit the shared CRM.`
+          : "That change could not sync yet. It remains saved on this device and will retry after the next edit.");
+      }
+    }, 300);
     return () => clearTimeout(cloudTimer.current);
   }, [ally, mama, user]);
 
@@ -2770,9 +2850,8 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
     return () => clearTimeout(t);
   }, [navRequest]);
 
-  /* export/import: localStorage is per-browser (Chrome and Safari, or a Safari "Add to Dock" web
-     app, each keep their own completely separate copy) so this is how data actually moves between
-     them — download everything as one JSON file here, then use Import on the other browser/app. */
+  /* Export/import remains as a manual disaster-recovery backup. Normal multi-device and multi-user
+     movement is handled live by the shared Firestore workspace above. */
   const [importMsg, setImportMsg] = useState("");
   const importInputRef = useRef(null);
   const exportData = () => {
@@ -2983,7 +3062,7 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
                 )}
               </div>
             )}
-            <div className="flex items-center gap-1.5" title="Data only lives in this browser's storage — use these to move it to another browser or Safari's Add to Dock app, or just to keep a backup">
+            <div className="flex items-center gap-1.5" title="Download or restore a manual backup of the shared CRM">
               {importMsg && <span className="btn-label" style={{ fontSize: 10.5, color: importMsg === "Imported ✓" ? C.mint : C.rose, whiteSpace: "nowrap" }}>{importMsg}</span>}
               <button onClick={exportData} className="flex items-center gap-1" style={{ ...iconBtn, fontSize: 11, padding: "5px 8px", border: `1px solid ${LINE}`, borderRadius: 8 }} aria-label="Export data">
                 <Download size={12} /> <span className="btn-label">Export</span>
@@ -3002,6 +3081,11 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
               hidden behind it. */}
           <div ref={scrollRef} className="scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "24px 32px", display: "flex", flexDirection: "column", alignItems: "center" }}>
             <div style={{ width: "100%", maxWidth: 1280, margin: 0, paddingBottom: 32 }}>
+              {workspaceError && (
+                <div role="alert" style={{ marginBottom: 14, padding: "10px 12px", borderRadius: 10, background: C.accentBg, border: `1px solid ${C.accentLine}`, color: C.ink, fontSize: 11.5, lineHeight: 1.45 }}>
+                  {workspaceError}
+                </div>
+              )}
               {tab === "overview" && <PersonalModule ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} q={q} navRequest={navRequest} navigateToTask={navigateToTask} completeTask={completeTask} cal={cal} onSchedule={scheduleTask} onMove={moveScheduled} onResize={resizeScheduled} onUnschedule={unscheduleTask} onDeleteEvent={deleteOrphanEvent} syncTick={syncTick} />}
               {tab === "content" && <ContentModule data={ally} setData={setAlly} q={q} navRequest={navRequest} onContentSchedule={syncContentCalendar} registry={registry} />}
               {tab === "lifeAdmin" && <LifeAdminModule data={ally} setData={setAlly} q={q} />}
