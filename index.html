@@ -1299,7 +1299,7 @@ const googleTokenManager = {
     if (!this.client) {
       this.client = window.google.accounts.oauth2.initTokenClient({
         client_id: GOOGLE_CLIENT_ID,
-        hint: "ally@mama.co.za",
+        hint: (() => { try { return firebase.auth().currentUser.email; } catch (e) { return undefined; } })(),
         scope: ALL_FEATURE_SCOPES,
         callback: (resp) => {
           this.connecting = false;
@@ -1315,7 +1315,7 @@ const googleTokenManager = {
         },
       });
     }
-    this.client.requestAccessToken({ prompt: prompt !== undefined ? prompt : (silent ? "" : "consent") });
+    this.client.requestAccessToken({ hint: (() => { try { return firebase.auth().currentUser.email; } catch (e) { return undefined; } })(), prompt: prompt !== undefined ? prompt : (silent ? "" : "consent") });
   },
 
   revoke() {
@@ -2505,7 +2505,7 @@ function AllyCRM() {
     setAuthError(""); setAuthStalled(false);
     const client = window.google.accounts.oauth2.initTokenClient({
       client_id: GOOGLE_CLIENT_ID,
-      hint: "ally@mama.co.za",
+      hint: (() => { try { return firebase.auth().currentUser.email; } catch (e) { return undefined; } })(),
       /* One deliberate sign-in grants the identity, Calendar and Skit Registry scopes together.
          The two feature hooks then silently obtain and renew their own memory-only tokens for the
          rest of this open-app session; no 30-second stagger or second permission prompt. */
