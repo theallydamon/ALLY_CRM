@@ -1297,6 +1297,7 @@ const calHiddenByDefault = (id) => CAL_HIDE_PATTERNS.some((re) => re.test(id || 
 const SKIT_REGISTRY_ID = "1fKzfNPPk-MSKrG74ApwhCeziq8N296bSeTraHH-FOL0";
 const SKIT_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
 const ALL_FEATURE_SCOPES = `${CAL_SCOPES} ${SKIT_SCOPE}`;
+const googleScopesForEmail = (email) => profileForEmail(email) === "work" ? CAL_SCOPES : ALL_FEATURE_SCOPES;
 const SKIT_API = "https://sheets.googleapis.com/v4/spreadsheets";
 const SKIT_TABS = ["Ideas", "To Film", "To Edit", "Ready to Post"];
 const skitTab = (status) => SKIT_TABS.includes(status) ? status : "Ready to Post";
@@ -1313,6 +1314,7 @@ const googleTokenManager = {
   token: null, // { value, expiresAt }
   listeners: new Set(),
   client: null,
+  clientScope: "",
   revoked: false,
   silent: true,
   connecting: false,
@@ -1338,6 +1340,14 @@ const googleTokenManager = {
     this.notify();
   },
 
+  resetForAccount() {
+    this.token = null;
+    this.client = null;
+    this.clientScope = "";
+    this.revoked = false;
+    this.notify();
+  },
+
   getToken() {
     if (this.token && Date.now() < this.token.expiresAt - CAL_EXPIRY_MARGIN_MS) {
       return this.token.value;
@@ -1349,18 +1359,19 @@ const googleTokenManager = {
     return !!this.getToken();
   },
 
-  requestToken(silent = true, prompt = "") {
+  requestToken(silent = true, prompt = "", scope = ALL_FEATURE_SCOPES) {
     if (this.revoked) return;
     if (!window.google || !window.google.accounts || !window.google.accounts.oauth2) return;
     this.silent = silent;
     this.connecting = true;
     this.notify();
 
-    if (!this.client) {
+    if (!this.client || this.clientScope !== scope) {
+      this.clientScope = scope;
       this.client = window.google.accounts.oauth2.initTokenClient({
         client_id: GOOGLE_CLIENT_ID,
         hint: (() => { try { return firebase.auth().currentUser.email; } catch (e) { return undefined; } })(),
-        scope: ALL_FEATURE_SCOPES,
+        scope,
         callback: (resp) => {
           this.connecting = false;
           if (resp && resp.access_token) {
@@ -1395,6 +1406,7 @@ function useCalendarAuth(crmUser) {
   const [calError, setCalError] = useState("");
   const [connecting, setConnecting] = useState(false);
   const [gisReady, setGisReady] = useState(false);
+  const [accountMismatch, setAccountMismatch] = useState(false);
 
   useEffect(() => {
     return googleTokenManager.subscribe(() => {
@@ -1414,35 +1426,41 @@ function useCalendarAuth(crmUser) {
     return () => id && clearTimeout(id);
   }, []);
 
-  /* Drop token on logout */
-  useEffect(() => { if (!crmUser) googleTokenManager.clearToken(); }, [crmUser]);
+  /* Drop token and account diagnostics on logout/account change. */
+  useEffect(() => {
+    if (!crmUser) {
+      googleTokenManager.clearToken();
+      setCalendars(null); setAccount(""); setAccountMismatch(false); setCalError("");
+    }
+  }, [crmUser]);
 
   const connect = useCallback((silent = true) => {
     if (!gisReady) return;
-    googleTokenManager.requestToken(silent, silent ? "" : "consent");
-  }, [gisReady]);
+    googleTokenManager.requestToken(silent, silent ? "" : "consent", googleScopesForEmail(crmUser && crmUser.email));
+  }, [gisReady, crmUser]);
 
   const grant = useCallback(() => {
     if (!gisReady) return;
-    googleTokenManager.requestToken(false, "consent");
-  }, [gisReady]);
+    setAccountMismatch(false);
+    googleTokenManager.requestToken(false, "consent", googleScopesForEmail(crmUser && crmUser.email));
+  }, [gisReady, crmUser]);
 
   /* Silent connect on load */
   useEffect(() => {
-    if (!gisReady || !crmUser || tokenState.valid) return;
+    if (!gisReady || !crmUser || tokenState.valid || accountMismatch) return;
     connect(true);
-  }, [gisReady, crmUser, tokenState.valid, connect]);
+  }, [gisReady, crmUser, tokenState.valid, accountMismatch, connect]);
 
   /* Background silent renewal timer */
   useEffect(() => {
     if (!crmUser) return;
     const id = setInterval(() => {
-      if (!googleTokenManager.isValid()) {
+      if (!googleTokenManager.isValid() && !accountMismatch) {
         connect(true);
       }
     }, 30000);
     return () => clearInterval(id);
-  }, [crmUser, connect]);
+  }, [crmUser, accountMismatch, connect]);
 
   const calFetch = useCallback(async (path, options = {}) => {
     const { quiet, ...init } = options;
@@ -1485,14 +1503,23 @@ function useCalendarAuth(crmUser) {
     }));
     setCalendars(items);
     const primary = items.find((c) => c.primary);
-    if (primary) setAccount(primary.id);
-  }, [calFetch]);
+    if (primary) {
+      setAccount(primary.id);
+      const expected = String((crmUser && crmUser.email) || "").trim().toLowerCase();
+      if (expected && String(primary.id || "").trim().toLowerCase() !== expected) {
+        setAccountMismatch(true);
+        setCalendars(null);
+        googleTokenManager.clearToken();
+        setCalError(`Calendar access belongs to ${primary.id}, not ${expected}. Reconnect and choose ${expected}.`);
+      }
+    }
+  }, [calFetch, crmUser]);
 
   useEffect(() => { if (tokenState.valid && !calendars) loadCalendars(); }, [tokenState.valid, calendars, loadCalendars]);
 
   const disconnect = useCallback(() => {
     googleTokenManager.revoke();
-    setCalendars(null); setCalError("");
+    setCalendars(null); setAccount(""); setAccountMismatch(false); setCalError("");
   }, []);
 
   return {
@@ -1509,11 +1536,12 @@ function useCalendarAuth(crmUser) {
     calFetch,
     tokenValid: () => googleTokenManager.isValid(),
     calendars,
-    loadCalendars
+    loadCalendars,
+    accountMismatch
   };
 }
 
-function useSkitRegistry(crmUser, ally) {
+function useSkitRegistry(crmUser, ally, enabled = true) {
   const [tokenValid, setTokenValid] = useState(() => googleTokenManager.isValid());
   const previousRef = useRef(null);
   const queueRef = useRef(Promise.resolve());
@@ -1539,11 +1567,11 @@ function useSkitRegistry(crmUser, ally) {
   }, []);
 
   useEffect(() => {
-    if (!crmUser) {
+    if (!crmUser || !enabled) {
       previousRef.current = null;
       setState("off");
     }
-  }, [crmUser]);
+  }, [crmUser, enabled]);
 
   const sheetFetch = useCallback(async (path, options = {}) => {
     const token = googleTokenManager.getToken();
@@ -1625,17 +1653,17 @@ function useSkitRegistry(crmUser, ally) {
   }, [appendRevisions, ensureRegistry, writeCurrentTabs]);
 
   const connect = useCallback((silent = true) => {
-    if (!crmUser || !ready) return;
-    googleTokenManager.requestToken(silent, silent ? "" : "consent");
-  }, [crmUser, ready]);
+    if (!enabled || !crmUser || !ready) return;
+    googleTokenManager.requestToken(silent, silent ? "" : "consent", ALL_FEATURE_SCOPES);
+  }, [enabled, crmUser, ready]);
 
   useEffect(() => {
-    if (!tokenValid || !ally) return;
+    if (!enabled || !tokenValid || !ally) return;
     const id = setTimeout(() => { queueRef.current = queueRef.current.then(() => syncItems((ally.content || {}).items || [])); }, 650);
     return () => clearTimeout(id);
-  }, [ally, tokenValid, syncItems]);
+  }, [enabled, ally, tokenValid, syncItems]);
 
-  return { state: tokenValid ? (state === "off" ? "synced" : state) : "off", error, connect, active: tokenValid, ready };
+  return { state: enabled && tokenValid ? (state === "off" ? "synced" : state) : "off", error: enabled ? error : "", connect, active: enabled && tokenValid, ready: enabled && ready };
 }
 
 /* ================= DAY GRID =================
@@ -2213,18 +2241,17 @@ function AllyCRM() {
   const [cloudState, setCloudState] = useState("offline"); // offline | loading | saving | synced | error
   const [workspaceError, setWorkspaceError] = useState("");
 
-  /* Calendar authorisation. Separate from `user` above: `user` is who you are (Firebase), this is
-     whether the app may touch your calendar (Google Identity Services). Passing `user` in lets the
-     hook drop the token the moment you sign out of the CRM. */
-  const cal = useCalendarAuth(user);
-  const registry = useSkitRegistry(user, ally);
-
   /* ---------- active view profile (see VIEW_PROFILES) ----------
      Chosen strictly by the signed-in Google account. `user` is null for a beat while auth settles
      and profileForEmail falls back to the personal profile, so the bottom strip never renders
      empty. */
   const profileId = profileForEmail(user && user.email);
   const profile = VIEW_PROFILES[profileId] || VIEW_PROFILES.personal;
+
+  /* Calendar authorisation is account-bound. The work profile deliberately never starts the Skit
+     Registry hook because that is a personal Content backup and has no place in the MAMA shell. */
+  const cal = useCalendarAuth(user);
+  const registry = useSkitRegistry(user, ally, profile.id !== "work");
   /* Creators / Admin Tasks / AI Tasks are subtabs of "mama" in the personal profile but top-level
      tabs in the work one, and collectPriorityTasks stamps every Mama task with navTab "mama".
      This maps that stored navTab onto whichever tab actually exists in the active profile, so a
@@ -2588,18 +2615,18 @@ function AllyCRM() {
     const client = window.google.accounts.oauth2.initTokenClient({
       client_id: GOOGLE_CLIENT_ID,
       hint: (() => { try { return firebase.auth().currentUser.email; } catch (e) { return undefined; } })(),
-      /* One deliberate sign-in grants the identity, Calendar and Skit Registry scopes together.
-         The two feature hooks then silently obtain and renew their own memory-only tokens for the
-         rest of this open-app session; no 30-second stagger or second permission prompt. */
-      scope: `openid email profile ${CAL_SCOPES} ${SKIT_SCOPE}`,
+      /* Identity only. Once Firebase knows which account signed in, the feature hooks request the
+         correct account-specific grant: Calendar only for work, Calendar + Sheets for personal.
+         This prevents the MAMA account from ever receiving or using a Skit Registry token. */
+      scope: "openid email profile",
       callback: async (response) => {
         if (!response || response.error || !response.access_token) {
           setAuthError("Google sign-in did not finish. Try again."); return;
         }
         try {
-          googleTokenManager.setToken(response.access_token, response.expires_in);
           const credential = window.firebase.auth.GoogleAuthProvider.credential(null, response.access_token);
           await fbAuth.signInWithCredential(credential);
+          googleTokenManager.resetForAccount();
         } catch (e) {
           const code = (e && e.code) || "";
           setAuthError(AUTH_ERRORS[code] || "Google sign-in could not be completed. Try again.");
@@ -3181,7 +3208,7 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
               </button>
               <input ref={importInputRef} type="file" accept="application/json" onChange={handleImportFile} style={{ display: "none" }} />
             </div>
-            {user && <CalendarChip cal={cal} registry={registry} crmEmail={user.email || ""} />}
+            {user && <CalendarChip cal={cal} registry={registry} crmEmail={user.email || ""} showRegistry={profile.id !== "work"} />}
             <div style={{ width: 30, height: 30, borderRadius: 99, overflow: "hidden", flexShrink: 0 }} title="Ally"><img src={AVATAR_IMG} alt="Ally" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} /></div>
           </header>
 
@@ -3441,16 +3468,16 @@ function CompleteCheckbox({ onComplete, size = 18, mt = 0, label = "Mark complet
 
    The popover is the disconnect affordance 02-GOAL.md requires. Do not promote any of this back
    into the page body. */
-function CalendarChip({ cal, registry, crmEmail }) {
+function CalendarChip({ cal, registry, crmEmail, showRegistry = true }) {
   const { connected, connecting, account, calError, gisReady, grant, disconnect } = cal;
   const [open, setOpen] = useState(false);
 
   const mismatch = account && crmEmail && account.toLowerCase() !== crmEmail.toLowerCase();
   const sheetConnected = registry && registry.state === "synced";
   const sheetBusy = registry && (registry.state === "connecting" || registry.state === "syncing");
-  const allConnected = connected && sheetConnected && !mismatch;
+  const allConnected = connected && (!showRegistry || sheetConnected) && !mismatch;
   const dot = allConnected ? C.mint : mismatch ? C.amber : C.rose;
-  const connectionLabel = allConnected ? "Google Calendar and Skit Registry connected" : "A connection needs attention";
+  const connectionLabel = allConnected ? (showRegistry ? "Google Calendar and Skit Registry connected" : "Google Calendar connected") : "A connection needs attention";
 
   return (
     <div style={{ position: "relative", flexShrink: 0 }}>
@@ -3477,7 +3504,7 @@ function CalendarChip({ cal, registry, crmEmail }) {
                 : "Not connected."}
             </div>
 
-            <div style={{ marginTop: 11, paddingTop: 10, borderTop: `1px solid ${LINE}` }}>
+            {showRegistry && <div style={{ marginTop: 11, paddingTop: 10, borderTop: `1px solid ${LINE}` }}>
               <div style={{ fontWeight: 700, fontSize: 12.5, marginBottom: 2 }}>
                 Skit Registry {sheetConnected ? <span style={{ color: C.mint, fontWeight: 600 }}>· connected</span> : <span style={{ color: C.rose, fontWeight: 400 }}>· not connected</span>}
               </div>
@@ -3485,7 +3512,7 @@ function CalendarChip({ cal, registry, crmEmail }) {
                 {sheetConnected ? "Backed up to your Google Sheet." : sheetBusy ? "Waiting for Google…" : "Connect it from the Content page."}
               </div>
               {registry && registry.error && <div role="alert" style={{ marginTop: 7, fontSize: 10.5, lineHeight: 1.45, color: C.rose }}>{registry.error}</div>}
-            </div>
+            </div>}
 
             {calError && (
               <div role="alert" style={{ marginTop: 9, padding: "7px 9px", borderRadius: 8, background: C.accentBg, border: `1px solid ${C.accentLine}`, fontSize: 10.5, lineHeight: 1.45 }}>{calError}</div>
