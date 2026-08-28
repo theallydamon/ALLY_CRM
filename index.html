@@ -398,6 +398,14 @@ const MODULES = {
   apartment: { icon: "apartment", label: "Apartment",  accent: C.accent, bg: C.accentBg },
   furnishing:{ icon: "furnishing",label: "APARTMENT", accent: C.accent, bg: C.accentBg },
   deals:     { icon: "deals",     label: "Deals",      accent: C.accent, bg: C.accentBg },
+  /* 28 Aug 2026: Creators, Admin Tasks and AI Tasks were subtabs inside MamaModule. They are now
+     also addressable as top-level tabs so the work profile can put them in the bottom strip
+     (see VIEW_PROFILES). MamaModule keeps its own subtab row untouched, so the personal profile
+     behaves exactly as before and nothing is duplicated — both routes render the same three
+     components off the same data. */
+  creators:  { icon: "creators",  label: "CREATORS",   accent: C.accent, bg: C.accentBg },
+  adminTasks:{ icon: "adminTasks",label: "ADMIN TASKS",accent: C.accent, bg: C.accentBg },
+  aiTasks:   { icon: "aiTasks",   label: "AI TASKS",   accent: C.accent, bg: C.accentBg },
 };
 /* pseudo-module descriptor for the Music CONTENT pipeline card/subtab — deliberately not added
 to MODULES itself, since MODULES.music already means the unrelated song-roadmap tab. */
@@ -414,6 +422,51 @@ const MUSIC_CONTENT_MOD = { icon: "music", label: "MUSIC CONTENT", accent: C.acc
    priorityTaskCounts, or any HOME card, and it keeps its own storage key. */
 const TAB_ORDER = ["lifeAdmin", "mama", "overview", "content", "furnishing"];
 
+/* ---------- VIEW PROFILES: one app, two faces ----------
+   Added 28 Aug 2026 at the owner's instruction, to give the work laptop a MAMA-only CRM without
+   forking the app. There is deliberately NO second build, no second file and no second repo: the
+   profile decides only which tabs render in the bottom strip and what HOME shows. Both profiles
+   read and write the same shared workspace document, so nothing is copied, moved or deleted and
+   either account can see the full picture by flipping the header toggle.
+
+   IMPORTANT, and the reason this is a view and not a data split: `workspaces/ally-crm` is ONE
+   document shared by every authorised account. Hiding MAMA from the personal profile hides it from
+   view only — the data stays, and the work profile keeps reading it. Do not "tidy up" by deleting
+   MAMA data on the personal side: that empties the work profile too.
+
+   To strip MAMA out of the personal profile later, delete "mama" from personal.tabs below. That is
+   the entire change — the MAMA data, and the work profile that depends on it, are unaffected. */
+const VIEW_PROFILES = {
+  work: {
+    id: "work",
+    label: "Mama (work)",
+    /* Owner's explicit layout, 28 Aug 2026: Creators to the LEFT of HOME, Admin Tasks and AI Tasks
+       to its RIGHT. HOME is therefore second of four and NOT centred, unlike the personal strip.
+       That asymmetry is intended — do not "fix" it by reordering or padding to centre HOME. */
+    tabs: ["creators", "overview", "adminTasks", "aiTasks"],
+    /* HOME in this profile is the MAMA pillar card with the day grid underneath, and nothing else.
+       Reuses PriorityDashboard's existing onlyPillar mechanism rather than a parallel HOME layout,
+       so the card stays identical to the one the personal profile shows. */
+    homePillar: "mama",
+    homeSubs: false,
+  },
+  personal: {
+    id: "personal",
+    label: "Personal (full)",
+    tabs: TAB_ORDER,
+    homePillar: null,
+    homeSubs: true,
+  },
+};
+/* Which Google accounts land on the work profile by default. Lower-cased on comparison. */
+const WORK_PROFILE_EMAILS = ["ally@mama.co.za"];
+const profileForEmail = (email) => (WORK_PROFILE_EMAILS.includes(String(email || "").trim().toLowerCase()) ? "work" : "personal");
+/* Per-device manual override, so the work laptop signed in to the personal account (or the other
+   way round) is not stuck in the wrong shell, and so either profile can be checked without
+   signing out. Deliberately device-local: it is NOT synced to the workspace, because it describes
+   the machine you are sitting at, not the data. */
+const VIEW_PROFILE_KEY = "ally-crm-view-profile";
+
 /* ---------- custom nav glyphs ----------
    Hand-drawn so the strip isn't emoji. Same Ico() contract as the icons above (size/color/
    strokeWidth), keyed by MODULES[tab].icon. HOME is the odd one out: it's a filled mark rather than
@@ -428,6 +481,9 @@ const NAV_ICONS = {
   apartment: Ico(<><path d="M3 20.5V9l9-5.5L21 9v11.5"/><path d="M9.5 20.5v-6h5v6"/></>),
   furnishing: Ico(<><path d="M3 11.5V8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v3.5"/><path d="M2 12.5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2V18H2z"/><path d="M6 18v2"/><path d="M18 18v2"/></>),
   deals: Ico(<><path d="M3 12.5l4-4 3.5 3.5a2 2 0 0 0 2.8 0L17 8.5l4 4"/><path d="M3 12.5V19a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-6.5"/></>),
+  creators: Ico(<><circle cx="9" cy="8" r="3.2"/><path d="M3.5 20.5c0-3.1 2.5-5.6 5.5-5.6s5.5 2.5 5.5 5.6"/><path d="M16.4 5.9a3.1 3.1 0 0 1 0 6"/><path d="M18.2 15.3c1.6.9 2.6 2.5 2.6 4.4"/></>),
+  adminTasks: Ico(<><rect x="3.5" y="3.5" width="17" height="17" rx="2"/><path d="M7.3 9.6l2 2 4.2-4.2"/><path d="M7.3 16h9.4"/></>),
+  aiTasks: Ico(<><path d="M10.5 2.9l1.9 4.9 4.9 1.9-4.9 1.9-1.9 4.9-1.9-4.9L3.7 9.7l4.9-1.9z"/><path d="M18 15.6l.85 2.15 2.15.85-2.15.85L18 22.4l-.85-2.15-2.15-.85 2.15-.85z"/></>),
 };
 
 /* ---------- storage shim: window.storage in the app, localStorage in the repo ---------- */
@@ -714,7 +770,15 @@ function moveMamaAdminTasksToAi(ally, mama) {
      therefore worked for a fraction of a second and then the "migration" recreated it. Once the
      legacy Mama queue has been folded forward, an empty queue is proof there is nothing to migrate:
      return the saved shape exactly, including deliberate project/task deletions. */
-  if (migrationVersion >= MAMA_AI_MIGRATION_VERSION && !incomingTasks.length) return { ally, mama };
+  /* 28 Aug 2026 FIX. This used to read `&& !incomingTasks.length`, which meant the "migration"
+     re-ran every time mama.tasks was non-empty — i.e. every single time a new admin task was
+     captured. Called from both initial load and the Firestore onSnapshot handler, the effect was
+     that Admin Tasks could never hold anything: each new task was swept into an AI project (or
+     into lifeAdmin, if it matched /film io/) within a second of being written, and the board
+     always looked empty. The version stamp alone is now the gate, so this folds the legacy queue
+     forward exactly once and then never touches mama.tasks again. Tasks already moved into AI
+     projects deliberately stay there — this fix stops the bleeding, it does not reverse it. */
+  if (migrationVersion >= MAMA_AI_MIGRATION_VERSION) return { ally, mama };
 
   const projects = ((ally.aiTasks || {}).projects || []).map((project) => ({ ...project, tasks: project.tasks || [] }));
   const byName = new Map(projects.map((project) => [project.name, project]));
@@ -2159,6 +2223,32 @@ function AllyCRM() {
   const cal = useCalendarAuth(user);
   const registry = useSkitRegistry(user, ally);
 
+  /* ---------- active view profile (see VIEW_PROFILES) ----------
+     Chosen by the signed-in Google account, with a device-local manual override. `user` is null
+     for a beat while auth settles and profileForEmail falls back to the personal profile, so the
+     bottom strip never renders empty. */
+  const [profileOverride, setProfileOverride] = useState(null);
+  useEffect(() => { (async () => { const v = await store.get(VIEW_PROFILE_KEY); if (v === "work" || v === "personal") setProfileOverride(v); })(); }, []);
+  const profileId = profileOverride || profileForEmail(user && user.email);
+  const profile = VIEW_PROFILES[profileId] || VIEW_PROFILES.personal;
+  const setProfileId = (next) => { setProfileOverride(next); store.set(VIEW_PROFILE_KEY, next).catch(() => {}); };
+  /* Creators / Admin Tasks / AI Tasks are subtabs of "mama" in the personal profile but top-level
+     tabs in the work one, and collectPriorityTasks stamps every Mama task with navTab "mama".
+     This maps that stored navTab onto whichever tab actually exists in the active profile, so a
+     task chip on HOME lands somewhere real in both. navRequest itself is deliberately NOT
+     rewritten — Creators and MamaModule both key off navRequest.navTab === "mama" and still must. */
+  const resolveNavTab = (navTab, navSub) => {
+    if (profile.id !== "work" || navTab !== "mama") return navTab;
+    return navSub === "adminTasks" ? "adminTasks" : navSub === "aiTasks" ? "aiTasks" : "creators";
+  };
+  /* Flipping profile, or signing in as the other account, can leave `tab` pointing at something
+     the new profile does not render — an empty scroll area. Fall back to HOME, which both have.
+     Keyed on profileId only, so ordinary navigation into an off-strip tab (deals, unlocks,
+     apartment) is not clobbered. */
+  useEffect(() => {
+    if (!profile.tabs.includes(tab)) setTab("overview");
+  }, [profileId]);
+
   /* ---------- the calendar write layer ----------
      THE ONLY PLACE IN THIS APP THAT WRITES TO GOOGLE CALENDAR: create, move, resize, remove. Keep it
      that way — one funnel means one place to reason about what can change and one place to get the
@@ -2839,15 +2929,21 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
   const [navRequest, setNavRequest] = useState(null);
   const navigateToTask = (task) => {
     if (!task || !task.navTab) return;
-    go(task.navTab);
+    go(resolveNavTab(task.navTab, task.navSub));
     navSeq.current += 1;
     setNavRequest({ id: task.id, navTab: task.navTab, navSub: task.navSub || null, navOpenId: task.navOpenId || null, seq: navSeq.current });
   };
   const completeTask = (task) => completePriorityTask(setAlly, setMama, task);
+  /* HOME's pillar cards navigate with go(pillarKey) — clicking the MAMA card calls go("mama").
+     In the work profile "mama" is not in the strip: it is split into Creators / Admin Tasks /
+     AI Tasks. Route HOME's card clicks through the same resolver the task chips use, so the MAMA
+     card lands on Creators there instead of dropping onto a tab with no button. Every other
+     pillarKey passes straight through unchanged, so the personal profile is unaffected. */
+  const goFromHome = (next) => go(resolveNavTab(next, "creators"));
   /* Mama opens straight to the creator roster. The old task dashboard duplicated Home and made
      the main Mama tab land in the wrong place. */
   const goMamaCreators = () => {
-    go("mama");
+    go(resolveNavTab("mama", "creators"));
     navSeq.current += 1;
     setNavRequest({ id: null, navTab: "mama", navSub: "creators", navOpenId: null, seq: navSeq.current });
   };
@@ -2936,6 +3032,12 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
     const tasks = collectPriorityTasks(ally, mama);
     return Object.fromEntries(PRIORITY_PILLARS.map((k) => [k, tasks.filter((t) => t.pillar === k).length]));
   })();
+  /* Own counts for the three promoted work tabs. priorityTaskCounts.mama lumps creator, admin and
+     AI tasks into one number, which is right for the single MAMA tab but useless when they are
+     three separate tabs. Same filters the MAMA subtab pills already use, so the numbers agree. */
+  const creatorTaskCount = (mama.creators || []).reduce((n, cr) => n + (cr.tasks || []).filter((t) => !t.done && !t.paused).length, 0);
+  const adminTaskCount = (mama.tasks || []).filter((t) => !t.done && t.status !== "Done" && !t.paused).length;
+  const aiTaskCount = (((ally.aiTasks || {}).projects) || []).reduce((n, pr) => n + (pr.tasks || []).filter((t) => !t.done).length, 0);
   const badges = {
     content: priorityTaskCounts.content,
     unlocks: priorityTaskCounts.unlocks,
@@ -2943,6 +3045,9 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
     lifeAdmin: priorityTaskCounts.lifeAdmin,
     deals: priorityTaskCounts.deals,
     mama: priorityTaskCounts.mama,
+    creators: creatorTaskCount,
+    adminTasks: adminTaskCount,
+    aiTasks: aiTaskCount,
   };
   const mod = MODULES[tab];
 
@@ -3085,6 +3190,17 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
               <input ref={importInputRef} type="file" accept="application/json" onChange={handleImportFile} style={{ display: "none" }} />
             </div>
             {user && <CalendarChip cal={cal} registry={registry} crmEmail={user.email || ""} />}
+            {/* Which shell you are looking at, and a click to switch. Device-local on purpose: the
+                work laptop stays on MAMA while a phone on the same account is unaffected. */}
+            <button onClick={() => setProfileId(profile.id === "work" ? "personal" : "work")}
+              className="flex items-center gap-1"
+              style={{ ...iconBtn, fontSize: 10.5, padding: "5px 9px", borderRadius: 8, whiteSpace: "nowrap",
+                border: `1px solid ${profile.id === "work" ? C.accentLine : LINE}`,
+                background: profile.id === "work" ? C.accentBg : "transparent",
+                color: profile.id === "work" ? C.accent : MUT }}
+              title={`Showing the ${profile.label} view on this device — click to switch to ${profile.id === "work" ? VIEW_PROFILES.personal.label : VIEW_PROFILES.work.label}`}>
+              <span className="btn-label">{profile.label}</span>
+            </button>
             <div style={{ width: 30, height: 30, borderRadius: 99, overflow: "hidden", flexShrink: 0 }} title="Ally"><img src={AVATAR_IMG} alt="Ally" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} /></div>
           </header>
 
@@ -3098,28 +3214,38 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
                   {workspaceError}
                 </div>
               )}
-              {tab === "overview" && <PersonalModule ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} q={q} navRequest={navRequest} navigateToTask={navigateToTask} completeTask={completeTask} cal={cal} onSchedule={scheduleTask} onMove={moveScheduled} onResize={resizeScheduled} onUnschedule={unscheduleTask} onDeleteEvent={deleteOrphanEvent} syncTick={syncTick} />}
+              {tab === "overview" && <PersonalModule ally={ally} mama={mama} go={goFromHome} setAlly={setAlly} setMama={setMama} q={q} navRequest={navRequest} navigateToTask={navigateToTask} completeTask={completeTask} cal={cal} onSchedule={scheduleTask} onMove={moveScheduled} onResize={resizeScheduled} onUnschedule={unscheduleTask} onDeleteEvent={deleteOrphanEvent} syncTick={syncTick} profile={profile} />}
               {tab === "content" && <ContentModule data={ally} setData={setAlly} q={q} navRequest={navRequest} onContentSchedule={syncContentCalendar} registry={registry} />}
               {tab === "lifeAdmin" && <LifeAdminModule data={ally} setData={setAlly} q={q} />}
               {tab === "deals" && <DealsModule data={ally} setData={setAlly} q={q} navRequest={navRequest} />}
               {tab === "mama" && <MamaModule data={mama} setData={setMama} ally={ally} setAlly={setAlly} q={q} navRequest={navRequest} navigateToTask={navigateToTask} completeTask={completeTask} />}
+              {/* The same three components MamaModule renders as subtabs, reachable directly so the
+                  work profile can put them in the bottom strip. Same props, same data, no copies —
+                  MamaModule is untouched and the personal profile still reaches them through it. */}
+              {tab === "creators" && <Creators data={mama} setData={setMama} q={q} navRequest={navRequest} />}
+              {tab === "adminTasks" && <AdminTasks data={mama} setData={setMama} />}
+              {tab === "aiTasks" && <AITaskProjects data={ally} setData={setAlly} q={q} />}
               {tab === "furnishing" && <FurnishingModule data={ally} setData={setAlly} q={q} />}
             </div>
           </div>
 
           {/* ===== bottom nav strip =====
-              Renders TAB_ORDER in order, so HOME lands in the middle by construction (see the
-              comment on TAB_ORDER). HOME gets a larger, accent-ringed button; the rest are equal.
+              Renders the ACTIVE PROFILE's tabs in order (see VIEW_PROFILES), not TAB_ORDER — the
+              personal profile's list still IS TAB_ORDER, so HOME lands centred there exactly as
+              before. In the work profile HOME is second of four and off-centre by design.
+              HOME gets a larger, accent-ringed button; the rest are equal. Buttons widen when
+              there are four or fewer tabs, so "ADMIN TASKS" fits without wrapping.
               Badge counts sit top-right of each button exactly as they did on the old rail. */}
           <nav style={{ flexShrink: 0, borderTop: `1px solid ${LINE}`, background: "rgba(10,10,12,0.82)", backdropFilter: "blur(18px)", WebkitBackdropFilter: "blur(18px)", padding: "8px 16px 10px", display: "flex", alignItems: "flex-end", justifyContent: "center", gap: 6 }}>
-            {TAB_ORDER.map((t) => {
+            {profile.tabs.map((t) => {
               const on = tab === t;
               const info = MODULES[t];
               const isHome = t === "overview";
+              const roomy = profile.tabs.length <= 4;
               const Glyph = NAV_ICONS[info.icon];
               return (
                 <button key={t} className={`navbtn${isHome ? " navbtn-home" : ""}`} onClick={() => (t === "mama" ? goMamaCreators() : go(t))} title={info.label} aria-label={info.label} aria-current={on ? "page" : undefined}
-                  style={{ width: isHome ? 84 : 76, padding: isHome ? "8px 0 6px" : "7px 0 6px", borderRadius: 14, cursor: "pointer", position: "relative",
+                  style={{ width: isHome ? (roomy ? 96 : 84) : (roomy ? 92 : 76), padding: isHome ? "8px 0 6px" : "7px 0 6px", borderRadius: 14, cursor: "pointer", position: "relative",
                     display: "flex", flexDirection: "column", alignItems: "center", gap: 4, fontFamily: "inherit",
                     border: `1px solid ${on ? (isHome ? C.accentLine : LINE) : "transparent"}`,
                     background: on ? (isHome ? C.accentBg : "rgba(255,255,255,0.07)") : "transparent" }}>
@@ -3405,8 +3531,16 @@ function CalendarChip({ cal, registry, crmEmail }) {
 
 /* HOME keeps one task category visible at a time. This gives every category its own larger
    chip board instead of squeezing four cards into one row. */
-function PersonalModule({ ally, mama, setAlly, setMama, go, q, navRequest, navigateToTask, completeTask, cal, onSchedule, onMove, onResize, onUnschedule, onDeleteEvent, syncTick }) {
-  const [sub, setSub] = useState("calendar");
+function PersonalModule({ ally, mama, setAlly, setMama, go, q, navRequest, navigateToTask, completeTask, cal, onSchedule, onMove, onResize, onUnschedule, onDeleteEvent, syncTick, profile }) {
+  /* The work profile pins HOME to one pillar card — MAMA — with the day grid underneath, and drops
+     the subtab row entirely: a row containing a single button is noise, not navigation. The
+     personal profile is untouched and still opens on Calendar with all five subtabs.
+     `pinned` is read from the profile rather than hard-coded so switching profiles mid-session
+     (the header toggle) moves HOME immediately instead of waiting for a remount. */
+  const homeSubs = !profile || profile.homeSubs !== false;
+  const pinned = homeSubs ? null : (profile.homePillar || "calendar");
+  const [sub, setSub] = useState(pinned || "calendar");
+  useEffect(() => { if (pinned) setSub(pinned); }, [pinned]);
   const subs = [
     { id: "calendar", emoji: "📅", label: "Calendar" },
     { id: "lifeAdmin", emoji: "✅", label: "Life Admin" },
@@ -3424,12 +3558,14 @@ function PersonalModule({ ally, mama, setAlly, setMama, go, q, navRequest, navig
   };
   return (
     <section style={{ width: "100%", margin: 0, textAlign: "left" }}>
+      {homeSubs && (
       <nav className="flex gap-2 mb-6 flex-wrap">
         {subs.map(({ id, emoji, label }) => {
           const on = sub === id;
           return <button key={id} onClick={() => setSub(id)} className="flex items-center gap-2 rounded-full px-4 py-2" style={{ background: on ? C.dark : C.card, border: `1px solid ${on ? C.dark : LINE}`, color: on ? C.canvas : C.ink, cursor: "pointer", fontSize: 14, fontWeight: on ? 600 : 400, fontFamily: "inherit" }}><span>{emoji}</span><span>{label}</span></button>;
         })}
       </nav>
+      )}
       {sub !== "calendar" && <PriorityDashboard ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} navigateToTask={navigateToTask} completeTask={completeTask} schedule={currentSchedule(ally.schedule)} onlyPillar={sub} />}
       {/* One persistent shared grid: every Home subtab uses this exact instance, so its visible
          state and the underlying Google Calendar data do not reset when switching subtabs. */}
