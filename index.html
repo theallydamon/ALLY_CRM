@@ -2247,6 +2247,8 @@ function AllyCRM() {
      empty. */
   const profileId = profileForEmail(user && user.email);
   const profile = VIEW_PROFILES[profileId] || VIEW_PROFILES.personal;
+  const modeLabel = profile.id === "work" ? "WORK MODE" : "PERSONAL MODE";
+  useEffect(() => { document.title = modeLabel; }, [modeLabel]);
 
   /* Calendar authorisation is account-bound. The work profile deliberately never starts the Skit
      Registry hook because that is a personal Content backup and has no place in the MAMA shell. */
@@ -3170,7 +3172,7 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
             <div style={{ width: 6, height: 30, borderRadius: 3, background: mod.accent, flexShrink: 0 }} />
             <div style={{ minWidth: 0 }}>
               <div className="page-title" style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 21, lineHeight: 1.1, letterSpacing: "-0.01em" }}>{mod.label}</div>
-              <div className="page-subtitle" style={{ fontSize: 10.5, color: MUT }}>{new Date().toLocaleDateString("en-ZA", { weekday: "long", day: "numeric", month: "long" })}</div>
+              <div className="page-subtitle" style={{ fontSize: 10.5, color: MUT }}><span style={{ color: profile.id === "work" ? C.amber : C.lilac, fontWeight: 700, letterSpacing: "0.08em" }}>{modeLabel}</span> · {new Date().toLocaleDateString("en-ZA", { weekday: "long", day: "numeric", month: "long" })}</div>
             </div>
             <div className="flex-1" />
             <div className="flex items-center gap-2 header-search" style={{ background: "rgba(255,255,255,0.04)", border: `1px solid ${LINE}`, borderRadius: 9, padding: "6px 10px", maxWidth: 220, flex: "1 1 140px" }}>
@@ -3181,23 +3183,6 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
             <div className="header-savestate" style={{ fontSize: 10.5, color: saveState === "error" ? C.rose : FAINT, minWidth: 42, textAlign: "right" }}>
               {saveState === "saving" ? "saving…" : saveState === "saved" ? "saved ✓" : saveState === "error" ? "retry" : ""}
             </div>
-            {fbAuth && (
-              <div className="flex items-center gap-1.5">
-                {!user ? (
-                  <button onClick={signInGoogle} className="flex items-center gap-1" style={{ ...iconBtn, fontSize: 11, padding: "5px 8px", border: `1px solid ${LINE}`, borderRadius: 8 }} title="Sign in with Google to sync this data across your devices">
-                    <CloudIcon size={12} /> <span className="btn-label">Sign in</span>
-                  </button>
-                ) : (
-                  <div className="flex items-center gap-1.5" title={`Signed in as ${user.email}`}>
-                    {user.photoURL ? <img src={user.photoURL} alt="" style={{ width: 20, height: 20, borderRadius: 99 }} /> : <CloudIcon size={12} color={MUT} />}
-                    <span className="btn-label" style={{ fontSize: 10.5, color: cloudState === "error" ? C.rose : MUT, whiteSpace: "nowrap" }}>
-                      {cloudState === "saving" ? "syncing…" : cloudState === "synced" ? "synced ✓" : cloudState === "loading" ? "loading…" : cloudState === "error" ? "sync error" : ""}
-                    </span>
-                    <button onClick={signOutGoogle} style={{ ...iconBtn, fontSize: 11, padding: "5px 8px", border: `1px solid ${LINE}`, borderRadius: 8 }}><span className="btn-label">Sign out</span></button>
-                  </div>
-                )}
-              </div>
-            )}
             <div className="flex items-center gap-1.5" title="Download or restore a manual backup of the shared CRM">
               {importMsg && <span className="btn-label" style={{ fontSize: 10.5, color: importMsg === "Imported ✓" ? C.mint : C.rose, whiteSpace: "nowrap" }}>{importMsg}</span>}
               <button onClick={exportData} className="flex items-center gap-1" style={{ ...iconBtn, fontSize: 11, padding: "5px 8px", border: `1px solid ${LINE}`, borderRadius: 8 }} aria-label="Export data">
@@ -3209,7 +3194,17 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
               <input ref={importInputRef} type="file" accept="application/json" onChange={handleImportFile} style={{ display: "none" }} />
             </div>
             {user && <CalendarChip cal={cal} registry={registry} crmEmail={user.email || ""} showRegistry={profile.id !== "work"} />}
-            <div style={{ width: 30, height: 30, borderRadius: 99, overflow: "hidden", flexShrink: 0 }} title="Ally"><img src={AVATAR_IMG} alt="Ally" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} /></div>
+            {fbAuth && user && (
+              <div className="flex items-center gap-1.5" title={`Signed in as ${user.email}`}>
+                {user.photoURL
+                  ? <img src={user.photoURL} alt={`${user.displayName || user.email} Google profile`} referrerPolicy="no-referrer" style={{ width: 30, height: 30, borderRadius: 99, objectFit: "cover", flexShrink: 0 }} />
+                  : <div className="flex items-center justify-center" style={{ width: 30, height: 30, borderRadius: 99, background: C.accentBg, border: `1px solid ${C.accentLine}`, color: C.accent, fontSize: 12, fontWeight: 800, flexShrink: 0 }}>{String(user.displayName || user.email || "A").charAt(0).toUpperCase()}</div>}
+                <span className="btn-label" style={{ fontSize: 10.5, color: cloudState === "error" ? C.rose : MUT, whiteSpace: "nowrap" }}>
+                  {cloudState === "saving" ? "syncing…" : cloudState === "synced" ? "synced ✓" : cloudState === "loading" ? "loading…" : cloudState === "error" ? "sync error" : ""}
+                </span>
+                <button onClick={signOutGoogle} style={{ ...iconBtn, fontSize: 11, padding: "5px 8px", border: `1px solid ${LINE}`, borderRadius: 8 }}><span className="btn-label">Sign out</span></button>
+              </div>
+            )}
           </header>
 
           {/* scroll area — the only part of the page that scrolls; the header above and the nav
