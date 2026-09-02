@@ -514,7 +514,7 @@ const firebaseConfig = {
   messagingSenderId: "139362174943",
   appId: "1:139362174943:web:ea4df75838f6dfcf80a66a",
 };
-let fbAuth = null; window.fbAuth = null, fbDb = null;
+let fbAuth = null, fbDb = null;
 try {
   if (typeof window !== "undefined" && window.firebase) {
     window.firebase.initializeApp(firebaseConfig);
