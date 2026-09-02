@@ -65,6 +65,7 @@ const LinkIcon = Ico(<><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07
 const ChevronDown = Ico(<path d="m6 9 6 6 6-6"/>);
 const ChevronUp = Ico(<path d="m18 15-6-6-6 6"/>);
 const ChevronLeft = Ico(<path d="m15 18-6-6 6-6"/>);
+const ChevronRight = Ico(<path d="m9 18 6-6-6-6"/>);
 const X = Ico(<><path d="M18 6 6 18"/><path d="m6 6 12 12"/></>);
 const Check = Ico(<path d="M20 6 9 17l-5-5"/>);
 const StickyNote = Ico(<><path d="M15.5 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8.5L15.5 3Z"/><path d="M15 3v6h6"/></>);
@@ -3226,8 +3227,8 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
                   work profile can put them in the bottom strip. Same props, same data, no copies —
                   MamaModule is untouched and the personal profile still reaches them through it. */}
               {tab === "creators" && <Creators data={mama} setData={setMama} q={q} navRequest={navRequest} />}
-              {tab === "adminTasks" && <AdminTasks data={mama} setData={setMama} />}
-              {tab === "aiTasks" && <AITaskProjects data={ally} setData={setAlly} q={q} />}
+              {tab === "adminTasks" && <AdminTasks data={mama} setData={setMama} ally={ally} setAlly={setAlly} />}
+              {tab === "aiTasks" && <AITaskProjects data={ally} setData={setAlly} mama={mama} setMama={setMama} q={q} />}
               {tab === "furnishing" && <FurnishingModule data={ally} setData={setAlly} q={q} />}
             </div>
           </div>
@@ -5195,7 +5196,9 @@ function MiniTaskList({ tasks, onChange, withLink, composerAtBottom }) {
   const add = () => {
     const t = title.trim(); if (!t) return;
     const taskDue = due || defaultTaskDue();
-    onChange([{ id: uid(), title: t, description: description.trim(), link: link.trim(), due: taskDue, priority: priorityForNewTask(taskDue), lastProgress: null, done: false, created: todayISO() }, ...list]);
+    const initLink = link.trim();
+    const links = initLink ? [{ id: uid(), url: initLink.startsWith("http") ? initLink : `https://${initLink}`, label: initLink.replace(/^https?:\/\//, "").slice(0, 30) }] : [];
+    onChange([{ id: uid(), title: t, description: description.trim(), link: initLink, links, due: taskDue, priority: priorityForNewTask(taskDue), lastProgress: null, done: false, created: todayISO() }, ...list]);
     setTitle(""); setDescription(""); setDue(""); setLink("");
   };
   const update = (id, p) => onChange(list.map((t) => (t.id === id ? { ...t, ...p } : t)));
@@ -5230,6 +5233,23 @@ function MiniTaskList({ tasks, onChange, withLink, composerAtBottom }) {
    collapsed at all). */
 function MiniTaskRow({ t, onUpdate, onRemove, withLink }) {
   const [descOpen, setDescOpen] = useState(true);
+  const [linkDraft, setLinkDraft] = useState("");
+  const [labelDraft, setLabelDraft] = useState("");
+  const links = t.links || (t.link ? [{ id: uid(), url: t.link.startsWith("http") ? t.link : `https://${t.link}`, label: t.link.replace(/^https?:\/\//, "").slice(0, 30) }] : []);
+
+  const addLink = () => {
+    const raw = linkDraft.trim(); if (!raw) return;
+    const url = raw.startsWith("http") ? raw : `https://${raw}`;
+    const newLinks = [...links, { id: uid(), url, label: labelDraft.trim() || url.replace(/^https?:\/\//, "").slice(0, 30) }];
+    onUpdate({ links: newLinks, link: newLinks[0] ? newLinks[0].url : "" });
+    setLinkDraft(""); setLabelDraft("");
+  };
+
+  const removeLink = (id) => {
+    const newLinks = links.filter((l) => l.id !== id);
+    onUpdate({ links: newLinks, link: newLinks[0] ? newLinks[0].url : "" });
+  };
+
   return (
     <div data-nav-id={t.id} onClick={() => { if (hasTextSelection()) return; setDescOpen((v) => !v); }} className="rounded-lg px-2.5 py-2" style={{ cursor: "pointer", background: C.soft, border: `1px solid ${LINE}`, opacity: t.done ? 0.5 : 1 }}>
       <div className="flex items-center gap-2">
@@ -5238,12 +5258,26 @@ function MiniTaskRow({ t, onUpdate, onRemove, withLink }) {
         <button onClick={(e) => { e.stopPropagation(); onRemove(); }} style={{ ...iconBtn, padding: 2 }} aria-label="Delete"><X size={11} /></button>
       </div>
       <div style={{ fontSize: 11, color: MUT, marginTop: 2, marginLeft: 26 }}><InlineEditArea value={t.description || ""} onChange={(v) => onUpdate({ description: v })} placeholder="Add a description…" open={descOpen} onToggle={() => setDescOpen((v) => !v)} /></div>
-      {withLink && (
-        <div onClick={(e) => e.stopPropagation()} className="flex items-center gap-1.5 mt-1" style={{ marginLeft: 26 }}>
-          <input value={t.link || ""} onChange={(e) => onUpdate({ link: e.target.value })} placeholder="Add a URL…" className="rounded-md px-2 py-1 flex-1" style={{ ...inputStyle, fontSize: 10.5 }} />
-          {t.link && <a href={t.link.startsWith("http") ? t.link : `https://${t.link}`} target="_blank" rel="noreferrer" className="rounded-full px-2 py-1 flex items-center gap-1 flex-shrink-0" style={{ background: FILL, border: `1px solid ${LINE}`, fontSize: 10.5, color: C.sky, textDecoration: "none" }}><ExternalLink size={10} />Open</a>}
+
+      {links.length > 0 && (
+        <div onClick={(e) => e.stopPropagation()} className="flex gap-1.5 flex-wrap mt-1.5" style={{ marginLeft: 26 }}>
+          {links.map((l) => (
+            <span key={l.id} className="rounded-full px-2 py-0.5 flex items-center gap-1" style={{ background: FILL, border: `1px solid ${LINE}`, fontSize: 10.5 }}>
+              <a href={l.url} target="_blank" rel="noreferrer" style={{ color: C.sky, textDecoration: "none", display: "flex", alignItems: "center", gap: 3 }}><ExternalLink size={10} />{l.label || "Open"}</a>
+              <button onClick={() => removeLink(l.id)} style={{ ...iconBtn, padding: 0 }} aria-label="Remove link"><X size={9} /></button>
+            </span>
+          ))}
         </div>
       )}
+
+      {withLink && (
+        <div onClick={(e) => e.stopPropagation()} className="flex gap-1.5 mt-1.5" style={{ marginLeft: 26 }}>
+          <input value={labelDraft} onChange={(e) => setLabelDraft(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addLink()} placeholder="Name" className="rounded-md px-2 py-1" style={{ ...inputStyle, fontSize: 10.5, width: 68 }} aria-label="Link name" />
+          <input value={linkDraft} onChange={(e) => setLinkDraft(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addLink()} placeholder="Add a URL…" className="flex-1 rounded-md px-2 py-1" style={{ ...inputStyle, fontSize: 10.5, minWidth: 60 }} aria-label="Link URL" />
+          <button onClick={addLink} style={{ ...iconBtn, fontSize: 10.5, background: FILL, border: `1px solid ${LINE}`, borderRadius: 6, padding: "3px 9px" }} title="Add link">+</button>
+        </div>
+      )}
+
       {!t.done && <PriorityControls item={t} onChange={onUpdate} />}
     </div>
   );
@@ -5446,46 +5480,341 @@ function DealsModule({ data, setData, q, navRequest }) {
 }
 
 /* ================= AI TASK PROJECTS ================= */
-function AITaskProjects({ data, setData, q }) {
+function AITaskProjects({ data, setData, mama, setMama, q }) {
   const [name, setName] = useState("");
   const [closed, setClosed] = useState({});
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [due, setDue] = useState("");
+  const [selectedProjectId, setSelectedProjectId] = useState("");
+  const [draftLinks, setDraftLinks] = useState([]);
+  const [linkLabel, setLinkLabel] = useState("");
+  const [linkUrl, setLinkUrl] = useState("");
+
   const projects = ((data.aiTasks || {}).projects || []);
   const ql = (q || "").toLowerCase();
-  const shown = ql ? projects.filter((p) => p.name.toLowerCase().includes(ql) || (p.tasks || []).some((t) => `${t.title || ""} ${t.description || ""}`.toLowerCase().includes(ql))) : projects;
-  const patchProjects = (projects) => setData((d) => ({ ...d, aiTasks: { ...(d.aiTasks || {}), projects } }));
-  const add = () => {
-    const projectName = name.trim(); if (!projectName) return;
+  const shown = ql
+    ? projects.filter(
+        (p) =>
+          p.name.toLowerCase().includes(ql) ||
+          (p.tasks || []).some((t) => `${t.title || ""} ${t.description || ""}`.toLowerCase().includes(ql))
+      )
+    : projects;
+
+  const patchProjects = (newProjects) => setData((d) => ({ ...d, aiTasks: { ...(d.aiTasks || {}), projects: newProjects } }));
+
+  const addProject = () => {
+    const projectName = name.trim();
+    if (!projectName) return;
     patchProjects([{ id: uid(), name: projectName, tasks: [], created: todayISO() }, ...projects]);
     setName("");
   };
-  const update = (id, patch) => patchProjects(projects.map((p) => p.id === id ? { ...p, ...patch } : p));
-  const remove = (id) => patchProjects(projects.filter((p) => p.id !== id));
+
+  const updateProject = (id, patch) => patchProjects(projects.map((p) => (p.id === id ? { ...p, ...patch } : p)));
+  const removeProject = (id) => patchProjects(projects.filter((p) => p.id !== id));
   const toggleProject = (id, isOpen) => setClosed({ ...closed, [id]: isOpen });
+
+  const addDraftLink = () => {
+    const raw = linkUrl.trim();
+    if (!raw) return;
+    const url = raw.startsWith("http") ? raw : `https://${raw}`;
+    setDraftLinks((ls) => [...ls, { id: uid(), url, label: linkLabel.trim() || raw.replace(/^https?:\/\//, "").slice(0, 30) }]);
+    setLinkLabel("");
+    setLinkUrl("");
+  };
+
+  const removeDraftLink = (id) => setDraftLinks((ls) => ls.filter((l) => l.id !== id));
+
+  const addAiTask = () => {
+    const t = title.trim();
+    if (!t) return;
+
+    const trailing = linkUrl.trim();
+    const links = trailing
+      ? [...draftLinks, { id: uid(), url: trailing.startsWith("http") ? trailing : `https://${trailing}`, label: linkLabel.trim() || trailing.replace(/^https?:\/\//, "").slice(0, 30) }]
+      : draftLinks;
+
+    const taskDue = due || defaultTaskDue();
+    const newTask = {
+      id: uid(),
+      title: t,
+      description: description.trim(),
+      links,
+      status: "To do",
+      done: false,
+      created: todayISO(),
+      due: taskDue,
+      priority: priorityForNewTask(taskDue),
+      lastProgress: null,
+    };
+
+    let targetProjId = selectedProjectId;
+    let currentProjects = [...projects];
+
+    if (!targetProjId || targetProjId === "new" || !currentProjects.some((p) => p.id === targetProjId)) {
+      if (currentProjects.length > 0 && (!targetProjId || targetProjId === "")) {
+        targetProjId = currentProjects[0].id;
+      } else {
+        const newProj = { id: uid(), name: "General AI Tasks", tasks: [], created: todayISO() };
+        currentProjects = [newProj, ...currentProjects];
+        targetProjId = newProj.id;
+      }
+    }
+
+    const updatedProjects = currentProjects.map((p) =>
+      p.id === targetProjId ? { ...p, tasks: [newTask, ...(p.tasks || [])] } : p
+    );
+
+    patchProjects(updatedProjects);
+    setTitle("");
+    setDescription("");
+    setDue("");
+    setDraftLinks([]);
+    setLinkLabel("");
+    setLinkUrl("");
+  };
+
+  const updateTask = (projectId, taskId, patch) => {
+    patchProjects(
+      projects.map((p) =>
+        p.id === projectId
+          ? { ...p, tasks: (p.tasks || []).map((t) => (t.id === taskId ? { ...t, ...patch } : t)) }
+          : p
+      )
+    );
+  };
+
+  const removeTask = (projectId, taskId) => {
+    patchProjects(
+      projects.map((p) =>
+        p.id === projectId ? { ...p, tasks: (p.tasks || []).filter((t) => t.id !== taskId) } : p
+      )
+    );
+  };
+
+  const moveTask = (task, sourceProjectId, targetKey) => {
+    if (targetKey === "admin") {
+      removeTask(sourceProjectId, task.id);
+      if (setMama) {
+        setMama((m) => ({
+          ...m,
+          tasks: [{ ...task, status: task.status || (task.done ? "Done" : "To do") }, ...(m.tasks || [])],
+        }));
+      }
+    } else if (targetKey.startsWith("ai::")) {
+      const targetProjId = targetKey.replace("ai::", "");
+      if (targetProjId === sourceProjectId) return;
+      patchProjects(
+        projects.map((p) => {
+          if (p.id === sourceProjectId) {
+            return { ...p, tasks: (p.tasks || []).filter((t) => t.id !== task.id) };
+          }
+          if (p.id === targetProjId) {
+            return { ...p, tasks: [{ ...task }, ...(p.tasks || [])] };
+          }
+          return p;
+        })
+      );
+    }
+  };
+
+  const allOpenTasks = projects
+    .flatMap((p) => (p.tasks || []).map((t) => ({ ...t, projectId: p.id })))
+    .filter((t) => !t.done && t.status !== "Done");
+
+  const counts = ADMIN_TASK_COLS.reduce(
+    (acc, c) => ({ ...acc, [c]: allOpenTasks.filter((t) => adminTaskBucket(t) === c).length }),
+    {}
+  );
+
   return (
     <section>
-      <SectionHead title="AI Tasks" sub="Create a project first, then keep all of its AI tasks together underneath." />
-      <div className="rounded-2xl p-4 mb-6" style={{ ...card, borderRadius: 16 }}>
-        <div className="flex gap-2">
-          <input value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} placeholder="New AI project…" className="flex-1 rounded-lg px-3 py-2" style={inputStyle} />
-          <button onClick={add} style={pillDark}><Plus size={14} style={{ display: "inline", marginRight: 4 }} />Add project</button>
+      <SectionHead
+        title="AI Tasks"
+        sub="Create a project first, then keep all of its AI tasks together underneath."
+      />
+
+      {/* Open tasks by priority rollup */}
+      <div className="rounded-2xl p-4 mb-5" style={{ ...card, borderRadius: 18 }}>
+        <div className="flex items-baseline justify-between mb-3">
+          <div style={{ fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase", color: MUT }}>
+            Open tasks by priority
+          </div>
+          <div style={{ fontSize: 12, color: MUT }}>{allOpenTasks.length} open</div>
+        </div>
+        <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))" }}>
+          {ADMIN_TASK_COLS.map((c) => {
+            const tint = ADMIN_COL_TINT[c];
+            const n = counts[c];
+            return (
+              <div key={c} className="rounded-xl px-3 py-2.5" style={{ background: n ? `${tint}14` : FILL, border: `1px solid ${n ? tint : LINE}`, borderRadius: 14 }}>
+                <div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 28, lineHeight: 1, color: n ? tint : FAINT }}>{n}</div>
+                <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: MUT, marginTop: 5 }}>{ADMIN_COL_LABEL[c]}</div>
+              </div>
+            );
+          })}
         </div>
       </div>
+
+      {/* Task Capture Card */}
+      <div className="rounded-2xl p-4 mb-6" style={{ ...card, borderRadius: 16 }}>
+        <div className="flex gap-2 flex-wrap mb-2">
+          <input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && addAiTask()}
+            placeholder="What came in?"
+            className="flex-1 rounded-lg px-3 py-2"
+            style={{ ...inputStyle, minWidth: 200 }}
+          />
+          <select
+            value={selectedProjectId}
+            onChange={(e) => setSelectedProjectId(e.target.value)}
+            className="rounded-lg px-3 py-2"
+            style={{ ...inputStyle, width: 170, cursor: "pointer" }}
+            aria-label="AI Project"
+          >
+            <option value="">Project: {projects[0] ? projects[0].name : "General AI Tasks"}</option>
+            {projects.map((p) => (
+              <option key={p.id} value={p.id} style={{ background: C.dark, color: C.ink }}>
+                {p.name}
+              </option>
+            ))}
+            <option value="new" style={{ background: C.dark, color: C.ink }}>+ Create New Project</option>
+          </select>
+          <input
+            type="date"
+            value={due}
+            onChange={(e) => setDue(e.target.value)}
+            className="rounded-lg px-3 py-2"
+            style={{ ...inputStyle, width: 140 }}
+            aria-label="Due date (optional)"
+            title="Due date (optional) — auto-sets the priority"
+          />
+        </div>
+        {draftLinks.length > 0 && (
+          <div className="flex gap-1.5 flex-wrap mb-2">
+            {draftLinks.map((l) => (
+              <span key={l.id} className="rounded-full px-2.5 py-1 flex items-center gap-1.5" style={{ background: FILL, border: `1px solid ${LINE}`, fontSize: 11.5 }}>
+                <ExternalLink size={10} color={C.sky} />
+                <span style={{ color: C.sky }}>{l.label}</span>
+                <button onClick={() => removeDraftLink(l.id)} style={{ ...iconBtn, padding: 0 }} aria-label={`Remove ${l.label}`} title="Remove link"><X size={10} /></button>
+              </span>
+            ))}
+          </div>
+        )}
+        <div className="flex gap-2 flex-wrap mb-2">
+          <input
+            value={linkLabel}
+            onChange={(e) => setLinkLabel(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && addDraftLink()}
+            placeholder="Link name"
+            className="rounded-lg px-3 py-2"
+            style={{ ...inputStyle, width: 130 }}
+            aria-label="Link name"
+          />
+          <input
+            value={linkUrl}
+            onChange={(e) => setLinkUrl(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && addDraftLink()}
+            placeholder="URL (optional) — Enter or + to add another"
+            className="flex-1 rounded-lg px-3 py-2"
+            style={{ ...inputStyle, minWidth: 180 }}
+            aria-label="Link URL"
+          />
+          <button
+            onClick={addDraftLink}
+            disabled={!linkUrl.trim()}
+            style={{ ...pillGhost, padding: "8px 14px", opacity: linkUrl.trim() ? 1 : 0.4, cursor: linkUrl.trim() ? "pointer" : "not-allowed" }}
+            title="Add this link and clear the fields for the next one"
+          >
+            <Plus size={14} />
+          </button>
+        </div>
+        <div className="flex gap-2 flex-wrap items-start">
+          <GrowingTextarea
+            value={description}
+            onChange={setDescription}
+            placeholder="Description (optional) — what to actually do. Keeps the title short."
+            rows={2}
+            className="flex-1 rounded-lg px-3 py-2"
+            style={{ ...inputStyle, minWidth: 200, lineHeight: 1.45 }}
+          />
+          <button onClick={addAiTask} style={pillDark}>
+            <Plus size={14} style={{ display: "inline", marginRight: 4 }} />
+            Capture
+          </button>
+        </div>
+      </div>
+
+      <div style={{ borderTop: `1px solid ${LINE}`, margin: "-2px 0 20px" }} />
+
+      {/* New project bar */}
+      <div className="rounded-2xl p-4 mb-4" style={{ ...cardSoft, borderRadius: 16 }}>
+        <div className="flex gap-2">
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && addProject()}
+            placeholder="New AI project…"
+            className="flex-1 rounded-lg px-3 py-2"
+            style={inputStyle}
+          />
+          <button onClick={addProject} style={pillDark}>
+            <Plus size={14} style={{ display: "inline", marginRight: 4 }} />
+            Add project
+          </button>
+        </div>
+      </div>
+
+      {/* Projects list */}
       <div className="flex flex-col gap-3">
         {shown.map((project) => {
           const open = !closed[project.id];
-          const tasks = project.tasks || [];
-          const remaining = tasks.filter((t) => !t.done).length;
-          return <div key={project.id} className="rounded-2xl p-4" style={{ ...card, borderRadius: 16, borderLeft: `3px solid ${C.sky}` }}>
-            <div className="flex items-center gap-2">
-              <button onClick={() => toggleProject(project.id, open)} style={{ ...iconBtn, padding: 2 }} aria-label={open ? "Collapse project" : "Expand project"}>{open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}</button>
-              <div className="flex-1 min-w-0"><InlineEdit value={project.name} onChange={(v) => update(project.id, { name: v })} strong /></div>
-              <span style={{ fontSize: 11, color: MUT }}>{remaining} open</span>
-              <button onClick={() => remove(project.id)} style={{ ...iconBtn, padding: 2 }} aria-label="Delete project"><X size={13} /></button>
+          const tasks = (project.tasks || []).filter((t) => !t.done && t.status !== "Done");
+          const moveOpts = [
+            { id: "admin", label: "Admin Tasks" },
+            ...projects.filter((pr) => pr.id !== project.id).map((pr) => ({ id: `ai::${pr.id}`, label: `AI: ${pr.name}` })),
+          ];
+          return (
+            <div key={project.id} className="rounded-2xl p-4" style={{ ...card, borderRadius: 16, borderLeft: `3px solid ${C.sky}` }}>
+              <div className="flex items-center gap-2 mb-2">
+                <button onClick={() => toggleProject(project.id, open)} style={{ ...iconBtn, padding: 2 }} aria-label={open ? "Collapse project" : "Expand project"}>
+                  {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                </button>
+                <div className="flex-1 min-w-0">
+                  <InlineEdit value={project.name} onChange={(v) => updateProject(project.id, { name: v })} strong />
+                </div>
+                <span style={{ fontSize: 11, color: MUT }}>{tasks.length} open</span>
+                <button onClick={() => removeProject(project.id)} style={{ ...iconBtn, padding: 2 }} aria-label="Delete project">
+                  <X size={13} />
+                </button>
+              </div>
+              {open && (
+                <div className="flex flex-col gap-2 mt-3" style={{ marginLeft: 20 }}>
+                  {tasks.map((t) => (
+                    <TaskCard
+                      key={t.id}
+                      t={t}
+                      onUpdate={(patch) => updateTask(project.id, t.id, patch)}
+                      onRemove={() => removeTask(project.id, t.id)}
+                      moveOptions={moveOpts}
+                      onMove={(taskObj, targetKey) => moveTask(taskObj, project.id, targetKey)}
+                    />
+                  ))}
+                  {tasks.length === 0 && (
+                    <div className="rounded-xl p-3 text-center" style={{ border: `1px dashed ${LINE}`, fontSize: 12, color: FAINT, borderRadius: 12 }}>
+                      No open tasks in this project
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
-            {open && <div className="mt-3" style={{ marginLeft: 26 }}><MiniTaskList tasks={tasks} onChange={(tasks) => update(project.id, { tasks })} composerAtBottom /></div>}
-          </div>;
+          );
         })}
-        {shown.length === 0 && <Empty text={ql ? "No AI project matches your search." : "No AI projects yet. Add one above."} />}
+        {shown.length === 0 && (
+          <Empty text={ql ? "No AI project matches your search." : "No AI projects yet. Add one above."} />
+        )}
       </div>
     </section>
   );
@@ -5523,8 +5852,8 @@ function MamaModule({ data, setData, ally, setAlly, q, navRequest, navigateToTas
         })}
       </nav>
       {sub === "creators" && <Creators data={data} setData={setData} q={q} navRequest={navRequest} />}
-      {sub === "adminTasks" && <AdminTasks data={data} setData={setData} />}
-      {sub === "aiTasks" && <AITaskProjects data={ally} setData={setAlly} q={q} />}
+      {sub === "adminTasks" && <AdminTasks data={data} setData={setData} ally={ally} setAlly={setAlly} />}
+      {sub === "aiTasks" && <AITaskProjects data={ally} setData={setAlly} mama={data} setMama={setData} q={q} />}
     </section>
   );
 }
@@ -5718,13 +6047,31 @@ function CreatorDetailPage({ c, onUpdate, onRemove }) {
 }
 
 /* ---- tasks ---- */
-function AdminTasks({ data, setData }) {
+function AdminTasks({ data, setData, ally, setAlly }) {
   const [title, setTitle] = useState(""); const [description, setDescription] = useState(""); const [due, setDue] = useState("");
-  /* staged links: built up BEFORE the task is saved, so one capture can carry the Basecamp thread,
-     the brief and the reference doc all at once instead of one URL and then a round of editing.
-     Each entry gets its own label, defaulting to the bare domain/path if you can't be bothered. */
   const [draftLinks, setDraftLinks] = useState([]);
   const [linkLabel, setLinkLabel] = useState(""); const [linkUrl, setLinkUrl] = useState("");
+
+  const projects = ((ally?.aiTasks || {}).projects || []);
+  const moveOptions = projects.map((p) => ({ id: `ai::${p.id}`, label: `AI: ${p.name}` }));
+
+  const moveTask = (task, targetKey) => {
+    if (!targetKey || !targetKey.startsWith("ai::")) return;
+    const targetProjectId = targetKey.replace("ai::", "");
+    setData((d) => ({ ...d, tasks: d.tasks.filter((t) => t.id !== task.id) }));
+    if (setAlly) {
+      setAlly((a) => ({
+        ...a,
+        aiTasks: {
+          ...(a.aiTasks || {}),
+          projects: ((a.aiTasks || {}).projects || []).map((p) =>
+            p.id === targetProjectId ? { ...p, tasks: [...(p.tasks || []), { ...task, done: task.status === "Done" || task.done }] } : p
+          ),
+        },
+      }));
+    }
+  };
+
   const addDraftLink = () => {
     const raw = linkUrl.trim(); if (!raw) return;
     const url = raw.startsWith("http") ? raw : `https://${raw}`;
@@ -5734,8 +6081,6 @@ function AdminTasks({ data, setData }) {
   const removeDraftLink = (id) => setDraftLinks((ls) => ls.filter((l) => l.id !== id));
   const add = () => {
     const t = title.trim(); if (!t) return;
-    /* a URL still sitting in the input when you hit Capture counts — no silent loss for forgetting
-       to press Enter/+ on the last one. */
     const trailing = linkUrl.trim();
     const links = trailing
       ? [...draftLinks, { id: uid(), url: trailing.startsWith("http") ? trailing : `https://${trailing}`, label: linkLabel.trim() || trailing.replace(/^https?:\/\//, "").slice(0, 30) }]
@@ -5744,14 +6089,6 @@ function AdminTasks({ data, setData }) {
     setData((d) => ({ ...d, tasks: [{ id: uid(), title: t, description: description.trim(), links, status: "To do", created: new Date().toISOString().slice(0, 10), due: taskDue, priority: priorityForNewTask(taskDue), lastProgress: null }, ...d.tasks] }));
     setTitle(""); setDescription(""); setDue(""); setDraftLinks([]); setLinkLabel(""); setLinkUrl("");
   };
-  /* drag/drop now sets PRIORITY, not status — the columns are the priority levels.
-     A due date normally drives priority continuously (PriorityControls' dateTarget effect), so a
-     manual drag that disagrees with the date would be snapped straight back on the next render.
-     Hence: dropping into a column that contradicts the stored due date clears that date, handing
-     manual control back — exactly what clicking an L/M/H button already does in that situation.
-     Dropping into a column that agrees with the date leaves the date alone.
-     Non-priority = `paused`, the existing "on the board but not a live priority" state, which also
-     drops it off the Priorities dashboard (collectPriorityTasks skips paused). */
   const moveToColumn = (id, col) => setData((d) => ({ ...d, tasks: d.tasks.map((t) => {
     if (t.id !== id) return t;
     if (col === "None") return { ...t, paused: true, due: null };
@@ -5766,8 +6103,6 @@ function AdminTasks({ data, setData }) {
   return (
     <section>
       <SectionHead title="Admin task capture" sub="One place for the strays. Cards are grouped by priority — drag one to a different column to re-rank it. Tasks tied to a specific creator live on their own subtab instead." />
-      {/* live rollup, replaces the old by-source bar chart: what is actually sitting in each priority
-          right now. Recomputed from `openTasks` every render, so it can never drift from the board. */}
       <div className="rounded-2xl p-4 mb-5" style={{ ...card, borderRadius: 18 }}>
         <div className="flex items-baseline justify-between mb-3">
           <div style={{ fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase", color: MUT }}>Open tasks by priority</div>
@@ -5821,7 +6156,7 @@ function AdminTasks({ data, setData }) {
             <div key={col} className="rounded-2xl p-3" onDragOver={(e) => { if (!Array.from(e.dataTransfer.types).includes(ADMIN_TASK_MIME)) return; e.preventDefault(); e.dataTransfer.dropEffect = "move"; }} onDrop={(e) => { e.preventDefault(); const id = e.dataTransfer.getData(ADMIN_TASK_MIME); if (id) moveToColumn(id, col); }} style={{ ...cardSoft, borderRadius: 16 }}>
               <div className="flex items-center justify-between mb-3 px-1"><span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 600, fontSize: 12, letterSpacing: "0.04em", textTransform: "uppercase", color: tint }}>{ADMIN_COL_LABEL[col]}</span><span style={{ fontSize: 12, color: MUT }}>{items.length}</span></div>
               <div className="flex flex-col gap-2">
-                {items.map((t) => <TaskCard key={t.id} t={t} onUpdate={(p) => update(t.id, p)} onRemove={() => remove(t.id)} />)}
+                {items.map((t) => <TaskCard key={t.id} t={t} onUpdate={(p) => update(t.id, p)} onRemove={() => remove(t.id)} moveOptions={moveOptions} onMove={moveTask} />)}
                 {items.length === 0 && <div className="rounded-xl p-3 text-center" style={{ border: `1px dashed ${LINE}`, fontSize: 12, color: FAINT, borderRadius: 12 }}>Empty</div>}
               </div>
             </div>
@@ -5832,35 +6167,25 @@ function AdminTasks({ data, setData }) {
   );
 }
 
-/* single admin task card. Links are a persistent, always-addable labelled list (same pattern as
-   Creators' Links section and the capture form above) rather than a single field, so you can keep
-   attaching new URLs to a task well after it was first captured, none overwriting the last. No
-   creator tagging here anymore — a task tied to a specific creator belongs on that creator's own
-   card instead, and no source pill either (see ADMIN_TASK_COLS). Description used to always stay
-   fully visible here (the one place in the CRM where it never collapsed) — now it expands/collapses
-   on card click same as everywhere else, via its own lifted open state.
-   `col` and the ←/→ column arrows are gone with the Doing column: the card's own PriorityControls
-   already move it between the priority columns, and dragging does the same thing. */
-function TaskCard({ t, onUpdate, onRemove }) {
+function TaskCard({ t, onUpdate, onRemove, moveOptions, onMove }) {
   const [descOpen, setDescOpen] = useState(true);
   const [linkDraft, setLinkDraft] = useState("");
   const [labelDraft, setLabelDraft] = useState("");
   const tint = ADMIN_COL_TINT[adminTaskBucket(t)];
-  const done = t.status === "Done";
-  const links = t.links || [];
+  const done = t.status === "Done" || t.done;
+  const links = t.links || (t.link ? [{ id: uid(), url: t.link.startsWith("http") ? t.link : `https://${t.link}`, label: t.link.replace(/^https?:\/\//, "").slice(0, 30) }] : []);
   const addLink = () => {
     const raw = linkDraft.trim(); if (!raw) return;
     const url = raw.startsWith("http") ? raw : `https://${raw}`;
-    onUpdate({ links: [...links, { id: uid(), url, label: labelDraft.trim() || url.replace(/^https?:\/\//, "").slice(0, 30) }] });
+    const newLinks = [...links, { id: uid(), url, label: labelDraft.trim() || url.replace(/^https?:\/\//, "").slice(0, 30) }];
+    onUpdate({ links: newLinks, link: newLinks[0] ? newLinks[0].url : "" });
     setLinkDraft(""); setLabelDraft("");
   };
-  const removeLink = (id) => onUpdate({ links: links.filter((l) => l.id !== id) });
-  /* same round checkbox as MiniTaskRow/Life Admin — jumps straight to Done (skipping "Doing") so
-     you don't have to hit the forward arrow twice, and un-ticking sends it back to "To do". The
-     "←" back arrow below still exists for stepping through columns one at a time if you want that
-     instead — this is just a direct one-click complete/undo, now available right here instead of
-     only from the Mama/main hub's tiny "mark complete" dot. */
-  const toggleDone = () => onUpdate(done ? { status: "To do", doneAt: null } : { status: "Done", doneAt: Date.now() });
+  const removeLink = (id) => {
+    const newLinks = links.filter((l) => l.id !== id);
+    onUpdate({ links: newLinks, link: newLinks[0] ? newLinks[0].url : "" });
+  };
+  const toggleDone = () => onUpdate(done ? { status: "To do", done: false, doneAt: null } : { status: "Done", done: true, doneAt: Date.now() });
   return (
     <div data-nav-id={t.id} data-scroll-drag draggable onDragStart={(e) => { e.dataTransfer.setData(ADMIN_TASK_MIME, t.id); e.dataTransfer.effectAllowed = "move"; }} onClick={() => { if (hasTextSelection()) return; setDescOpen((v) => !v); }} className="rounded-xl p-2" style={{ cursor: "grab", ...card, borderRadius: 12, borderLeft: `2px solid ${tint}` }}>
       <div className="flex items-center gap-2">
@@ -5869,7 +6194,27 @@ function TaskCard({ t, onUpdate, onRemove }) {
       </div>
       <div style={{ fontSize: 11.5, color: MUT, marginTop: 2 }}><InlineEditArea value={t.description || ""} onChange={(v) => onUpdate({ description: v })} placeholder="Add a description…" open={descOpen} onToggle={() => setDescOpen((v) => !v)} /></div>
       <div className="flex items-center gap-2 mt-1" style={{ fontSize: 11, color: MUT }}>
-        <span className="ml-auto flex gap-1">
+        <span className="ml-auto flex items-center gap-1.5">
+          {onMove && moveOptions && moveOptions.length > 0 && (
+            <select
+              value=""
+              onClick={(e) => e.stopPropagation()}
+              onChange={(e) => {
+                e.stopPropagation();
+                if (e.target.value) onMove(t, e.target.value);
+              }}
+              style={{ ...inputStyle, fontSize: 10.5, padding: "2px 6px", borderRadius: 6, cursor: "pointer", background: FILL, color: MUT, border: `1px solid ${LINE}` }}
+              aria-label="Move task"
+              title="Move task to another group or project"
+            >
+              <option value="" disabled>Move to…</option>
+              {moveOptions.map((opt) => (
+                <option key={opt.id} value={opt.id} style={{ background: C.dark, color: C.ink }}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          )}
           <button onClick={(e) => { e.stopPropagation(); onRemove(); }} style={iconBtn} aria-label="Delete"><X size={12} /></button>
         </span>
       </div>
@@ -6087,7 +6432,36 @@ function GrowingTextarea({ value, onChange, onKeyDown, placeholder, rows, classN
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<AllyCRM />);
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error, errorInfo) {
+    console.error("ErrorBoundary caught an error", error, errorInfo);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="p-8 text-center" style={{ color: "#fff", fontFamily: "'Bricolage Grotesque', sans-serif" }}>
+          <h2 style={{ fontSize: 24, fontWeight: 700, marginBottom: 12 }}>Something went wrong.</h2>
+          <p style={{ color: "rgba(242,242,244,0.6)", fontSize: 14, marginBottom: 20 }}>{this.state.error ? String(this.state.error) : ""}</p>
+          <button onClick={() => window.location.reload()} style={{ background: "#F2F2F4", color: "#0B0B0D", border: "none", borderRadius: 99, padding: "8px 20px", fontWeight: 600, cursor: "pointer" }}>Reload Page</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(
+  <ErrorBoundary>
+    <AllyCRM />
+  </ErrorBoundary>
+);
 </script>
 </body>
 </html>
