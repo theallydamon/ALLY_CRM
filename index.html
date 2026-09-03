@@ -1304,12 +1304,16 @@ const SKIT_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
 const ALL_FEATURE_SCOPES = `${CAL_SCOPES} ${SKIT_SCOPE}`;
 const googleScopesForEmail = (email) => profileForEmail(email) === "work" ? CAL_SCOPES : ALL_FEATURE_SCOPES;
 const SKIT_API = "https://sheets.googleapis.com/v4/spreadsheets";
-const SKIT_TABS = ["Ideas", "To Film", "To Edit", "Ready to Post"];
+const SKIT_TABS = ["Ideas", "To Film", "To Edit", "Ready to Post", "Posted"];
 const skitTab = (status) => SKIT_TABS.includes(status) ? status : "Ready to Post";
 const scriptText = (value) => {
-  const box = document.createElement("div");
-  box.innerHTML = value || "";
-  return (box.innerText || box.textContent || "").replace(/\n{3,}/g, "\n\n").trim();
+  if (!value) return "";
+  let str = String(value);
+  str = str.replace(/<br\s*\/?>/gi, "\n");
+  str = str.replace(/<\/?(p|div|li|h[1-6])[^>]*>/gi, "\n");
+  const doc = new DOMParser().parseFromString(str, "text/html");
+  const text = doc.body ? (doc.body.textContent || "") : str;
+  return text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
 };
 const skitRow = (item, updatedAt) => [item.id || "", item.title || "", scriptText(item.desc || ""), item.created || "", updatedAt || new Date().toISOString(), "ALLY CRM", ""];
 const skitSnapshot = (item) => ({ id: item.id || "", title: item.title || "", script: scriptText(item.desc || ""), status: item.status || "Ideas", created: item.created || "", pipeline: "Content" });
@@ -1603,19 +1607,12 @@ function useSkitRegistry(crmUser, ally, enabled = true) {
     const requests = [];
     if (existing.has("Sheet1") && !existing.has("Ideas")) requests.push({ updateSheetProperties: { properties: { sheetId: existing.get("Sheet1"), title: "Ideas" }, fields: "title" } });
     const afterRename = new Map(existing); if (afterRename.has("Sheet1")) { afterRename.set("Ideas", afterRename.get("Sheet1")); afterRename.delete("Sheet1"); }
-    SKIT_TABS.concat("Revision Log").filter((title) => !afterRename.has(title)).forEach((title) => requests.push({ addSheet: { properties: { title } } }));
+    SKIT_TABS.filter((title) => !afterRename.has(title)).forEach((title) => requests.push({ addSheet: { properties: { title } } }));
     if (requests.length) await sheetFetch(":batchUpdate", { method: "POST", body: JSON.stringify({ requests }) });
     const headers = {};
     SKIT_TABS.forEach((tab) => { headers[`'${tab}'!A1:G4`] = [[`Ally Damon Skit Registry | ${tab}`], [`One permanent skit ID. This is the CRM's current ${tab} column.`], [], ["Skit ID", "Title", "Full Script", "Created At", "Last Updated", "Source", "Notes"]]; });
-    headers["'Revision Log'!A1:I4"] = [["Skit Revision Log"], ["Append only backup history. Do not edit this tab."], [], ["Event ID", "Timestamp", "Skit ID", "Event", "Field", "Previous Value", "New Value", "Editor", "Full Snapshot"]];
     await sheetFetch("values:batchUpdate", { method: "POST", body: JSON.stringify({ valueInputOption: "RAW", data: Object.entries(headers).map(([range, values]) => ({ range, values })) }) });
   }, [sheetFetch]);
-
-  const appendRevisions = useCallback(async (events) => {
-    if (!events.length) return;
-    const values = events.map((event) => [uid(), new Date().toISOString(), event.id, event.type, event.field || "", event.before || "", event.after || "", crmUser ? crmUser.email || "Ally Damon" : "Ally Damon", JSON.stringify(event.snapshot || {})]);
-    await sheetFetch("values/%27Revision%20Log%27%21A5%3AI:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS", { method: "POST", body: JSON.stringify({ values }) });
-  }, [crmUser, sheetFetch]);
 
   const writeCurrentTabs = useCallback(async (items, updatedAt) => {
     const meta = await sheetFetch("?fields=sheets.properties(sheetId,title)");
@@ -1640,22 +1637,11 @@ function useSkitRegistry(crmUser, ally, enabled = true) {
     try {
       await ensureRegistry();
       const now = new Date().toISOString();
-      const revisions = [];
-      current.forEach((snapshot, id) => {
-        const before = previous && previous.get(id);
-        if (!before) revisions.push({ id, type: previous ? "Created" : "Imported", field: "", before: "", after: snapshot.title, snapshot });
-        else ["title", "script", "status"].forEach((field) => { if (before[field] !== snapshot[field]) revisions.push({ id, type: "Updated", field, before: before[field] || "", after: snapshot[field] || "", snapshot }); });
-      });
-      if (previous) previous.forEach((before, id) => {
-        if (current.has(id)) return;
-        revisions.push({ id, type: "Deleted", field: "", before: before.title || "", after: "", snapshot: before });
-      });
       await writeCurrentTabs(items, now);
-      await appendRevisions(revisions);
       previousRef.current = current;
       setState("synced"); setError("");
     } catch (e) { setState("error"); setError(`The skit registry did not save, ${e.message || "unknown Google Sheets error"}. Your CRM data is still safe in Firebase.`); }
-  }, [appendRevisions, ensureRegistry, writeCurrentTabs]);
+  }, [ensureRegistry, writeCurrentTabs]);
 
   const connect = useCallback((silent = true) => {
     if (!enabled || !crmUser || !ready) return;
