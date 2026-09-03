@@ -4515,25 +4515,21 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
                     <InlineEdit value={i.title} onChange={(v) => updateItem(i.id, { title: v })} strong bubbleClicks />{livePost(i) && <span title={"Posts on " + i.scheduledFor} style={{ marginLeft: 6, fontSize: 12 }}>📅</span>}<button onClick={(e) => { e.stopPropagation(); setExpandedId(i.id); }} style={{ ...iconBtn, padding: 2, marginLeft: 6 }} aria-label="Expand description" title="Expand description to full screen">⤢</button>
                     <ScriptBox value={i.desc || ""} isHtml={!!i.descHtml} open={descOpen} onFocus={() => openIfNot(i.id)} onChange={(v) => updateItem(i.id, { desc: v, descHtml: true })} onToggle={toggleDesc} />
                     {col !== "Posted" && <div className="flex items-center gap-2 mt-1.5 flex-wrap" style={{ fontSize: 10.5 }}>
-                      {/* TWO DIFFERENT DATES, and they were being mistaken for each other. Each now sits
-                          in its own bordered, colour-coded block with an unambiguous name:
-                            DO BY   (amber) — finish this stage's work
-                            POST ON (blue)  — publish it
-                          Both day-count chips are clickable to mute that date. Muting does NOT delete
-                          it — the value stays and returns on a second click — because the usual reason
-                          to mute is having typed into the wrong box. */}
-                      <span onClick={(e) => e.stopPropagation()} className="flex items-center gap-1.5"
+                      {/* DO BY is shown on Ideas, To Film, To Edit (col !== Ready to Post).
+                          POST ON is shown on Ready to Post (col === Ready to Post).
+                          Posted stage has neither date selector. */}
+                      {col !== "Ready to Post" && <span onClick={(e) => e.stopPropagation()} className="flex items-center gap-1.5"
                         style={{ border: `1px solid ${i.due && !i.dueOff ? `${C.amber}55` : LINE}`, borderRadius: 8, padding: "2px 5px", background: i.due && !i.dueOff ? `${C.amber}0f` : "transparent" }}>
                         <span style={{ fontSize: 8.5, letterSpacing: "0.08em", color: i.dueOff ? FAINT : C.amber, fontWeight: 700 }}>DO BY</span>
                         <input type="date" value={i.due || ""} onClick={(e) => e.stopPropagation()} onChange={(e) => updateItem(i.id, { due: e.target.value || null })} className="rounded-md" style={{ ...darkInput, fontSize: 10.5, padding: "2px 4px", opacity: i.dueOff ? 0.45 : 1 }} aria-label="Do by — finish this stage's work" title="Finish this stage's work by this date" />
                         <DueChip due={i.due} off={i.dueOff} onToggle={() => updateItem(i.id, { dueOff: !i.dueOff })} />
-                      </span>
-                      <span onClick={(e) => e.stopPropagation()} className="flex items-center gap-1.5"
+                      </span>}
+                      {col === "Ready to Post" && <span onClick={(e) => e.stopPropagation()} className="flex items-center gap-1.5"
                         style={{ border: `1px solid ${livePost(i) ? `${C.sky}55` : LINE}`, borderRadius: 8, padding: "2px 5px", background: livePost(i) ? `${C.sky}0f` : "transparent" }}>
                         <span style={{ fontSize: 8.5, letterSpacing: "0.08em", color: i.schedOff ? FAINT : C.sky, fontWeight: 700 }}>POST ON</span>
                         <input type="date" value={i.scheduledFor || ""} onClick={(e) => e.stopPropagation()} onChange={(e) => setPostDate(i, e.target.value)} className="rounded-md" style={{ ...darkInput, fontSize: 10.5, padding: "2px 4px", opacity: i.schedOff ? 0.45 : 1 }} aria-label="Post on — publish date" title="Publish it on this date" />
                         <DueChip due={i.scheduledFor} off={i.schedOff} onToggle={() => updateItem(i.id, { schedOff: !i.schedOff })} />
-                      </span>
+                      </span>}
                       {col === "Ready to Post" && <button onClick={(e) => { e.stopPropagation(); markPosted(i.id); }} className="rounded-full px-2 py-0.5" style={{ fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", background: `${C.mint}1a`, border: `1px solid ${C.mint}55`, color: C.mint }} title="Move to posted archive">✓ Posted</button>}
                     </div>}
                     {col !== "Posted" && <PriorityControls item={i} onChange={(p) => updateItem(i.id, p)} hideDue />}
