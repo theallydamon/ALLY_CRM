@@ -548,8 +548,11 @@ function mergeLiveValue(base, local, remote) {
   if (jsonEqual(remote, base)) return local;
   if (jsonEqual(local, remote)) return local;
 
-  if (isIdCollection(base || []) && isIdCollection(local || []) && isIdCollection(remote || [])) {
-    const baseMap = new Map((base || []).map((item) => [String(item.id), item]));
+  const localIsIdCol = isIdCollection(local);
+  const remoteIsIdCol = isIdCollection(remote);
+  if (localIsIdCol && remoteIsIdCol) {
+    const baseList = Array.isArray(base) ? base : [];
+    const baseMap = new Map(baseList.map((item) => [String(item.id), item]));
     const localMap = new Map((local || []).map((item) => [String(item.id), item]));
     const remoteMap = new Map((remote || []).map((item) => [String(item.id), item]));
     const order = [...(local || []).map((item) => String(item.id)), ...(remote || []).map((item) => String(item.id))]
@@ -558,24 +561,25 @@ function mergeLiveValue(base, local, remote) {
       const hadBase = baseMap.has(id), hasLocal = localMap.has(id), hasRemote = remoteMap.has(id);
       if (hadBase && !hasLocal) return []; // a local deletion stays deleted
       if (hadBase && !hasRemote && jsonEqual(localMap.get(id), baseMap.get(id))) return []; // remote deletion
-      if (!hasLocal) return hasRemote ? [remoteMap.get(id)] : [];
-      if (!hasRemote) return hadBase ? [localMap.get(id)] : [localMap.get(id)];
+      if (!hasLocal) return (hasRemote && !hadBase && Array.isArray(base)) ? [remoteMap.get(id)] : (hasRemote && !Array.isArray(base) ? [remoteMap.get(id)] : []);
+      if (!hasRemote) return (hadBase && jsonEqual(localMap.get(id), baseMap.get(id))) ? [] : [localMap.get(id)];
       return [mergeLiveValue(baseMap.get(id), localMap.get(id), remoteMap.get(id))];
     });
   }
 
-  if (isRecord(base || {}) && isRecord(local || {}) && isRecord(remote || {})) {
+  if (isRecord(local) && isRecord(remote)) {
+    const baseRec = isRecord(base) ? base : {};
     const out = {};
-    const keys = new Set([...Object.keys(base || {}), ...Object.keys(local || {}), ...Object.keys(remote || {})]);
+    const keys = new Set([...Object.keys(baseRec), ...Object.keys(local || {}), ...Object.keys(remote || {})]);
     keys.forEach((key) => {
-      const hadBase = Object.prototype.hasOwnProperty.call(base || {}, key);
+      const hadBase = Object.prototype.hasOwnProperty.call(baseRec, key);
       const hasLocal = Object.prototype.hasOwnProperty.call(local || {}, key);
       const hasRemote = Object.prototype.hasOwnProperty.call(remote || {}, key);
       if (hadBase && !hasLocal) return; // local deletion
-      if (hadBase && !hasRemote && jsonEqual((local || {})[key], (base || {})[key])) return; // remote deletion
+      if (hadBase && !hasRemote && jsonEqual((local || {})[key], baseRec[key])) return; // remote deletion
       if (!hasLocal) { if (hasRemote) out[key] = remote[key]; return; }
       if (!hasRemote) { out[key] = local[key]; return; }
-      out[key] = mergeLiveValue((base || {})[key], local[key], remote[key]);
+      out[key] = mergeLiveValue(baseRec[key], local[key], remote[key]);
     });
     return out;
   }
@@ -2775,10 +2779,24 @@ function AllyCRM() {
         const finalStr = JSON.stringify(merged);
         lastRemoteData.current = merged;
         lastCloudStr.current = finalStr;
-        if (!jsonEqual(merged.ally, allyRef.current)) setAlly(merged.ally);
-        if (!jsonEqual(merged.mama, mamaRef.current)) setMama(merged.mama);
-        setWorkspaceError("");
-        setCloudState("synced");
+
+        // If local state hasn't changed while transaction was in flight, sync state.
+        // If local state HAS changed (user was typing), do not overwrite latest local state;
+        // re-merge new local state with merged remote data so keystrokes are preserved.
+        const currentLocal = { ally: allyRef.current, mama: mamaRef.current };
+        if (jsonEqual(local, currentLocal)) {
+          if (!jsonEqual(merged.ally, allyRef.current)) setAlly(merged.ally);
+          if (!jsonEqual(merged.mama, mamaRef.current)) setMama(merged.mama);
+          setWorkspaceError("");
+          setCloudState("synced");
+        } else {
+          // User typed during the transaction! Merge new local state on top of merged transaction result.
+          const reMerged = mergeLiveValue(local, currentLocal, merged);
+          if (!jsonEqual(reMerged.ally, allyRef.current)) setAlly(reMerged.ally);
+          if (!jsonEqual(reMerged.mama, mamaRef.current)) setMama(reMerged.mama);
+          setWorkspaceError("");
+          setCloudState("saving");
+        }
       } catch (e) {
         setCloudState("error");
         setWorkspaceError(e && e.code === "permission-denied"
@@ -6378,23 +6396,30 @@ function AutoTextarea({ value, onChange, placeholder, open, onToggle }) {
   const collapsed = controlled ? !open : collapsedState;
   const toggle = () => (controlled ? onToggle && onToggle() : setCollapsedState((v) => !v));
   const ref = useRef(null);
-  /* grows the box to fit whatever's inside it — resized synchronously (useLayoutEffect, so it
-     happens before the browser paints, not a tick later) on every value change, AND directly from
-     the input event itself (onInput fires on typing, pasting, and cut, before React's own
-     onChange/state round-trip even completes) so a big pasted block never has a chance to render
-     at the old, tiny height first. Belt and suspenders: either path alone resizes it correctly,
-     together they close out any timing gap between "text landed" and "box caught up". */
+
+  // Track local focused edit state so parent re-renders don't jump caret or overwrite while typing
+  const [localVal, setLocalVal] = useState(value || "");
+  const [isFocused, setIsFocused] = useState(false);
+  useEffect(() => {
+    if (!isFocused) setLocalVal(value || "");
+  }, [value, isFocused]);
+
   const resize = () => {
     const el = ref.current;
     if (!el || collapsed) return;
     el.style.height = "auto";
     el.style.height = el.scrollHeight + "px";
   };
-  useLayoutEffect(resize, [value, collapsed]);
-  const long = (value || "").length > 120 || (value || "").includes("\n");
+  useLayoutEffect(resize, [isFocused ? localVal : value, collapsed]);
+  const long = (isFocused ? localVal : value || "").length > 120 || (isFocused ? localVal : value || "").includes("\n");
   return (
     <div>
-      <textarea ref={ref} value={value} onClick={(e) => e.stopPropagation()} onChange={(e) => onChange(e.target.value)} onInput={resize} placeholder={placeholder}
+      <textarea ref={ref} value={isFocused ? localVal : (value || "")}
+        onClick={(e) => e.stopPropagation()}
+        onFocus={() => { setIsFocused(true); setLocalVal(value || ""); }}
+        onBlur={() => { setIsFocused(false); if (localVal !== value) onChange(localVal); }}
+        onChange={(e) => { setLocalVal(e.target.value); onChange(e.target.value); }}
+        onInput={resize} placeholder={placeholder}
         rows={2} className="w-full rounded-lg px-3 py-2"
         style={{ ...inputStyle, lineHeight: 1.45, resize: "vertical", overflow: collapsed ? "hidden" : "auto", maxHeight: collapsed ? 52 : "none", boxSizing: "border-box", whiteSpace: "pre-wrap", overflowWrap: "break-word" }} />
       {long && (
