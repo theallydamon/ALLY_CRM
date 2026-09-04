@@ -396,8 +396,6 @@ const MODULES = {
   lifeAdmin: { icon: "lifeAdmin", label: "LIFE ADMIN", accent: C.accent, bg: C.accentBg },
   /* not in the bottom strip; reached from cards/chains but still need identity when rendered */
   unlocks:   { icon: "unlocks",   label: "Unlocks",    accent: C.accent, bg: C.accentBg },
-  apartment: { icon: "apartment", label: "Apartment",  accent: C.accent, bg: C.accentBg },
-  furnishing:{ icon: "furnishing",label: "APARTMENT", accent: C.accent, bg: C.accentBg },
   deals:     { icon: "deals",     label: "Deals",      accent: C.accent, bg: C.accentBg },
   /* 28 Aug 2026: Creators, Admin Tasks and AI Tasks were subtabs inside MamaModule. They are now
      also addressable as top-level tabs so the work profile can put them in the bottom strip
@@ -421,7 +419,7 @@ const MUSIC_CONTENT_MOD = { icon: "music", label: "MUSIC CONTENT", accent: C.acc
    instruction. It supersedes the older "apartment" module, which stays in the file but is no
    longer the thing being maintained. Furnishing is deliberately NOT wired into PRIORITY_PILLARS,
    priorityTaskCounts, or any HOME card, and it keeps its own storage key. */
-const TAB_ORDER = ["lifeAdmin", "mama", "overview", "content", "furnishing"];
+const TAB_ORDER = ["lifeAdmin", "mama", "overview", "content"];
 
 /* ---------- VIEW PROFILES: one app, two faces ----------
    Added 28 Aug 2026 at the owner's instruction, to give the work laptop a MAMA-only CRM without
@@ -454,7 +452,7 @@ const VIEW_PROFILES = {
   personal: {
     id: "personal",
     label: "Personal",
-    tabs: ["lifeAdmin", "overview", "content", "furnishing"],
+    tabs: ["lifeAdmin", "overview", "content"],
     homePillar: null,
     homeSubs: true,
     homePillars: ["calendar", "lifeAdmin", "content", "music"],
@@ -475,8 +473,6 @@ const NAV_ICONS = {
   content: Ico(<><rect x="2.5" y="5" width="14" height="14" rx="2"/><path d="M16.5 10.5l5-3v9l-5-3z"/></>),
   lifeAdmin: Ico(<><rect x="4" y="3.5" width="16" height="17" rx="2"/><path d="M8.5 9h7"/><path d="M8.5 13h7"/><path d="M8.5 17h4"/></>),
   unlocks: Ico(<><rect x="4" y="10.5" width="16" height="10" rx="2"/><path d="M8 10.5V7a4 4 0 0 1 7.4-2"/></>),
-  apartment: Ico(<><path d="M3 20.5V9l9-5.5L21 9v11.5"/><path d="M9.5 20.5v-6h5v6"/></>),
-  furnishing: Ico(<><path d="M3 11.5V8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v3.5"/><path d="M2 12.5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2V18H2z"/><path d="M6 18v2"/><path d="M18 18v2"/></>),
   deals: Ico(<><path d="M3 12.5l4-4 3.5 3.5a2 2 0 0 0 2.8 0L17 8.5l4 4"/><path d="M3 12.5V19a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-6.5"/></>),
   creators: Ico(<><circle cx="9" cy="8" r="3.2"/><path d="M3.5 20.5c0-3.1 2.5-5.6 5.5-5.6s5.5 2.5 5.5 5.6"/><path d="M16.4 5.9a3.1 3.1 0 0 1 0 6"/><path d="M18.2 15.3c1.6.9 2.6 2.5 2.6 4.4"/></>),
   adminTasks: Ico(<><rect x="3.5" y="3.5" width="17" height="17" rx="2"/><path d="M7.3 9.6l2 2 4.2-4.2"/><path d="M7.3 16h9.4"/></>),
@@ -3067,7 +3063,6 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
   const badges = {
     content: priorityTaskCounts.content,
     unlocks: priorityTaskCounts.unlocks,
-    apartment: aptUnlocked ? ally.apartment.items.filter((i) => i.status === "Bought").length : null,
     lifeAdmin: priorityTaskCounts.lifeAdmin,
     deals: priorityTaskCounts.deals,
     mama: priorityTaskCounts.mama,
@@ -3233,7 +3228,6 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
               {tab === "creators" && <Creators data={mama} setData={setMama} q={q} navRequest={navRequest} />}
               {tab === "adminTasks" && <AdminTasks data={mama} setData={setMama} ally={ally} setAlly={setAlly} />}
               {tab === "aiTasks" && <AITaskProjects data={ally} setData={setAlly} mama={mama} setMama={setMama} q={q} />}
-              {tab === "furnishing" && <FurnishingModule data={ally} setData={setAlly} q={q} />}
             </div>
           </div>
 
@@ -4059,9 +4053,6 @@ function PriorityControls({ item, onChange, hideDue }) {
           );
         })}
       </div>
-      <button onClick={(e) => { e.stopPropagation(); onChange({ lastProgress: todayISO() }); }} className="flex items-center gap-1 rounded-full px-2 py-0.5"
-        style={{ fontSize: 10, cursor: "pointer", fontFamily: "inherit", background: FILL, border: `1px solid ${LINE}`, color: MUT }}
-        title="Log progress today"><Zap size={10} /> progress</button>
       {/* waiting on someone else: parks the task off the Priorities dashboard until the chase date,
           then brings it back flagged and High so a silent reply can't quietly bury it. */}
       <button onClick={(e) => { e.stopPropagation(); onChange(item.chaseOn ? { chaseOn: null } : { chaseOn: shiftISO(todayISO(), 3) }); }} className="flex items-center gap-1 rounded-full px-2 py-0.5"
