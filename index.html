@@ -1323,6 +1323,7 @@ const googleTokenManager = {
   revoked: false,
   silent: true,
   connecting: false,
+  tokenPromise: null,
 
   subscribe(fn) {
     this.listeners.add(fn);
@@ -1349,6 +1350,7 @@ const googleTokenManager = {
     this.token = null;
     this.client = null;
     this.clientScope = "";
+    this.tokenPromise = null;
     this.revoked = false;
     this.notify();
   },
@@ -1365,11 +1367,35 @@ const googleTokenManager = {
   },
 
   requestToken(silent = true, prompt = "", scope = ALL_FEATURE_SCOPES) {
-    if (this.revoked) return;
-    if (!window.google || !window.google.accounts || !window.google.accounts.oauth2) return;
+    if (this.isValid()) return Promise.resolve(this.getToken());
+    if (this.tokenPromise) return this.tokenPromise;
+    if (this.revoked) return Promise.resolve(null);
+    if (!window.google || !window.google.accounts || !window.google.accounts.oauth2) return Promise.resolve(null);
     this.silent = silent;
     this.connecting = true;
     this.notify();
+
+    let resolvePromise = null;
+    this.tokenPromise = new Promise((resolve) => {
+      resolvePromise = resolve;
+    });
+
+    const finish = (tokenValue) => {
+      this.connecting = false;
+      this.tokenPromise = null;
+      this.notify();
+      if (resolvePromise) resolvePromise(tokenValue);
+    };
+
+    const handleResponse = (resp) => {
+      if (resp && resp.access_token) {
+        this.setToken(resp.access_token, resp.expires_in);
+        finish(resp.access_token);
+      } else {
+        finish(null);
+      }
+    };
+    const handleError = () => finish(null);
 
     if (!this.client || this.clientScope !== scope) {
       this.clientScope = scope;
@@ -1378,20 +1404,24 @@ const googleTokenManager = {
         hint: (() => { try { return firebase.auth().currentUser.email; } catch (e) { return undefined; } })(),
         scope,
         callback: (resp) => {
-          this.connecting = false;
-          if (resp && resp.access_token) {
-            this.setToken(resp.access_token, resp.expires_in);
-          } else {
-            this.notify();
-          }
+          if (this.currentCallback) this.currentCallback(resp);
         },
         error_callback: () => {
-          this.connecting = false;
-          this.notify();
+          if (this.currentErrorCallback) this.currentErrorCallback();
         },
       });
     }
-    this.client.requestAccessToken({ hint: (() => { try { return firebase.auth().currentUser.email; } catch (e) { return undefined; } })(), prompt: prompt !== undefined ? prompt : (silent ? "" : "consent") });
+
+    this.currentCallback = handleResponse;
+    this.currentErrorCallback = handleError;
+
+    try {
+      this.client.requestAccessToken({ hint: (() => { try { return firebase.auth().currentUser.email; } catch (e) { return undefined; } })(), prompt: prompt !== undefined ? prompt : (silent ? "" : "consent") });
+    } catch (e) {
+      finish(null);
+    }
+
+    return this.tokenPromise;
   },
 
   revoke() {
@@ -1472,9 +1502,11 @@ function useCalendarAuth(crmUser) {
     const shout = (msg) => { if (!quiet) setCalError(msg); };
     let token = googleTokenManager.getToken();
     if (!token) {
-      shout("Your calendar connection expired. Reconnecting...");
-      connect(true);
-      return { ok: false, expired: true };
+      token = await googleTokenManager.requestToken(true, "", googleScopesForEmail(crmUser && crmUser.email));
+      if (!token) {
+        shout("Your calendar connection expired. Reconnect required.");
+        return { ok: false, expired: true };
+      }
     }
     let res;
     try {
@@ -1488,15 +1520,28 @@ function useCalendarAuth(crmUser) {
     }
     if (res.status === 401 || res.status === 403) {
       googleTokenManager.clearToken();
-      connect(true);
-      shout("Calendar connection refreshed.");
-      return { ok: false, expired: true, status: res.status };
+      token = await googleTokenManager.requestToken(true, "", googleScopesForEmail(crmUser && crmUser.email));
+      if (token) {
+        try {
+          res = await fetch(`${CAL_API}${path}`, {
+            ...init,
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", ...(init.headers || {}) },
+          });
+        } catch (e) {
+          shout("Could not reach Google Calendar. Check your connection.");
+          return { ok: false, network: true };
+        }
+      }
+      if (!token || res.status === 401 || res.status === 403) {
+        shout("Calendar connection expired. Reconnect required.");
+        return { ok: false, expired: true, status: res ? res.status : 401 };
+      }
     }
     if (!res.ok) { shout(`Google Calendar returned an error (${res.status}).`); return { ok: false, status: res.status }; }
     if (res.status === 204) return { ok: true, data: null };
     try { return { ok: true, data: await res.json() }; }
     catch (e) { return { ok: true, data: null }; }
-  }, [connect]);
+  }, [crmUser]);
 
   const loadCalendars = useCallback(async () => {
     const r = await calFetch("/users/me/calendarList?minAccessRole=reader&showHidden=true&maxResults=100");
@@ -1579,15 +1624,24 @@ function useSkitRegistry(crmUser, ally, enabled = true) {
   }, [crmUser, enabled]);
 
   const sheetFetch = useCallback(async (path, options = {}) => {
-    const token = googleTokenManager.getToken();
+    let token = googleTokenManager.getToken();
+    if (!token) {
+      token = await googleTokenManager.requestToken(true, "", ALL_FEATURE_SCOPES);
+    }
     if (!token) throw new Error("No registry access token");
-    const response = await fetch(`${SKIT_API}/${SKIT_REGISTRY_ID}${path.startsWith(":") ? "" : "/"}${path}`, {
+    let response = await fetch(`${SKIT_API}/${SKIT_REGISTRY_ID}${path.startsWith(":") ? "" : "/"}${path}`, {
       ...options,
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", ...(options.headers || {}) },
     });
     if (response.status === 401 || response.status === 403) {
       googleTokenManager.clearToken();
-      googleTokenManager.requestToken(true);
+      token = await googleTokenManager.requestToken(true, "", ALL_FEATURE_SCOPES);
+      if (token) {
+        response = await fetch(`${SKIT_API}/${SKIT_REGISTRY_ID}${path.startsWith(":") ? "" : "/"}${path}`, {
+          ...options,
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", ...(options.headers || {}) },
+        });
+      }
     }
     if (!response.ok) {
       let detail = "";
