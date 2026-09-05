@@ -1630,7 +1630,11 @@ function useSkitRegistry(crmUser, ally, enabled = true) {
 
   useEffect(() => {
     return googleTokenManager.subscribe(() => {
-      setTokenValid(googleTokenManager.isValid());
+      const valid = googleTokenManager.isValid();
+      setTokenValid(valid);
+      if (!valid) {
+        previousRef.current = null;
+      }
     });
   }, []);
 
@@ -1663,6 +1667,7 @@ function useSkitRegistry(crmUser, ally, enabled = true) {
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", ...(options.headers || {}) },
     });
     if (response.status === 401 || response.status === 403) {
+      previousRef.current = null;
       googleTokenManager.clearToken();
       token = await googleTokenManager.requestToken(true, "", ALL_FEATURE_SCOPES);
       if (token) {
@@ -1694,15 +1699,19 @@ function useSkitRegistry(crmUser, ally, enabled = true) {
   }, [sheetFetch]);
 
   const writeCurrentTabs = useCallback(async (items, updatedAt) => {
-    const meta = await sheetFetch("?fields=sheets.properties(sheetId,title)");
-    const ids = new Map((meta.sheets || []).map((sheet) => [sheet.properties.title, sheet.properties.sheetId]));
+    const meta = await sheetFetch("?fields=sheets.properties(sheetId,title,gridProperties)");
+    const sheetMap = new Map((meta.sheets || []).map((sheet) => [sheet.properties.title, sheet.properties]));
     const grouped = Object.fromEntries(SKIT_TABS.map((tab) => [tab, []]));
     (items || []).forEach((item) => grouped[skitTab(item.status)].push(skitRow(item, updatedAt)));
     const requests = [];
     SKIT_TABS.forEach((tab) => {
-      const sheetId = ids.get(tab);
-      if (sheetId === undefined) throw new Error(`Missing ${tab} tab in the skit registry.`);
-      requests.push({ repeatCell: { range: { sheetId, startRowIndex: 4, endRowIndex: 1000, startColumnIndex: 0, endColumnIndex: 7 }, cell: {}, fields: "userEnteredValue" } });
+      const prop = sheetMap.get(tab);
+      if (!prop) throw new Error(`Missing ${tab} tab in the skit registry.`);
+      const sheetId = prop.sheetId;
+      const rowCount = (prop.gridProperties && prop.gridProperties.rowCount) || 1000;
+      const repeatRange = { sheetId, startRowIndex: 4, startColumnIndex: 0, endColumnIndex: 7 };
+      if (rowCount > 4) repeatRange.endRowIndex = rowCount;
+      requests.push({ repeatCell: { range: repeatRange, cell: {}, fields: "userEnteredValue" } });
       if (grouped[tab].length) requests.push({ updateCells: { range: { sheetId, startRowIndex: 4, startColumnIndex: 0 }, rows: grouped[tab].map((row) => ({ values: row.map((value) => ({ userEnteredValue: { stringValue: String(value) } })) })), fields: "userEnteredValue" } });
     });
     await sheetFetch(":batchUpdate", { method: "POST", body: JSON.stringify({ requests }) });
@@ -1711,7 +1720,7 @@ function useSkitRegistry(crmUser, ally, enabled = true) {
   const syncItems = useCallback(async (items) => {
     const current = new Map((items || []).map((item) => [item.id, skitSnapshot(item)]));
     const previous = previousRef.current;
-    if (previous && JSON.stringify([...previous]) === JSON.stringify([...current])) return;
+    if (previous && state === "synced" && JSON.stringify([...previous]) === JSON.stringify([...current])) return;
     setState("syncing");
     try {
       await ensureRegistry();
@@ -1719,11 +1728,18 @@ function useSkitRegistry(crmUser, ally, enabled = true) {
       await writeCurrentTabs(items, now);
       previousRef.current = current;
       setState("synced"); setError("");
-    } catch (e) { setState("error"); setError(`The skit registry did not save, ${e.message || "unknown Google Sheets error"}. Your CRM data is still safe in Firebase.`); }
-  }, [ensureRegistry, writeCurrentTabs]);
+    } catch (e) {
+      previousRef.current = null;
+      setState("error");
+      setError(`The skit registry did not save, ${e.message || "unknown Google Sheets error"}. Your CRM data is still safe in Firebase.`);
+    }
+  }, [ensureRegistry, writeCurrentTabs, state]);
 
   const connect = useCallback((silent = true) => {
     if (!enabled || !crmUser || !ready) return;
+    previousRef.current = null;
+    setError("");
+    setState("connecting");
     googleTokenManager.requestToken(silent, silent ? "" : "consent", ALL_FEATURE_SCOPES);
   }, [enabled, crmUser, ready]);
 
@@ -1733,7 +1749,7 @@ function useSkitRegistry(crmUser, ally, enabled = true) {
     return () => clearTimeout(id);
   }, [enabled, ally, tokenValid, syncItems]);
 
-  return { state: enabled && tokenValid ? (state === "off" ? "synced" : state) : "off", error: enabled ? error : "", connect, active: enabled && tokenValid, ready: enabled && ready };
+  return { state: enabled && tokenValid ? (state === "off" ? "connecting" : state) : "off", error: enabled ? error : "", connect, active: enabled && tokenValid, ready: enabled && ready };
 }
 
 /* ================= DAY GRID =================
