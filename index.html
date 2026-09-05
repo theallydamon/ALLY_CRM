@@ -19,6 +19,7 @@
 <script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore-compat.js"></script>
+<script src="skit-corpus.js"></script>
 <!-- Google Identity Services. Provides google.accounts.oauth2 for the Calendar access token.
      Deliberately separate from Firebase Auth: Firebase signs you IN (identity), GIS grants the
      app permission to touch your CALENDAR (authorisation). They are different concerns and
@@ -634,6 +635,34 @@ function migrateAlly(a, legacyFurnishingRaw = null) {
     /* Scheduled was the old terminal pipeline state. Keep it visible and connected to the real
        content item by moving it into Ready to Post, rather than leaving it dashboard only. */
     out = { ...out, content: { ...out.content, items: out.content.items.map((i) => ({ ...(CONTENT_STATUS_MIGRATE[i.status] ? { ...i, status: CONTENT_STATUS_MIGRATE[i.status] } : i.status === "Scheduled" ? { ...i, status: "Ready to Post" } : i), scheduledFor: i.scheduledFor !== undefined ? i.scheduledFor : i.due || null })) } };
+  }
+  /* The historic skit corpus belongs in the CRM source of truth, not only in the generated
+     Google Sheet. Add it idempotently on every older workspace load so Firestore persists it and
+     future registry syncs cannot erase it. Stable IDs protect reruns; normalized full-script
+     matching also avoids duplicating a corpus item that was previously entered under another ID. */
+  if (out.content && Array.isArray(out.content.items) && Array.isArray(window.ALLY_POSTED_SKIT_CORPUS)) {
+    const corpusKey = (value) => String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+    const existingIds = new Set(out.content.items.map((item) => String(item.id || "")));
+    const existingScripts = new Set(out.content.items.map((item) => corpusKey(scriptText(item.desc || ""))).filter(Boolean));
+    const additions = window.ALLY_POSTED_SKIT_CORPUS.flatMap((entry) => {
+      const scriptKey = corpusKey(entry.script);
+      if (existingIds.has(entry.id) || (scriptKey && existingScripts.has(scriptKey))) return [];
+      existingIds.add(entry.id);
+      if (scriptKey) existingScripts.add(scriptKey);
+      return [{
+        id: entry.id,
+        title: entry.title,
+        desc: entry.script,
+        descHtml: false,
+        status: "Posted",
+        created: "",
+        postedAt: "",
+        due: null,
+        scheduledFor: null,
+        corpusSource: "100 best scripts",
+      }];
+    });
+    if (additions.length) out = { ...out, content: { ...out.content, items: [...out.content.items, ...additions] } };
   }
   /* Anchor moved from one running text box to a per-day diary (entries keyed by ISO date, one
      string each). Fold any old single `idea` string in once, landing it on today's date so nothing
