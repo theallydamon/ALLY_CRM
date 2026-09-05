@@ -4330,13 +4330,13 @@ function ScriptBox({ value, isHtml, open, onFocus, onChange, onToggle, big, plac
   const miniSelect = { background: "rgba(255,255,255,0.06)", border: `1px solid ${LINE}`, color: C.ink, borderRadius: 6, fontSize: 10.5, fontFamily: "'Bricolage Grotesque', sans-serif", padding: "2px 4px" };
 
   return (
-    <div onClick={(e) => e.stopPropagation()} className="mt-1.5">
-      <button onClick={onToggle} className="flex items-center gap-1" style={{ ...iconBtn, padding: 0, fontSize: 10, color: FAINT, display: big ? "none" : "flex" }}>
+    <div className="mt-1.5">
+      <button onClick={(e) => { e.stopPropagation(); if (onToggle) onToggle(); }} className="flex items-center gap-1" style={{ ...iconBtn, padding: 0, fontSize: 10, color: FAINT, display: big ? "none" : "flex" }}>
         {open ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
         <span>{open ? "Collapse script" : value ? "Expand script" : "Add script"}</span>
       </button>
       {open && (
-        <div className="flex items-center gap-1 mt-1">
+        <div onClick={(e) => e.stopPropagation()} className="flex items-center gap-1 mt-1">
           <div onMouseDown={(e) => e.preventDefault()} className="flex items-center gap-1">
             <button type="button" onClick={() => exec("bold")} style={miniBtn} aria-label="Bold" title="Bold (Cmd+B)"><b>B</b></button>
             <button type="button" onClick={() => exec("italic")} style={miniBtn} aria-label="Italic" title="Italic (Cmd+I)"><i>i</i></button>
@@ -4356,6 +4356,7 @@ function ScriptBox({ value, isHtml, open, onFocus, onChange, onToggle, big, plac
       )}
       <div ref={ref} contentEditable suppressContentEditableWarning
         onFocus={onFocus} onInput={commit} onPaste={handlePaste} onKeyDown={handleKeyDown}
+        onClick={(e) => e.stopPropagation()}
         data-placeholder={placeholder || "Paste the skit script here…"} className="w-full rounded-lg px-2.5 py-1.5 mt-1 script-editable"
         style={{ ...inputStyle, fontSize: big ? 15 : 12.5, lineHeight: 1.5, overflow: open ? "visible" : "hidden", height: open ? "auto" : 28, minHeight: big ? 260 : 28 }} />
     </div>
@@ -4558,7 +4559,7 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
           if (ql) cItems = cItems.filter((i) => i.title.toLowerCase().includes(ql));
           const setColumnCards = (open) => setOpenDesc((o) => ({ ...o, ...Object.fromEntries(cItems.map((i) => [i.id, open])) }));
           return (
-            <div key={col} onDragOver={(e) => { e.preventDefault(); setDragOverCol(col); }} onDragLeave={() => setDragOverCol(null)} onDrop={(e) => { e.preventDefault(); const id = e.dataTransfer.getData("text/plain"); if (id) dropIntoColumn(id, col); setDragOverCol(null); }} style={{ background: dragOverCol === col ? CONTENT_TINT[col] + "14" : C.canvas, padding: 16, display: "flex", flexDirection: "column", gap: 9, transition: "background 120ms ease" }}>
+            <div key={col} style={{ background: C.canvas, padding: 16, display: "flex", flexDirection: "column", gap: 9, transition: "background 120ms ease" }}>
               <div className="flex items-center justify-between px-0.5" style={{ paddingBottom: 9, borderBottom: `1px solid ${LINE}`, marginBottom: 2 }}>
                 <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 12.5, letterSpacing: "0.05em", textTransform: "uppercase", color: CONTENT_TINT[col] }}>{col}</span>
                 <span className="flex items-center gap-1"><span style={{ fontSize: 12.5, color: MUT }}>{cItems.length}</span><button onClick={() => setColumnCards(true)} style={{ ...iconBtn, padding: "2px 4px", fontSize: 10 }} title="Expand all cards">Expand all</button><button onClick={() => setColumnCards(false)} style={{ ...iconBtn, padding: "2px 4px", fontSize: 10 }} title="Collapse all cards">Collapse all</button></span>
@@ -4571,7 +4572,7 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
                   const descOpen = openDesc[i.id] !== undefined ? openDesc[i.id] : false;
                   const toggleDesc = () => { if (hasTextSelection()) return; setOpenDesc((o) => ({ ...o, [i.id]: !descOpen })); };
                   return (
-                  <div key={i.id} data-nav-id={i.id} draggable onDragStart={(e) => { e.dataTransfer.setData("text/plain", i.id); e.dataTransfer.effectAllowed = "move"; }} onClick={toggleDesc} className="rounded-lg" style={{ cursor: "pointer", background: "rgba(255,255,255,0.035)", border: `1px solid ${LINE}`, borderLeft: `2px solid ${CONTENT_TINT[col]}`, borderRadius: 10, padding: "11px 13px" }}>
+                  <div key={i.id} data-nav-id={i.id} onClick={toggleDesc} className="rounded-lg" style={{ cursor: "pointer", background: "rgba(255,255,255,0.035)", border: `1px solid ${LINE}`, borderLeft: `2px solid ${CONTENT_TINT[col]}`, borderRadius: 10, padding: "11px 13px" }}>
                     <InlineEdit value={i.title} onChange={(v) => updateItem(i.id, { title: v })} strong bubbleClicks />{livePost(i) && <span title={"Posts on " + i.scheduledFor} style={{ marginLeft: 6, fontSize: 12 }}>📅</span>}<button onClick={(e) => { e.stopPropagation(); setExpandedId(i.id); }} style={{ ...iconBtn, padding: 2, marginLeft: 6 }} aria-label="Expand description" title="Expand description to full screen">⤢</button>
                     <ScriptBox value={i.desc || ""} isHtml={!!i.descHtml} open={descOpen} onFocus={() => openIfNot(i.id)} onChange={(v) => updateItem(i.id, { desc: v, descHtml: true })} onToggle={toggleDesc} />
                     {col !== "Posted" && <div className="flex items-center gap-2 mt-1.5 flex-wrap" style={{ fontSize: 10.5 }}>
@@ -6363,7 +6364,7 @@ function InlineEdit({ value, onChange, placeholder, strong, dim, bubbleClicks })
   if (bubbleClicks) {
     return (
       <div className="w-full" style={{ minHeight: "1.3em" }}>
-        <span onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => { e.stopPropagation(); setEditing(true); }} title="Double-click to edit"
+        <span onDoubleClick={(e) => { e.stopPropagation(); setEditing(true); }} title="Double-click to edit"
           style={{ ...textStyle, display: "inline-block", maxWidth: "100%" }}>
           {value || placeholder || ""}
         </span>
