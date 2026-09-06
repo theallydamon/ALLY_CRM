@@ -455,8 +455,8 @@ const VIEW_PROFILES = {
     label: "Personal",
     tabs: ["lifeAdmin", "overview", "content"],
     homePillar: null,
-    homeSubs: true,
-    homePillars: ["calendar", "lifeAdmin", "content", "music"],
+    homeSubs: false,
+    homePillars: ["lifeAdmin", "content", "music", "mama"],
   },
 };
 /* Which Google accounts land on the work profile by default. Lower-cased on comparison. */
@@ -3633,22 +3633,6 @@ function CalendarChip({ cal, registry, crmEmail, showRegistry = true }) {
 /* HOME keeps one task category visible at a time. This gives every category its own larger
    chip board instead of squeezing four cards into one row. */
 function PersonalModule({ ally, mama, setAlly, setMama, go, q, navRequest, navigateToTask, completeTask, cal, onSchedule, onMove, onResize, onUnschedule, onDeleteEvent, syncTick, profile }) {
-  /* The work profile pins HOME to one pillar card — MAMA — with the day grid underneath, and drops
-     the subtab row entirely: a row containing a single button is noise, not navigation. The
-     personal profile opens on Calendar and exposes only its explicitly allowed personal pillars. */
-  const homeSubs = !profile || profile.homeSubs !== false;
-  const pinned = homeSubs ? null : (profile.homePillar || "calendar");
-  const [sub, setSub] = useState(pinned || "calendar");
-  useEffect(() => { if (pinned) setSub(pinned); }, [pinned]);
-  const allSubs = [
-    { id: "calendar", emoji: "📅", label: "Calendar" },
-    { id: "lifeAdmin", emoji: "✅", label: "Life Admin" },
-    { id: "content", emoji: "🎬", label: "Comedy Content" },
-    { id: "music", emoji: "🎵", label: "Music Content" },
-    { id: "mama", emoji: "🧑‍🎤", label: "Mama" },
-  ];
-  const allowedHomePillars = (profile && profile.homePillars) || allSubs.map(({ id }) => id);
-  const subs = allSubs.filter(({ id }) => allowedHomePillars.includes(id));
   const openCalendarTask = (id) => {
     const parts = String(id || "").split(":");
     if (parts.length === 2 && ["content", "brandContent", "musicContent"].includes(parts[0])) {
@@ -3659,18 +3643,10 @@ function PersonalModule({ ally, mama, setAlly, setMama, go, q, navRequest, navig
   };
   return (
     <section style={{ width: "100%", margin: 0, textAlign: "left" }}>
-      {homeSubs && (
-      <nav className="flex gap-2 mb-6 flex-wrap">
-        {subs.map(({ id, emoji, label }) => {
-          const on = sub === id;
-          return <button key={id} onClick={() => setSub(id)} className="flex items-center gap-2 rounded-full px-4 py-2" style={{ background: on ? C.dark : C.card, border: `1px solid ${on ? C.dark : LINE}`, color: on ? C.canvas : C.ink, cursor: "pointer", fontSize: 14, fontWeight: on ? 600 : 400, fontFamily: "inherit" }}><span>{emoji}</span><span>{label}</span></button>;
-        })}
-      </nav>
-      )}
-      {sub !== "calendar" && <PriorityDashboard ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} navigateToTask={navigateToTask} completeTask={completeTask} schedule={currentSchedule(ally.schedule)} onlyPillar={sub} />}
-      {/* One persistent shared grid: every Home subtab uses this exact instance, so its visible
-         state and the underlying Google Calendar data do not reset when switching subtabs. */}
-      {cal && <DayGrid cal={cal} onSchedule={onSchedule} onMove={onMove} onResize={onResize} onUnschedule={onUnschedule} onDeleteEvent={onDeleteEvent} onOpenTask={openCalendarTask} syncTick={syncTick} schedule={ally.schedule || {}} />}
+      <PriorityDashboard ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} navigateToTask={navigateToTask} completeTask={completeTask} schedule={currentSchedule(ally.schedule)} />
+      <div style={{ marginTop: 24 }}>
+        {cal && <DayGrid cal={cal} onSchedule={onSchedule} onMove={onMove} onResize={onResize} onUnschedule={onUnschedule} onDeleteEvent={onDeleteEvent} onOpenTask={openCalendarTask} syncTick={syncTick} schedule={ally.schedule || {}} />}
+      </div>
     </section>
   );
 }
@@ -3920,9 +3896,10 @@ under TO POST because that feed only checked status. */
 /* NO CAPS on any of these. They used to slice to 3 (and 6 for To Post), which quietly hid work —
 if six videos are waiting to be filmed, six must be visible, or the card lies about the workload.
 The groups wrap at three per row, so extra items flow onto the next row. */
-const toPostDated = allItems.filter((i) => i.status === "Ready to Post" && !i.paused).sort((a, b) => daysUntil(livePost(a) || liveDue(a)) - daysUntil(livePost(b) || liveDue(b)));
-const toFilmDated = allItems.filter((i) => i.status === "To Film" && !i.paused && liveDate(i)).sort(byDate);
-const toEditDated = allItems.filter((i) => i.status === "To Edit" && !i.paused && liveDate(i)).sort(byDate);
+const ideasDated = allItems.filter((i) => i.status === "Ideas" && !i.paused);
+const toFilmDated = allItems.filter((i) => i.status === "To Film" && !i.paused);
+const toEditDated = allItems.filter((i) => i.status === "To Edit" && !i.paused);
+const toPostDated = allItems.filter((i) => i.status === "Ready to Post" && !i.paused);
 return (
 <div onClick={() => onNavigate && onNavigate({ navTab: "content", navSub })} className="rounded-2xl p-4 pillar-card" style={{ ...card, borderRadius: 16, borderLeft: "4px solid " + mod.accent, cursor: "pointer" }}>
 <div className="flex items-center justify-between mb-3">
@@ -3933,19 +3910,17 @@ return (
 </div>
 <ArrowUpRight size={16} color={MUT} />
 </div>
+{pipelineKey === "content" && (
 <div className="flex items-center justify-center gap-6" style={{ padding: "6px 0 16px" }}>
-<div className="flex flex-col items-center text-center">
-<Ring pct={Math.min(1, taskPct / 100)} tint={taskTint} size={104} thick={12} label={Math.round(taskPct) + "%"} />
-<div style={{ fontSize: 11, fontWeight: 600, color: MUT, marginTop: 8, letterSpacing: "0.03em", textTransform: "uppercase" }}>Tasks</div>
-</div>
 <div className="flex flex-col items-center text-center">
 <Ring pct={Math.min(1, postPct / 100)} tint={postTint} size={104} thick={12} label={Math.round(postPct) + "%"} />
 <div style={{ fontSize: 11, fontWeight: 600, color: MUT, marginTop: 8, letterSpacing: "0.03em", textTransform: "uppercase" }}>Posting</div>
 </div>
 </div>
-<div style={{ fontSize: 13.5, fontWeight: 600, color: postTint, textAlign: "center", marginTop: -6, marginBottom: 12 }}>{since === null ? "no post logged yet" : since === 1 ? "1 day since last post" : since + " days since last post"}</div>
-{critical && <div style={{ fontSize: 10.5, fontWeight: 700, color: C.rose, marginTop: -8, marginBottom: 10, textAlign: "center", letterSpacing: "0.03em" }}>⚠ CRITICAL — post overdue</div>}
-<div className="grid gap-2" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+)}
+{pipelineKey === "content" && <div style={{ fontSize: 13.5, fontWeight: 600, color: postTint, textAlign: "center", marginTop: -6, marginBottom: 12 }}>{since === null ? "no post logged yet" : since === 1 ? "1 day since last post" : since + " days since last post"}</div>}
+{pipelineKey === "content" && critical && <div style={{ fontSize: 10.5, fontWeight: 700, color: C.rose, marginTop: -8, marginBottom: 10, textAlign: "center", letterSpacing: "0.03em" }}>⚠ CRITICAL — post overdue</div>}
+<div className="grid gap-2" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
 {pipelineCols.map((c) => (
 <div key={c} className="rounded-lg py-2 text-center" style={{ background: C.soft, border: "1px solid " + LINE }}>
 <div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 19, color: CONTENT_TINT[c] }}>{counts[c]}</div>
@@ -3954,29 +3929,30 @@ return (
 ))}
 </div>
 <div className="flex flex-col gap-2 mt-3 pt-3" style={{ borderTop: "1px solid " + LINE }}>
-{/* FIXED ORDER, owner's call 30 Jul 2026: TO FILM, then TO EDIT, then TO POST — the real production
-sequence, so the card reads top-to-bottom the way the work actually flows.
-IDEAS is deliberately absent from both this and the Music card. It is a bank of unstarted thoughts
-rather than scheduleable work, and it crowded out the three stages that are. It is still on the
-Content board and still in the counts row above.
-Each column is a bordered group with its tasks underneath, three across before wrapping. */}
+<TaskGroup label="Ideas" tint={CONTENT_TINT["Ideas"]} count={ideasDated.length || null} empty="—" onDropStatus={(p) => onSetStatus && onSetStatus(p, "Ideas")}>
+{ideasDated.length ? ideasDated.map((i) => (
+<TaskChip key={i.id} taskId={i.id} title={i.title} pillar={pipelineKey}
+scheduled={schedule && schedule[i.id]} statusMove={{ id: i.id, pipe: i._pipe, from: i.status }}
+onOpen={() => onNavigate && onNavigate({ id: i.id, navTab: "content", navSub })} />
+)) : null}
+</TaskGroup>
 <TaskGroup label="To Film" tint={CONTENT_TINT["To Film"]} count={toFilmDated.length || null} empty="—" onDropStatus={(p) => onSetStatus && onSetStatus(p, "To Film")}>
 {toFilmDated.length ? toFilmDated.map((i) => (
-<TaskChip key={i.id} taskId={i.id} title={i.title} pillar={pipelineKey} due={liveDate(i)} dateKind={liveDue(i) ? "do" : "post"}
+<TaskChip key={i.id} taskId={i.id} title={i.title} pillar={pipelineKey}
 scheduled={schedule && schedule[i.id]} statusMove={{ id: i.id, pipe: i._pipe, from: i.status }}
 onOpen={() => onNavigate && onNavigate({ id: i.id, navTab: "content", navSub })} />
 )) : null}
 </TaskGroup>
 <TaskGroup label="To Edit" tint={CONTENT_TINT["To Edit"]} count={toEditDated.length || null} empty="—" onDropStatus={(p) => onSetStatus && onSetStatus(p, "To Edit")}>
 {toEditDated.length ? toEditDated.map((i) => (
-<TaskChip key={i.id} taskId={i.id} title={i.title} pillar={pipelineKey} due={liveDate(i)} dateKind={liveDue(i) ? "do" : "post"}
+<TaskChip key={i.id} taskId={i.id} title={i.title} pillar={pipelineKey}
 scheduled={schedule && schedule[i.id]} statusMove={{ id: i.id, pipe: i._pipe, from: i.status }}
 onOpen={() => onNavigate && onNavigate({ id: i.id, navTab: "content", navSub })} />
 )) : null}
 </TaskGroup>
-<TaskGroup label="To Post" tint={CONTENT_TINT["Ready to Post"]} count={toPostDated.length || null} empty="—" onDropStatus={(p) => onSetStatus && onSetStatus(p, "Ready to Post")}>
+<TaskGroup label="Ready to Post" tint={CONTENT_TINT["Ready to Post"]} count={toPostDated.length || null} empty="—" onDropStatus={(p) => onSetStatus && onSetStatus(p, "Ready to Post")}>
 {toPostDated.length ? toPostDated.map((i) => (
-<TaskChip key={i.id} taskId={i.id} title={i.title} pillar={pipelineKey} due={livePost(i) || liveDue(i)} dateKind={livePost(i) ? "post" : "do"}
+<TaskChip key={i.id} taskId={i.id} title={i.title} pillar={pipelineKey}
 scheduled={schedule && schedule[i.id]} statusMove={{ id: i.id, pipe: i._pipe, from: i.status }}
 onOpen={() => onNavigate && onNavigate({ id: i.id, navTab: "content", navSub })} />
 )) : null}
@@ -4014,10 +3990,6 @@ function PriorityPillarCard({ pillarKey, tasks, go, rank, onDropPriority, pct, o
           <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 16, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{mod.label}</span>
         </div>
         <ArrowUpRight size={16} color={MUT} />
-      </div>
-      <div className="flex flex-col items-center text-center" style={{ padding: "6px 0 16px" }}>
-        <Ring pct={Math.min(1, pct / 100)} tint={tint} size={148} thick={16} label={`${Math.round(pct)}%`} />
-        {critical && <span style={{ fontSize: 10.5, fontWeight: 700, color: C.rose, letterSpacing: "0.03em", marginTop: 10 }}>⚠ CRITICAL — overloaded</span>}
       </div>
       {/* Same shape as the Content card: each bucket is a bordered group laid out horizontally with
           its tasks underneath, three across before wrapping. The group is still a drop target for the
@@ -4115,61 +4087,33 @@ const defaultTaskDue = () => shiftISO(todayISO(), 1);
    board but haven't decided are a live priority yet — existing, not urgent. Clicking any L/M/H
    button again un-pauses it, picks that priority, and resets the due date back to blank so you set
    a fresh one rather than reviving a stale old date. */
-function PriorityControls({ item, onChange, hideDue }) {
-  const u = computeUrgency(item);
+function PriorityControls({ item, onChange }) {
   const pr = item.priority || "Medium";
   const paused = !!item.paused;
-  const dateTarget = paused ? null : priorityFromDueDate(u.daysUntilDue);
-  useEffect(() => {
-    if (dateTarget && pr !== dateTarget) onChange({ priority: dateTarget });
-  }, [dateTarget, pr]);
-  const dueTint = u.daysUntilDue === null ? MUT : u.daysUntilDue < 0 ? C.rose : u.daysUntilDue <= 2 ? C.amber : MUT;
   const setPriority = (p) => {
-    if (paused) onChange({ priority: p, paused: false, due: null });
-    else if (pr === p) onChange({ paused: true, due: null });
-    else if (!dateTarget) onChange({ priority: p }); // no date driving it -> free manual choice
-    // else: a due date is actively setting this item's priority; only the matching button (handled
-    // above via pr === p, which pauses) does anything — the other two are disabled below.
+    if (paused) onChange({ priority: p, paused: false });
+    else if (pr === p) onChange({ paused: true });
+    else onChange({ priority: p, paused: false });
   };
   return (
     <div className="flex items-center gap-1.5 flex-wrap mt-1.5" style={{ fontSize: 11, opacity: paused ? 0.55 : 1 }}>
-      {!hideDue && (
-        <input type="date" value={item.due || ""} disabled={paused} onClick={(e) => e.stopPropagation()} onChange={(e) => onChange({ due: e.target.value || null })}
-          className="rounded-md" style={{ ...darkInput, fontSize: 10.5, padding: "3px 5px", cursor: paused ? "not-allowed" : "text" }} aria-label="Due date" />
-      )}
       <div className="flex gap-1">
-        {PRIORITY_LEVELS.map((p) => {
-          const locked = !!dateTarget && p !== dateTarget;
-          return (
-            <button key={p} onClick={(e) => { e.stopPropagation(); setPriority(p); }} disabled={locked} className="rounded-full px-2 py-0.5"
-              title={!paused && pr === p && !dateTarget ? "Click again to pause — stop tracking this as a priority"
-                : !paused && pr === p && dateTarget ? "Set by the due date. Click to pause, or clear/edit the date to change it."
-                : paused ? "Paused — click a level to resume"
-                : locked ? "Set by the due date — clear the date or pause to override manually" : undefined}
-              style={{ fontSize: 10, cursor: locked ? "not-allowed" : "pointer", fontFamily: "inherit",
-                background: !paused && pr === p ? `${PRIORITY_TINT[p]}22` : FILL, border: `1px solid ${!paused && pr === p ? PRIORITY_TINT[p] : LINE}`,
-                color: !paused && pr === p ? PRIORITY_TINT[p] : locked ? FAINT : MUT, opacity: locked ? 0.5 : 1 }}>{p[0]}</button>
-          );
-        })}
+        {PRIORITY_LEVELS.map((p) => (
+          <button key={p} onClick={(e) => { e.stopPropagation(); setPriority(p); }} className="rounded-full px-2 py-0.5"
+            style={{
+              fontSize: 10, cursor: "pointer", fontFamily: "inherit",
+              background: !paused && pr === p ? `${PRIORITY_TINT[p]}22` : FILL,
+              border: `1px solid ${!paused && pr === p ? PRIORITY_TINT[p] : LINE}`,
+              color: !paused && pr === p ? PRIORITY_TINT[p] : MUT,
+            }}>
+            {p}
+          </button>
+        ))}
       </div>
-      {/* waiting on someone else: parks the task off the Priorities dashboard until the chase date,
-          then brings it back flagged and High so a silent reply can't quietly bury it. */}
-      <button onClick={(e) => { e.stopPropagation(); onChange(item.chaseOn ? { chaseOn: null } : { chaseOn: shiftISO(todayISO(), 3) }); }} className="flex items-center gap-1 rounded-full px-2 py-0.5"
+      <button onClick={(e) => { e.stopPropagation(); onChange(item.chaseOn ? { chaseOn: null } : { chaseOn: todayISO() }); }} className="flex items-center gap-1 rounded-full px-2 py-0.5"
         style={{ fontSize: 10, cursor: "pointer", fontFamily: "inherit", background: item.chaseOn ? `${C.sky}22` : FILL, border: `1px solid ${item.chaseOn ? C.sky : LINE}`, color: item.chaseOn ? C.sky : MUT, whiteSpace: "nowrap" }}
-        title="Waiting on a reply — pauses priority until the follow up date, then restores it as due">waiting on reply</button>
-      {item.chaseOn && (
-        <span className="flex items-center gap-1" style={{ fontSize: 10, color: C.sky, whiteSpace: "nowrap" }}>
-          follow up
-          <input type="date" value={item.chaseOn} onClick={(e) => e.stopPropagation()} onChange={(e) => onChange({ chaseOn: e.target.value || null })} className="rounded-md" style={{ ...darkInput, fontSize: 10.5, padding: "3px 5px" }} aria-label="Chase date" />
-        </span>
-      )}
-      {paused ? (
-        <span style={{ marginLeft: "auto", color: FAINT, fontWeight: 600, whiteSpace: "nowrap" }}>paused</span>
-      ) : u.daysUntilDue !== null ? (
-        <span style={{ marginLeft: "auto", color: dueTint, fontWeight: 600, whiteSpace: "nowrap" }}>
-          {u.daysUntilDue < 0 ? `${-u.daysUntilDue}d overdue` : u.daysUntilDue === 0 ? "today" : `${u.daysUntilDue}d`}
-        </span>
-      ) : null}
+        title="Waiting on a reply">waiting on reply</button>
+      {paused && <span style={{ marginLeft: "auto", color: FAINT, fontWeight: 600, whiteSpace: "nowrap" }}>paused</span>}
     </div>
   );
 }
@@ -4441,7 +4385,6 @@ return (
 <div className="flex items-center gap-2 flex-wrap" style={{ fontSize: 11.5, color: MUT }}>
 <span style={{ color: CONTENT_TINT[item.status] || MUT, fontWeight: 600 }}>{item.status}</span>
 <span style={{ color: PIPELINE_TINT[item.pipelineKey] || MUT }}>{PIPELINE_LABEL[item.pipelineKey]}</span>
-<input type="date" value={item.scheduledFor || ""} onChange={(e) => setFocusedPostDate(item, e.target.value)} className="rounded-md" style={{ ...darkInput, fontSize: 11.5, padding: "4px 7px" }} aria-label="Scheduled date" />
 {item.status !== "Posted" && <button onClick={() => { patchFocused({ status: "Posted", postedAt: todayISO() }); if (calendarFocus.pipelineKey !== "brandContent") setData((d) => ({ ...d, [calendarFocus.pipelineKey]: { ...d[calendarFocus.pipelineKey], lastPosted: todayISO() } })); }} className="rounded-full px-2.5 py-1" style={{ fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", background: C.mint + "1a", border: "1px solid " + C.mint + "55", color: C.mint }}>✓ Posted</button>}
 </div>
 <ScriptBox value={item.desc || ""} isHtml={!!item.descHtml} open big onFocus={() => {}} onChange={(v) => patchFocused({ desc: v, descHtml: true })} onToggle={() => {}} />
@@ -4524,8 +4467,7 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
         <div className="flex-1" style={{ minWidth: 220 }}>
           <div style={{ fontSize: 15, fontWeight: 500, color: h.tint }}>{h.msg}</div>
           <div className="flex items-center gap-2 mt-2 flex-wrap" style={{ fontSize: 12, color: MUT }}>
-            last posted
-            <input type="date" value={content.lastPosted || ""} onChange={(e) => patch({ lastPosted: e.target.value || null })} className="rounded-md" style={{ ...darkInput, fontSize: 12, padding: "4px 7px" }} />
+            last posted <b style={{ color: C.ink }}>{content.lastPosted || "Never"}</b>
           </div>
         </div>
         {donutTotal > 0 && (
@@ -4542,8 +4484,9 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
       )}
 
       {activeStage === "Ideas" && <div className="rounded-2xl mb-4" style={{ ...card, borderRadius: 12, padding: 12 }}>
-        <div className="flex gap-2 flex-wrap mb-2">
+        <div className="flex gap-2 flex-wrap mb-2 items-center">
           <input value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} placeholder="Drop a skit idea in the bank…" className="flex-1 rounded-lg px-3 py-2" style={{ ...inputStyle, minWidth: 200, fontSize: 13.5 }} />
+          <PrioritySelector value={priority} onChange={setPriority} />
         </div>
         <div className="flex gap-2 flex-wrap items-start">
           <GrowingTextarea value={description} onChange={setDescription} placeholder="Description (optional) — the actual detail. Keeps the title short." rows={2} className="flex-1 rounded-lg px-3 py-2" style={{ ...inputStyle, minWidth: 200, fontSize: 13.5, lineHeight: 1.45 }} />
@@ -4559,9 +4502,7 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
           <div className="flex flex-col gap-2">
             {scheduled.map((i) => (
               <div key={i.id} className="flex items-center gap-2.5 flex-wrap" style={{ fontSize: 13 }}>
-                <DueChip due={i.scheduledFor} off={i.schedOff} onToggle={() => updateItem(i.id, { schedOff: !i.schedOff })} />
                 <span className="flex-1" style={{ minWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", cursor: "pointer" }} onClick={() => setExpandedId(i.id)}>{i.title}</span>
-                <input type="date" value={i.scheduledFor || ""} onChange={(e) => setPostDate(i, e.target.value)} className="rounded-md" style={{ ...darkInput, fontSize: 11.5, padding: "4px 7px", opacity: i.schedOff ? 0.45 : 1 }} aria-label="Post on — publish date" />
                 <button onClick={() => markPosted(i.id)} className="rounded-full px-2.5 py-1" style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.03em", cursor: "pointer", fontFamily: "inherit", background: `${C.mint}1a`, border: `1px solid ${C.mint}55`, color: C.mint }}>✓ Posted</button>
               </div>
             ))}
@@ -4591,25 +4532,10 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
                   <div key={i.id} data-nav-id={i.id} onClick={toggleDesc} className="rounded-lg" style={{ cursor: "pointer", background: "rgba(255,255,255,0.035)", border: `1px solid ${LINE}`, borderLeft: `2px solid ${CONTENT_TINT[col]}`, borderRadius: 10, padding: "11px 13px" }}>
                     <InlineEdit value={i.title} onChange={(v) => updateItem(i.id, { title: v })} strong bubbleClicks />{livePost(i) && <span title={"Posts on " + i.scheduledFor} style={{ marginLeft: 6, fontSize: 12 }}>📅</span>}<button onClick={(e) => { e.stopPropagation(); setExpandedId(i.id); }} style={{ ...iconBtn, padding: 2, marginLeft: 6 }} aria-label="Expand description" title="Expand description to full screen">⤢</button>
                     <ScriptBox value={i.desc || ""} isHtml={!!i.descHtml} open={descOpen} onFocus={() => openIfNot(i.id)} onChange={(v) => updateItem(i.id, { desc: v, descHtml: true })} onToggle={toggleDesc} />
-                    {col !== "Posted" && <div className="flex items-center gap-2 mt-1.5 flex-wrap" style={{ fontSize: 10.5 }}>
-                      {/* DO BY is shown on Ideas, To Film, To Edit (col !== Ready to Post).
-                          POST ON is shown on Ready to Post (col === Ready to Post).
-                          Posted stage has neither date selector. */}
-                      {col !== "Ready to Post" && <span onClick={(e) => e.stopPropagation()} className="flex items-center gap-1.5"
-                        style={{ border: `1px solid ${i.due && !i.dueOff ? `${C.amber}55` : LINE}`, borderRadius: 8, padding: "2px 5px", background: i.due && !i.dueOff ? `${C.amber}0f` : "transparent" }}>
-                        <span style={{ fontSize: 8.5, letterSpacing: "0.08em", color: i.dueOff ? FAINT : C.amber, fontWeight: 700 }}>DO BY</span>
-                        <input type="date" value={i.due || ""} onClick={(e) => e.stopPropagation()} onChange={(e) => updateItem(i.id, { due: e.target.value || null })} className="rounded-md" style={{ ...darkInput, fontSize: 10.5, padding: "2px 4px", opacity: i.dueOff ? 0.45 : 1 }} aria-label="Do by — finish this stage's work" title="Finish this stage's work by this date" />
-                        <DueChip due={i.due} off={i.dueOff} onToggle={() => updateItem(i.id, { dueOff: !i.dueOff })} />
-                      </span>}
-                      {col === "Ready to Post" && <span onClick={(e) => e.stopPropagation()} className="flex items-center gap-1.5"
-                        style={{ border: `1px solid ${livePost(i) ? `${C.sky}55` : LINE}`, borderRadius: 8, padding: "2px 5px", background: livePost(i) ? `${C.sky}0f` : "transparent" }}>
-                        <span style={{ fontSize: 8.5, letterSpacing: "0.08em", color: i.schedOff ? FAINT : C.sky, fontWeight: 700 }}>POST ON</span>
-                        <input type="date" value={i.scheduledFor || ""} onClick={(e) => e.stopPropagation()} onChange={(e) => setPostDate(i, e.target.value)} className="rounded-md" style={{ ...darkInput, fontSize: 10.5, padding: "2px 4px", opacity: i.schedOff ? 0.45 : 1 }} aria-label="Post on — publish date" title="Publish it on this date" />
-                        <DueChip due={i.scheduledFor} off={i.schedOff} onToggle={() => updateItem(i.id, { schedOff: !i.schedOff })} />
-                      </span>}
-                      {col === "Ready to Post" && <button onClick={(e) => { e.stopPropagation(); markPosted(i.id); }} className="rounded-full px-2 py-0.5" style={{ fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", background: `${C.mint}1a`, border: `1px solid ${C.mint}55`, color: C.mint }} title="Move to posted archive">✓ Posted</button>}
+                    {col === "Ready to Post" && <div className="flex items-center gap-2 mt-1.5 flex-wrap" style={{ fontSize: 10.5 }}>
+                      <button onClick={(e) => { e.stopPropagation(); markPosted(i.id); }} className="rounded-full px-2 py-0.5" style={{ fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", background: `${C.mint}1a`, border: `1px solid ${C.mint}55`, color: C.mint }} title="Move to posted archive">✓ Posted</button>
                     </div>}
-                    {col !== "Posted" && <PriorityControls item={i} onChange={(p) => updateItem(i.id, p)} hideDue />}
+                    {col !== "Posted" && <PriorityControls item={i} onChange={(p) => updateItem(i.id, p)} />}
                     <div className="flex items-center gap-1 mt-1.5"><span className="ml-auto flex gap-1">
                       {col === "Posted" ? <button onClick={(e) => { e.stopPropagation(); updateItem(i.id, { status: "Ready to Post", postedAt: null }); }} style={{ ...iconBtn, padding: 2, color: C.mint }} title="Restore to Ready to Post">←</button> : col !== "Ideas" && <button onClick={(e) => { e.stopPropagation(); move(i.id, -1); }} style={{ ...iconBtn, padding: 2, color: C.mint }} aria-label="Back" title="Move to previous stage">←</button>}
                       {col !== "Posted" && <button onClick={(e) => { e.stopPropagation(); col === "Ready to Post" ? markPosted(i.id) : move(i.id, 1); }} style={{ ...iconBtn, padding: 2, color: C.mint }} aria-label="Forward" title={col === "Ready to Post" ? "Move to posted archive" : "Move to next stage"}>→</button>}
@@ -5228,9 +5154,9 @@ return (
     <section>
       <SectionHead title={boardTitle} sub={subtitle} />
       <div className="rounded-2xl p-4 mb-6" style={{ ...card, borderRadius: 16 }}>
-        <div className="flex gap-2 flex-wrap mb-2">
+        <div className="flex gap-2 flex-wrap mb-2 items-center">
           <input value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} placeholder="What needs doing?" className="flex-1 rounded-lg px-3 py-2" style={{ ...inputStyle, minWidth: 200 }} />
-          <input type="date" value={due} onChange={(e) => setDue(e.target.value)} className="rounded-lg px-3 py-2" style={{ ...inputStyle, width: 150 }} aria-label="Due date (optional)" title="Due date (optional) — auto-sets the priority" />
+          <PrioritySelector value={priority} onChange={setPriority} />
         </div>
         <div className="flex gap-2 flex-wrap items-start">
           <GrowingTextarea value={description} onChange={setDescription} placeholder="Description (optional) — the actual detail. Keeps the title short." rows={2} className="flex-1 rounded-lg px-3 py-2" style={{ ...inputStyle, minWidth: 200, lineHeight: 1.45 }} />
@@ -5296,10 +5222,10 @@ function MiniTaskList({ tasks, onChange, withLink, composerAtBottom }) {
   const remove = (id) => onChange(list.filter((t) => t.id !== id));
   const composer = (
     <>
-      <div className="flex gap-1.5 flex-wrap">
+      <div className="flex gap-1.5 flex-wrap items-center">
         <input value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} placeholder="Add a task (e.g. Reply to email)…" className="flex-1 rounded-lg px-2 py-1.5" style={{ ...inputStyle, fontSize: 12, minWidth: 140 }} />
         {withLink && <input value={link} onChange={(e) => setLink(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} placeholder="URL (optional)" className="rounded-lg px-2 py-1.5" style={{ ...inputStyle, fontSize: 11, width: 130 }} />}
-        <input type="date" value={due} onChange={(e) => setDue(e.target.value)} className="rounded-lg px-2 py-1.5" style={{ ...inputStyle, fontSize: 11, width: 120 }} aria-label="Due date (optional)" title="Due date (optional) — auto-sets the priority" />
+        <PrioritySelector value={priority} onChange={setPriority} />
       </div>
       <div className="flex gap-1.5 items-start">
         <GrowingTextarea value={description} onChange={setDescription} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); add(); } }} placeholder="Description (optional)…" rows={1} className="flex-1 rounded-lg px-2 py-1.5" style={{ ...inputStyle, fontSize: 11.5, lineHeight: 1.4 }} />
@@ -5433,8 +5359,6 @@ function DealCard({ x, open, onToggleOpen, update, remove, isProspect }) {
             return (
               <div key={s.key} className="flex items-center gap-2 flex-wrap">
                 <button onClick={() => setStage(s.key)} className="rounded-full px-2.5 py-1" style={{ fontSize: 10.5, cursor: "pointer", fontFamily: "inherit", flex: "0 0 auto", minWidth: 158, textAlign: "left", background: complete ? `${tint}14` : isCurrent ? `${tint}2b` : FILL, border: `1px solid ${isCurrent ? tint : complete ? `${tint}55` : LINE}`, color: isCurrent || complete ? tint : MUT }}>{complete ? "✓ " : ""}{s.label}</button>
-                <input type="date" value={stageDue[s.key] || ""} onChange={(e) => setStageDue(s.key, e.target.value)} className="rounded-lg px-2 py-1" style={{ ...inputStyle, fontSize: 11 }} aria-label={`${s.label} deadline`} title={`${s.label} deadline`} />
-                {isCurrent && stageDue[s.key] && <DueChip due={stageDue[s.key]} />}
               </div>
             );
           })}
@@ -5442,12 +5366,10 @@ function DealCard({ x, open, onToggleOpen, update, remove, isProspect }) {
         </div>
       )}
 
-      {/* active Story: single deadline */}
+      {/* active Story */}
       {!isProspect && piece === "Story" && (
         <div onClick={(e) => e.stopPropagation()} className="mt-3 flex items-center gap-2 flex-wrap">
-          <Label text="Deadline" />
-          <input type="date" value={x.storyDue || ""} onChange={(e) => update(x.id, { storyDue: e.target.value })} className="rounded-lg px-2 py-1" style={{ ...inputStyle, fontSize: 12 }} aria-label="Story deadline" />
-          {x.storyDue && <DueChip due={x.storyDue} />}{done ? <span style={{ fontSize: 11, color: MUT }}>Posted ✓ <button onClick={() => setStage("script")} style={{ ...iconBtn, fontSize: 11 }}>reopen</button></span> : <button onClick={() => setStage("done")} className="rounded-full px-2.5 py-1" style={{ fontSize: 10.5, cursor: "pointer", fontFamily: "inherit", background: `${tint}1a`, border: `1px solid ${tint}55`, color: tint }}>✓ Mark posted</button>}
+          {done ? <span style={{ fontSize: 11, color: MUT }}>Posted ✓ <button onClick={() => setStage("script")} style={{ ...iconBtn, fontSize: 11 }}>reopen</button></span> : <button onClick={() => setStage("done")} className="rounded-full px-2.5 py-1" style={{ fontSize: 10.5, cursor: "pointer", fontFamily: "inherit", background: `${tint}1a`, border: `1px solid ${tint}55`, color: tint }}>✓ Mark posted</button>}
         </div>
       )}
 
@@ -5773,15 +5695,7 @@ function AITaskProjects({ data, setData, mama, setMama, q }) {
             ))}
             <option value="new" style={{ background: C.dark, color: C.ink }}>+ Create New Project</option>
           </select>
-          <input
-            type="date"
-            value={due}
-            onChange={(e) => setDue(e.target.value)}
-            className="rounded-lg px-3 py-2"
-            style={{ ...inputStyle, width: 140 }}
-            aria-label="Due date (optional)"
-            title="Due date (optional) — auto-sets the priority"
-          />
+          <PrioritySelector value={priority} onChange={setPriority} />
         </div>
         {draftLinks.length > 0 && (
           <div className="flex gap-1.5 flex-wrap mb-2">
@@ -6213,9 +6127,9 @@ function AdminTasks({ data, setData, ally, setAlly }) {
         </div>
       </div>
       <div className="rounded-2xl p-4 mb-6" style={{ ...card, borderRadius: 16 }}>
-        <div className="flex gap-2 flex-wrap mb-2">
+        <div className="flex gap-2 flex-wrap mb-2 items-center">
           <input value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} placeholder="What came in?" className="flex-1 rounded-lg px-3 py-2" style={{ ...inputStyle, minWidth: 200 }} />
-          <input type="date" value={due} onChange={(e) => setDue(e.target.value)} className="rounded-lg px-3 py-2" style={{ ...inputStyle, width: 150 }} aria-label="Due date (optional)" title="Due date (optional) — auto-sets the priority" />
+          <PrioritySelector value={priority} onChange={setPriority} />
         </div>
         {draftLinks.length > 0 && (
           <div className="flex gap-1.5 flex-wrap mb-2">
