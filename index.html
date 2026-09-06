@@ -4331,8 +4331,8 @@ function ScriptBox({ value, isHtml, open, onFocus, onChange, onToggle, big, plac
     const k = e.key.toLowerCase();
     if (k === "b") { e.preventDefault(); exec("bold"); return; }
     if (k === "i") { e.preventDefault(); exec("italic"); return; }
-    if (e.key === ">" || (e.shiftKey && e.key === ".")) { e.preventDefault(); stepSize(1); return; }
-    if (e.key === "<" || (e.shiftKey && e.key === ",")) { e.preventDefault(); stepSize(-1); return; }
+    if (e.key === ">" || e.key === "." || e.code === "Period") { e.preventDefault(); stepSize(1); return; }
+    if (e.key === "<" || e.key === "," || e.code === "Comma") { e.preventDefault(); stepSize(-1); return; }
   };
   const handlePaste = (e) => {
     e.preventDefault();
@@ -4360,7 +4360,7 @@ function ScriptBox({ value, isHtml, open, onFocus, onChange, onToggle, big, plac
           <select
             onMouseDown={() => { const sel = window.getSelection(); savedRangeRef.current = sel.rangeCount ? sel.getRangeAt(0).cloneRange() : null; }}
             onChange={(e) => { const v = e.target.value; if (v) applySize(v); e.target.value = ""; }}
-            defaultValue="" style={miniSelect} aria-label="Font size" title="Font size (Cmd+Shift+. / ,)">
+            defaultValue="" style={miniSelect} aria-label="Font size" title="Font size (Cmd+> / Cmd+<)">
             <option value="">Size</option>
             <option value="0.85">Small</option>
             <option value="1">Normal</option>
