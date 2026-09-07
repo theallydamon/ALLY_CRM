@@ -6086,6 +6086,7 @@ function AdminTasks({ data, setData, ally, setAlly }) {
   const [title, setTitle] = useState(""); const [description, setDescription] = useState(""); const [due, setDue] = useState("");
   const [draftLinks, setDraftLinks] = useState([]);
   const [linkLabel, setLinkLabel] = useState(""); const [linkUrl, setLinkUrl] = useState("");
+  const [priority, setPriority] = useState("Medium");
 
   const projects = ((ally?.aiTasks || {}).projects || []);
   const moveOptions = projects.map((p) => ({ id: `ai::${p.id}`, label: `AI: ${p.name}` }));
