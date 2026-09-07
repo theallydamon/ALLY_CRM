@@ -456,7 +456,7 @@ const VIEW_PROFILES = {
     tabs: ["lifeAdmin", "overview", "content"],
     homePillar: null,
     homeSubs: false,
-    homePillars: ["lifeAdmin", "content", "music", "mama"],
+    homePillars: ["lifeAdmin", "content", "music"],
   },
 };
 /* Which Google accounts land on the work profile by default. Lower-cased on comparison. */
@@ -3204,9 +3204,9 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
            stayed put; page-h1 is now the single source of truth for a page heading. */
         .page-h1 { font-size: 26px; line-height: 1.15; letter-spacing: -0.02em; margin: 0; }
 
-        /* four pillar cards on one row — see the comment at the grid itself for why this is fixed
+        /* pillar cards on one row — see the comment at the grid itself for why this is fixed
            rather than auto-fit. Collapses on narrow screens, where dragging is not the use case. */
-        .pillar-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+        .pillar-grid { grid-template-columns: repeat(var(--pillar-count, 3), minmax(0, 1fr)); }
         @media (max-width: 1180px) { .pillar-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
         @media (max-width: 640px)  { .pillar-grid { grid-template-columns: 1fr; } }
 
@@ -3643,7 +3643,7 @@ function PersonalModule({ ally, mama, setAlly, setMama, go, q, navRequest, navig
   };
   return (
     <section style={{ width: "100%", margin: 0, textAlign: "left" }}>
-      <PriorityDashboard ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} navigateToTask={navigateToTask} completeTask={completeTask} schedule={currentSchedule(ally.schedule)} />
+      <PriorityDashboard ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} navigateToTask={navigateToTask} completeTask={completeTask} schedule={currentSchedule(ally.schedule)} onlyPillar={profile ? profile.homePillar : null} profile={profile} />
       <div style={{ marginTop: 24 }}>
         {cal && <DayGrid cal={cal} onSchedule={onSchedule} onMove={onMove} onResize={onResize} onUnschedule={onUnschedule} onDeleteEvent={onDeleteEvent} onOpenTask={openCalendarTask} syncTick={syncTick} schedule={ally.schedule || {}} />}
       </div>
@@ -3652,7 +3652,7 @@ function PersonalModule({ ally, mama, setAlly, setMama, go, q, navRequest, navig
 }
 
 /* ================= PRIORITY DASHBOARD ================= */
-function PriorityDashboard({ ally, mama, go, setAlly, setMama, navigateToTask, completeTask, schedule, onlyPillar }) {
+function PriorityDashboard({ ally, mama, go, setAlly, setMama, navigateToTask, completeTask, schedule, onlyPillar, profile }) {
 const tasks = collectPriorityTasks(ally, mama);
 const byPillar = Object.fromEntries(PRIORITY_PILLARS.map((k) => [k, tasks.filter((t) => t.pillar === k)]));
 const contentPostUrgency = computeContentUrgency(ally.content);
@@ -3663,13 +3663,14 @@ const fillPct = Object.fromEntries(PRIORITY_PILLARS.map((k) => [k,
 k === "content" ? Math.max(contentTaskPct, contentPostUrgency.pct) :
 k === "music" ? Math.max(musicTaskPct, musicPostUrgency.pct) :
 computePillarFillPercent(byPillar[k])]));
-/* FIXED ORDER, owner's call 30 Jul 2026: Life Admin, Comedy Content, Music Content, Mama.
+/* FIXED ORDER: Life Admin, Comedy Content, Music Content, Mama (where active in profile).
    The cards used to re-sort themselves by how full each ring was, which meant they moved around under
    the cursor between visits — bad for muscle memory generally, and actively bad now that tasks are
    dragged out of them onto the calendar. The rings still show urgency; only the position is frozen.
    The number badge is therefore position, not rank. */
 const CARD_ORDER = ["lifeAdmin", "content", "music", "mama"];
-const ranked = CARD_ORDER.filter((k) => PRIORITY_PILLARS.includes(k) && (!onlyPillar || k === onlyPillar));
+const allowedPillars = profile && profile.homePillars ? profile.homePillars : (onlyPillar ? [onlyPillar] : ["lifeAdmin", "content", "music"]);
+const ranked = CARD_ORDER.filter((k) => PRIORITY_PILLARS.includes(k) && allowedPillars.includes(k));
 const rankOf = Object.fromEntries(ranked.map((k, i) => [k, i + 1]));
 const onDropPriority = (pillar, id, patch) => setPillarItemPriority(setAlly, setMama, pillar, id, patch);
 
@@ -3699,7 +3700,7 @@ is dragged from a card UP into the calendar, so a card on a lower row would forc
 travel across two other cards to get there. Fixed columns keep every card the same distance from
 the grid. The class (not inline style) is so the media queries below can collapse it on narrow
 screens, where a 4-up would be unusable and there is no dragging anyway. */}
-<div className={`grid gap-3${onlyPillar ? "" : " pillar-grid"}`} style={onlyPillar ? { gridTemplateColumns: "minmax(0, 1fr)" } : undefined}>
+<div className={`grid gap-3${onlyPillar ? "" : " pillar-grid"}`} style={onlyPillar ? { gridTemplateColumns: "minmax(0, 1fr)" } : { "--pillar-count": ranked.length }}>
 {ranked.map((k) => (
 k === "content"
 ? <ContentPillarCard key={k} content={ally.content} pipelineKey="content" mod={MODULES.content} go={go} rank={rankOf[k]} taskPct={contentTaskPct} postPct={contentPostUrgency.pct} onNavigate={navigateToTask} onComplete={completeTask} extraItems={ally.brandContent.items} schedule={schedule} onSetStatus={onSetStatus} />
