@@ -4087,6 +4087,33 @@ const defaultTaskDue = () => shiftISO(todayISO(), 1);
    board but haven't decided are a live priority yet — existing, not urgent. Clicking any L/M/H
    button again un-pauses it, picks that priority, and resets the due date back to blank so you set
    a fresh one rather than reviving a stale old date. */
+function PrioritySelector({ value, onChange }) {
+  const pr = value || "Medium";
+  return (
+    <div className="flex items-center gap-1">
+      {PRIORITY_LEVELS.map((p) => (
+        <button
+          key={p}
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onChange(p); }}
+          className="rounded-full px-2.5 py-1"
+          style={{
+            fontSize: 11,
+            fontWeight: pr === p ? 600 : 400,
+            cursor: "pointer",
+            fontFamily: "inherit",
+            background: pr === p ? `${PRIORITY_TINT[p]}22` : FILL,
+            border: `1px solid ${pr === p ? PRIORITY_TINT[p] : LINE}`,
+            color: pr === p ? PRIORITY_TINT[p] : MUT,
+          }}
+        >
+          {p}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function PriorityControls({ item, onChange }) {
   const pr = item.priority || "Medium";
   const paused = !!item.paused;
@@ -4401,6 +4428,7 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [openDesc, setOpenDesc] = useState({});
+  const [priority, setPriority] = useState("Medium");
   const [showArchive, setShowArchive] = useState(false); const [expandedId, setExpandedId] = useState(null);
   const [dragOverCol, setDragOverCol] = useState(null);
   const dropIntoColumn = (id, status) => setData((d) => ({ ...d, [pipelineKey]: { ...d[pipelineKey], items: d[pipelineKey].items.map((item) => item.id !== id ? item : { ...item, status }) } }));
@@ -4408,7 +4436,7 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
   const openIfNot = (id) => setOpenDesc((o) => (o[id] ? o : { ...o, [id]: true }));
   const patch = (p) => setData((d) => ({ ...d, [pipelineKey]: { ...d[pipelineKey], ...p } }));
   const ql = (q || "").toLowerCase();
-  const add = () => { const t = title.trim(); if (!t) return; patch({ items: [{ id: uid(), title: t, desc: description.trim(), status: "Ideas", created: todayISO(), due: null, scheduledFor: null }, ...content.items] }); setTitle(""); setDescription(""); };
+  const add = () => { const t = title.trim(); if (!t) return; patch({ items: [{ id: uid(), title: t, desc: description.trim(), status: "Ideas", priority, created: todayISO(), due: null, scheduledFor: null }, ...content.items] }); setTitle(""); setDescription(""); setPriority("Medium"); };
   const move = (id, dir) => setData((d) => {
     const items = d[pipelineKey].items.map((i) => {
       if (i.id !== id) return i;
@@ -5113,15 +5141,15 @@ function ApartmentModule({ data, setData, unlocked, go, q }) {
    make), sharing the exact same due-date/priority engine as every other pillar (PriorityControls,
    computeUrgency) so it feeds the main Priorities dashboard with zero special-casing. */
 function LifeAdminModule({ data, setData, q, boardKey = "lifeAdmin", boardTitle = "General tasks", subtitle = "Your own stuff: paperwork, errands, calls to make. Same due date and priority logic as everywhere else." }) {
-  const [title, setTitle] = useState(""); const [description, setDescription] = useState(""); const [due, setDue] = useState("");
+  const [title, setTitle] = useState(""); const [description, setDescription] = useState(""); const [due, setDue] = useState(""); const [priority, setPriority] = useState("Medium");
   const [openDesc, setOpenDesc] = useState({});
   const items = (data[boardKey] && data[boardKey].items) || [];
   const ql = (q || "").toLowerCase();
   const add = () => {
     const t = title.trim(); if (!t) return;
     const taskDue = due || defaultTaskDue();
-    setData((d) => ({ ...d, [boardKey]: { ...(d[boardKey] || { items: [] }), items: [{ id: uid(), title: t, description: description.trim(), status: "To do", created: todayISO(), due: taskDue, priority: priorityForNewTask(taskDue), lastProgress: null }, ...((d[boardKey] || {}).items || [])] } }));
-    setTitle(""); setDescription(""); setDue("");
+    setData((d) => ({ ...d, [boardKey]: { ...(d[boardKey] || { items: [] }), items: [{ id: uid(), title: t, description: description.trim(), status: "To do", created: todayISO(), due: taskDue, priority: priority || priorityForNewTask(taskDue), lastProgress: null }, ...((d[boardKey] || {}).items || [])] } }));
+    setTitle(""); setDescription(""); setDue(""); setPriority("Medium");
   };
   const toggleDone = (id) => setData((d) => ({ ...d, [boardKey]: { ...d[boardKey], items: d[boardKey].items.map((t) => { if (t.id !== id) return t; const done = t.status === "Done"; return { ...t, status: done ? "To do" : "Done", doneAt: done ? null : Date.now() }; }) } }));
   const update = (id, p) => setData((d) => ({ ...d, [boardKey]: { ...d[boardKey], items: d[boardKey].items.map((t) => (t.id === id ? { ...t, ...p } : t)) } }));
@@ -5207,7 +5235,7 @@ const DEAL_TYPE_TINT = { Active: C.mint, Prospect: C.sky };
    capture row after the existing tasks instead of before them, so scanning the card reads task
    list first, capture-a-new-one last. */
 function MiniTaskList({ tasks, onChange, withLink, composerAtBottom }) {
-  const [title, setTitle] = useState(""); const [description, setDescription] = useState(""); const [due, setDue] = useState(""); const [link, setLink] = useState("");
+  const [title, setTitle] = useState(""); const [description, setDescription] = useState(""); const [due, setDue] = useState(""); const [link, setLink] = useState(""); const [priority, setPriority] = useState("Medium");
   const list = tasks || [];
   const visibleList = list.filter((t) => !t.done);
   const add = () => {
@@ -5215,8 +5243,8 @@ function MiniTaskList({ tasks, onChange, withLink, composerAtBottom }) {
     const taskDue = due || defaultTaskDue();
     const initLink = link.trim();
     const links = initLink ? [{ id: uid(), url: initLink.startsWith("http") ? initLink : `https://${initLink}`, label: initLink.replace(/^https?:\/\//, "").slice(0, 30) }] : [];
-    onChange([{ id: uid(), title: t, description: description.trim(), link: initLink, links, due: taskDue, priority: priorityForNewTask(taskDue), lastProgress: null, done: false, created: todayISO() }, ...list]);
-    setTitle(""); setDescription(""); setDue(""); setLink("");
+    onChange([{ id: uid(), title: t, description: description.trim(), link: initLink, links, due: taskDue, priority: priority || priorityForNewTask(taskDue), lastProgress: null, done: false, created: todayISO() }, ...list]);
+    setTitle(""); setDescription(""); setDue(""); setLink(""); setPriority("Medium");
   };
   const update = (id, p) => onChange(list.map((t) => (t.id === id ? { ...t, ...p } : t)));
   const remove = (id) => onChange(list.filter((t) => t.id !== id));
@@ -5503,6 +5531,7 @@ function AITaskProjects({ data, setData, mama, setMama, q }) {
   const [draftLinks, setDraftLinks] = useState([]);
   const [linkLabel, setLinkLabel] = useState("");
   const [linkUrl, setLinkUrl] = useState("");
+  const [priority, setPriority] = useState("Medium");
 
   const projects = ((data.aiTasks || {}).projects || []);
   const ql = (q || "").toLowerCase();
@@ -6001,7 +6030,7 @@ function Creators({ data, setData, q, navRequest }) {
 
 function CreatorDetailPage({ c, onUpdate, onRemove }) {
   const aura = AURAS[c.aura % AURAS.length];
-  const [linkLabel, setLinkLabel] = useState(""); const [linkUrl, setLinkUrl] = useState("");
+  const [linkLabel, setLinkLabel] = useState(""); const [linkUrl, setLinkUrl] = useState(""); const [priority, setPriority] = useState("Medium");
   const addLink = () => { if (!linkUrl.trim()) return; const url = linkUrl.trim().startsWith("http") ? linkUrl.trim() : `https://${linkUrl.trim()}`; onUpdate({ links: [...c.links, { id: uid(), label: linkLabel.trim() || url.replace(/^https?:\/\//, "").slice(0, 30), url }] }); setLinkLabel(""); setLinkUrl(""); };
   return (
     <div className="flex flex-col gap-4">
@@ -6091,8 +6120,8 @@ function AdminTasks({ data, setData, ally, setAlly }) {
       ? [...draftLinks, { id: uid(), url: trailing.startsWith("http") ? trailing : `https://${trailing}`, label: linkLabel.trim() || trailing.replace(/^https?:\/\//, "").slice(0, 30) }]
       : draftLinks;
     const taskDue = due || defaultTaskDue();
-    setData((d) => ({ ...d, tasks: [{ id: uid(), title: t, description: description.trim(), links, status: "To do", created: new Date().toISOString().slice(0, 10), due: taskDue, priority: priorityForNewTask(taskDue), lastProgress: null }, ...d.tasks] }));
-    setTitle(""); setDescription(""); setDue(""); setDraftLinks([]); setLinkLabel(""); setLinkUrl("");
+    setData((d) => ({ ...d, tasks: [{ id: uid(), title: t, description: description.trim(), links, status: "To do", created: new Date().toISOString().slice(0, 10), due: taskDue, priority: priority || priorityForNewTask(taskDue), lastProgress: null }, ...d.tasks] }));
+    setTitle(""); setDescription(""); setDue(""); setDraftLinks([]); setLinkLabel(""); setLinkUrl(""); setPriority("Medium");
   };
   const moveToColumn = (id, col) => setData((d) => ({ ...d, tasks: d.tasks.map((t) => {
     if (t.id !== id) return t;
