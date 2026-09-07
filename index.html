@@ -871,7 +871,11 @@ const PRIORITY_TINT = { Low: C.sky, Medium: C.amber, High: C.rose };
 /* hex, not MUT's rgba() — these tints get an alpha suffix appended (`${tint}14`) for the soft tile
    backgrounds, which only works on 6-digit hex. A neutral grey keeps Non-priority visually quiet. */
 const ADMIN_COL_TINT = { ...PRIORITY_TINT, None: "#8A8A93" };
-const adminTaskBucket = (t) => (t.paused || !PRIORITY_LEVELS.includes(t.priority) ? "None" : t.priority);
+const adminTaskBucket = (t) => {
+  const _today = todayISO();
+  if (t.chaseOn && t.chaseOn <= _today) return "High";
+  return (t.paused || !PRIORITY_LEVELS.includes(t.priority) ? "None" : t.priority);
+};
 
 /* single source of truth for "how urgent is this due date" — one set of day bands, reused
    for the Urgent/Medium/Low bucket (the 3 columns on each pillar's card, and sort order within
@@ -1035,7 +1039,7 @@ pushContentTasks(ally.musicContent.items, "music", computeContentUrgency(ally.mu
   const _today = todayISO();
   return out
     .filter((t) => !(t.chaseOn && t.chaseOn > _today))
-    .map((t) => (t.chaseOn ? { ...t, title: "⏰ " + t.title, priority: "High", due: t.due || t.chaseOn } : t))
+    .map((t) => (t.chaseOn && t.chaseOn <= _today ? { ...t, title: "⏰ " + t.title.replace(/^⏰\s*/, ""), priority: "High", due: t.due || t.chaseOn } : t))
     .map((t) => (t._preScored ? t : { ...t, ...computeUrgency(t) }));
 }
 
@@ -4116,32 +4120,95 @@ function PrioritySelector({ value, onChange }) {
 }
 
 function PriorityControls({ item, onChange }) {
+  const [showPicker, setShowPicker] = useState(false);
   const pr = item.priority || "Medium";
   const paused = !!item.paused;
+  const isWaiting = !!item.chaseOn;
+  const _today = todayISO();
+  const isArrived = isWaiting && item.chaseOn <= _today;
+
   const setPriority = (p) => {
     if (paused) onChange({ priority: p, paused: false });
     else if (pr === p) onChange({ paused: true });
     else onChange({ priority: p, paused: false });
   };
+
   return (
-    <div className="flex items-center gap-1.5 flex-wrap mt-1.5" style={{ fontSize: 11, opacity: paused ? 0.55 : 1 }}>
-      <div className="flex gap-1">
-        {PRIORITY_LEVELS.map((p) => (
-          <button key={p} onClick={(e) => { e.stopPropagation(); setPriority(p); }} className="rounded-full px-2 py-0.5"
-            style={{
-              fontSize: 10, cursor: "pointer", fontFamily: "inherit",
-              background: !paused && pr === p ? `${PRIORITY_TINT[p]}22` : FILL,
-              border: `1px solid ${!paused && pr === p ? PRIORITY_TINT[p] : LINE}`,
-              color: !paused && pr === p ? PRIORITY_TINT[p] : MUT,
-            }}>
-            {p}
-          </button>
-        ))}
+    <div className="flex flex-col gap-1 mt-1.5" onClick={(e) => e.stopPropagation()}>
+      <div className="flex items-center gap-1.5 flex-wrap" style={{ fontSize: 11, opacity: paused ? 0.55 : 1 }}>
+        <div className="flex gap-1">
+          {PRIORITY_LEVELS.map((p) => (
+            <button key={p} onClick={(e) => { e.stopPropagation(); setPriority(p); }} className="rounded-full px-2 py-0.5"
+              style={{
+                fontSize: 10, cursor: "pointer", fontFamily: "inherit",
+                background: !paused && pr === p ? `${PRIORITY_TINT[p]}22` : FILL,
+                border: `1px solid ${!paused && pr === p ? PRIORITY_TINT[p] : LINE}`,
+                color: !paused && pr === p ? PRIORITY_TINT[p] : MUT,
+              }}>
+              {p}
+            </button>
+          ))}
+        </div>
+        <button onClick={(e) => { e.stopPropagation(); setShowPicker((v) => !v); }} className="flex items-center gap-1 rounded-full px-2 py-0.5"
+          style={{
+            fontSize: 10, cursor: "pointer", fontFamily: "inherit",
+            background: isWaiting ? (isArrived ? `${C.rose}22` : `${C.sky}22`) : FILL,
+            border: `1px solid ${isWaiting ? (isArrived ? C.rose : C.sky) : LINE}`,
+            color: isWaiting ? (isArrived ? C.rose : C.sky) : MUT,
+            whiteSpace: "nowrap"
+          }}
+          title="Waiting on a reply">
+          {isWaiting ? (isArrived ? `⏰ ${item.chaseOn}` : `⏳ ${item.chaseOn}`) : "waiting on reply"}
+        </button>
+        {paused && <span style={{ marginLeft: "auto", color: FAINT, fontWeight: 600, whiteSpace: "nowrap" }}>paused</span>}
       </div>
-      <button onClick={(e) => { e.stopPropagation(); onChange(item.chaseOn ? { chaseOn: null } : { chaseOn: todayISO() }); }} className="flex items-center gap-1 rounded-full px-2 py-0.5"
-        style={{ fontSize: 10, cursor: "pointer", fontFamily: "inherit", background: item.chaseOn ? `${C.sky}22` : FILL, border: `1px solid ${item.chaseOn ? C.sky : LINE}`, color: item.chaseOn ? C.sky : MUT, whiteSpace: "nowrap" }}
-        title="Waiting on a reply">waiting on reply</button>
-      {paused && <span style={{ marginLeft: "auto", color: FAINT, fontWeight: 600, whiteSpace: "nowrap" }}>paused</span>}
+
+      {showPicker && (
+        <div className="flex items-center gap-1.5 p-1.5 rounded-lg" style={{ background: C.soft, border: `1px solid ${LINE}`, fontSize: 11, flexWrap: "wrap" }}>
+          <span style={{ color: MUT, fontSize: 10, fontWeight: 600 }}>Chase date:</span>
+          <input
+            type="date"
+            value={item.chaseOn || _today}
+            onChange={(e) => {
+              const val = e.target.value;
+              onChange({ chaseOn: val || null });
+              if (val) setShowPicker(false);
+            }}
+            className="rounded px-1.5 py-0.5"
+            style={{ ...inputStyle, fontSize: 11, padding: "2px 4px" }}
+          />
+          <button
+            onClick={() => { onChange({ chaseOn: shiftISO(_today, 1) }); setShowPicker(false); }}
+            className="rounded px-1.5 py-0.5"
+            style={{ ...pillGhost, padding: "2px 6px", fontSize: 10 }}
+          >
+            Tomorrow
+          </button>
+          <button
+            onClick={() => { onChange({ chaseOn: shiftISO(_today, 3) }); setShowPicker(false); }}
+            className="rounded px-1.5 py-0.5"
+            style={{ ...pillGhost, padding: "2px 6px", fontSize: 10 }}
+          >
+            In 3 days
+          </button>
+          {isWaiting && (
+            <button
+              onClick={() => { onChange({ chaseOn: null }); setShowPicker(false); }}
+              className="rounded px-1.5 py-0.5"
+              style={{ ...pillGhost, padding: "2px 6px", fontSize: 10, color: C.rose, borderColor: `${C.rose}44` }}
+            >
+              Clear
+            </button>
+          )}
+          <button
+            onClick={() => setShowPicker(false)}
+            style={{ ...iconBtn, padding: 2 }}
+            aria-label="Close date picker"
+          >
+            <X size={12} />
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -5158,9 +5225,17 @@ function LifeAdminModule({ data, setData, q, boardKey = "lifeAdmin", boardTitle 
   const clearDone = () => setData((d) => ({ ...d, [boardKey]: { ...d[boardKey], items: d[boardKey].items.filter((t) => t.status !== "Done") } }));
   const matched = ql ? items.filter((t) => t.title.toLowerCase().includes(ql) || (t.description || "").toLowerCase().includes(ql)) : items;
   const visible = matched.filter((t) => t.status !== "Done");
-const __groupDefs = [{ key: "High", label: "High priority" }, { key: "Medium", label: "Medium priority" }, { key: "Low", label: "Low priority" }];
-const __waitingItems = visible.filter((t) => !!t.chaseOn);
-const __priorityGroups = __groupDefs.map((g) => ({ ...g, items: visible.filter((t) => !t.chaseOn && (t.priority || "Medium") === g.key) }));
+  const _today = todayISO();
+  const __groupDefs = [{ key: "High", label: "High priority" }, { key: "Medium", label: "Medium priority" }, { key: "Low", label: "Low priority" }];
+  const __waitingItems = visible.filter((t) => !!t.chaseOn && t.chaseOn > _today);
+  const __priorityGroups = __groupDefs.map((g) => ({
+    ...g,
+    items: visible.filter((t) => {
+      if (t.chaseOn && t.chaseOn > _today) return false;
+      const effPriority = (t.chaseOn && t.chaseOn <= _today) ? "High" : (t.priority || "Medium");
+      return effPriority === g.key;
+    })
+  }));
 const __groupHead = (label, count) => (<div style={{ fontSize: 12, fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", color: MUT, marginBottom: 10 }}>{label} <span style={{ opacity: 0.6 }}>{count}</span></div>);
 const renderCard = (t) => {
 const descOpen = openDesc[t.id] !== undefined ? openDesc[t.id] : true;
@@ -5238,7 +5313,10 @@ const DEAL_TYPE_TINT = { Active: C.mint, Prospect: C.sky };
 function MiniTaskList({ tasks, onChange, withLink, composerAtBottom }) {
   const [title, setTitle] = useState(""); const [description, setDescription] = useState(""); const [due, setDue] = useState(""); const [link, setLink] = useState(""); const [priority, setPriority] = useState("Medium");
   const list = tasks || [];
+  const _today = todayISO();
   const visibleList = list.filter((t) => !t.done);
+  const activeList = visibleList.filter((t) => !(t.chaseOn && t.chaseOn > _today));
+  const waitingList = visibleList.filter((t) => t.chaseOn && t.chaseOn > _today);
   const add = () => {
     const t = title.trim(); if (!t) return;
     const taskDue = due || defaultTaskDue();
@@ -5267,7 +5345,17 @@ function MiniTaskList({ tasks, onChange, withLink, composerAtBottom }) {
       {!composerAtBottom && composer}
       {!composerAtBottom && <div style={{ borderTop: `1px solid ${LINE}`, margin: "2px 0" }} />}
       {visibleList.length === 0 && <div style={{ fontSize: 11.5, color: FAINT }}>No tasks yet.</div>}
-      {visibleList.map((t) => <MiniTaskRow key={t.id} t={t} onUpdate={(p) => update(t.id, p)} onRemove={() => remove(t.id)} withLink={withLink} />)}
+      {activeList.map((t) => <MiniTaskRow key={t.id} t={t} onUpdate={(p) => update(t.id, p)} onRemove={() => remove(t.id)} withLink={withLink} />)}
+      {waitingList.length > 0 && (
+        <div className="mt-2 pt-2" style={{ borderTop: `1px dashed ${LINE}` }}>
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", color: MUT, marginBottom: 4 }}>
+            Waiting on reply ({waitingList.length})
+          </div>
+          {waitingList.map((t) => (
+            <MiniTaskRow key={t.id} t={t} onUpdate={(p) => update(t.id, p)} onRemove={() => remove(t.id)} withLink={withLink} />
+          ))}
+        </div>
+      )}
       {composerAtBottom && <div style={{ borderTop: `1px solid ${LINE}`, margin: "2px 0" }} />}
       {composerAtBottom && composer}
     </div>
@@ -5661,9 +5749,10 @@ function AITaskProjects({ data, setData, mama, setMama, q }) {
     }
   };
 
+  const _today = todayISO();
   const allOpenTasks = projects
     .flatMap((p) => (p.tasks || []).map((t) => ({ ...t, projectId: p.id })))
-    .filter((t) => !t.done && t.status !== "Done");
+    .filter((t) => !t.done && t.status !== "Done" && !(t.chaseOn && t.chaseOn > _today));
 
   const counts = ADMIN_TASK_COLS.reduce(
     (acc, c) => ({ ...acc, [c]: allOpenTasks.filter((t) => adminTaskBucket(t) === c).length }),
@@ -5806,7 +5895,9 @@ function AITaskProjects({ data, setData, mama, setMama, q }) {
       <div className="flex flex-col gap-3">
         {shown.map((project) => {
           const open = !closed[project.id];
-          const tasks = (project.tasks || []).filter((t) => !t.done && t.status !== "Done");
+          const allProjTasks = (project.tasks || []).filter((t) => !t.done && t.status !== "Done");
+          const activeProjTasks = allProjTasks.filter((t) => !(t.chaseOn && t.chaseOn > _today));
+          const waitingProjTasks = allProjTasks.filter((t) => t.chaseOn && t.chaseOn > _today);
           const moveOpts = [
             { id: "admin", label: "Admin Tasks" },
             ...projects.filter((pr) => pr.id !== project.id).map((pr) => ({ id: `ai::${pr.id}`, label: `AI: ${pr.name}` })),
@@ -5820,14 +5911,14 @@ function AITaskProjects({ data, setData, mama, setMama, q }) {
                 <div className="flex-1 min-w-0">
                   <InlineEdit value={project.name} onChange={(v) => updateProject(project.id, { name: v })} strong />
                 </div>
-                <span style={{ fontSize: 11, color: MUT }}>{tasks.length} open</span>
+                <span style={{ fontSize: 11, color: MUT }}>{allProjTasks.length} open</span>
                 <button onClick={() => removeProject(project.id)} style={{ ...iconBtn, padding: 2 }} aria-label="Delete project">
                   <X size={13} />
                 </button>
               </div>
               {open && (
                 <div className="flex flex-col gap-2 mt-3" style={{ marginLeft: 20 }}>
-                  {tasks.map((t) => (
+                  {activeProjTasks.map((t) => (
                     <TaskCard
                       key={t.id}
                       t={t}
@@ -5837,9 +5928,28 @@ function AITaskProjects({ data, setData, mama, setMama, q }) {
                       onMove={(taskObj, targetKey) => moveTask(taskObj, project.id, targetKey)}
                     />
                   ))}
-                  {tasks.length === 0 && (
+                  {activeProjTasks.length === 0 && waitingProjTasks.length === 0 && (
                     <div className="rounded-xl p-3 text-center" style={{ border: `1px dashed ${LINE}`, fontSize: 12, color: FAINT, borderRadius: 12 }}>
                       No open tasks in this project
+                    </div>
+                  )}
+                  {waitingProjTasks.length > 0 && (
+                    <div className="mt-3 pt-3" style={{ borderTop: `1px dashed ${LINE}` }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", color: MUT, marginBottom: 8 }}>
+                        Waiting on reply <span style={{ opacity: 0.6 }}>{waitingProjTasks.length}</span>
+                      </div>
+                      <div className="flex flex-col gap-2">
+                        {waitingProjTasks.map((t) => (
+                          <TaskCard
+                            key={t.id}
+                            t={t}
+                            onUpdate={(patch) => updateTask(project.id, t.id, patch)}
+                            onRemove={() => removeTask(project.id, t.id)}
+                            moveOptions={moveOpts}
+                            onMove={(taskObj, targetKey) => moveTask(taskObj, project.id, targetKey)}
+                          />
+                        ))}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -6135,14 +6245,17 @@ function AdminTasks({ data, setData, ally, setAlly }) {
   const update = (id, p) => setData((d) => ({ ...d, tasks: d.tasks.map((t) => (t.id === id ? { ...t, ...p } : t)) }));
   const remove = (id) => setData((d) => ({ ...d, tasks: d.tasks.filter((t) => t.id !== id) }));
   const openTasks = data.tasks.filter((t) => t.status !== "Done");
-  const counts = ADMIN_TASK_COLS.reduce((acc, c) => ({ ...acc, [c]: openTasks.filter((t) => adminTaskBucket(t) === c).length }), {});
+  const _today = todayISO();
+  const waitingAdminTasks = openTasks.filter((t) => t.chaseOn && t.chaseOn > _today);
+  const activeAdminTasks = openTasks.filter((t) => !(t.chaseOn && t.chaseOn > _today));
+  const counts = ADMIN_TASK_COLS.reduce((acc, c) => ({ ...acc, [c]: activeAdminTasks.filter((t) => adminTaskBucket(t) === c).length }), {});
   return (
     <section>
       <SectionHead title="Admin task capture" sub="One place for the strays. Cards are grouped by priority — drag one to a different column to re-rank it. Tasks tied to a specific creator live on their own subtab instead." />
       <div className="rounded-2xl p-4 mb-5" style={{ ...card, borderRadius: 18 }}>
         <div className="flex items-baseline justify-between mb-3">
           <div style={{ fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase", color: MUT }}>Open tasks by priority</div>
-          <div style={{ fontSize: 12, color: MUT }}>{openTasks.length} open</div>
+          <div style={{ fontSize: 12, color: MUT }}>{activeAdminTasks.length} open</div>
         </div>
         <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))" }}>
           {ADMIN_TASK_COLS.map((c) => {
@@ -6186,7 +6299,7 @@ function AdminTasks({ data, setData, ally, setAlly }) {
       <div style={{ borderTop: `1px solid ${LINE}`, margin: "-2px 0 20px" }} />
       <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
         {ADMIN_TASK_COLS.map((col) => {
-          const items = openTasks.filter((t) => adminTaskBucket(t) === col);
+          const items = activeAdminTasks.filter((t) => adminTaskBucket(t) === col);
           const tint = ADMIN_COL_TINT[col];
           return (
             <div key={col} className="rounded-2xl p-3" onDragOver={(e) => { if (!Array.from(e.dataTransfer.types).includes(ADMIN_TASK_MIME)) return; e.preventDefault(); e.dataTransfer.dropEffect = "move"; }} onDrop={(e) => { e.preventDefault(); const id = e.dataTransfer.getData(ADMIN_TASK_MIME); if (id) moveToColumn(id, col); }} style={{ ...cardSoft, borderRadius: 16 }}>
@@ -6199,6 +6312,18 @@ function AdminTasks({ data, setData, ally, setAlly }) {
           );
         })}
       </div>
+      {waitingAdminTasks.length > 0 && (
+        <div className="mt-6">
+          <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", color: MUT, marginBottom: 10 }}>
+            Waiting on reply <span style={{ opacity: 0.6 }}>{waitingAdminTasks.length}</span>
+          </div>
+          <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
+            {waitingAdminTasks.map((t) => (
+              <TaskCard key={t.id} t={t} onUpdate={(p) => update(t.id, p)} onRemove={() => remove(t.id)} moveOptions={moveOptions} onMove={moveTask} />
+            ))}
+          </div>
+        </div>
+      )}
     </section>
   );
 }
