@@ -772,20 +772,20 @@ function migrateMamaTasks(tasks) {
 }
 
 const AI_PROJECT_NAMES = [
-  "DRIVE DUPLICATION (alexa)",
   "AMPLIFIED BRIEFING (chan brief automation tool)",
   "MAMA BRIEFING (zissy)",
+  "DRIVE MIRROR (alexa)",
+  "ASK MAMA",
   "AMPLIFIED REPORTING (cassidies reporting tool)",
-  "MAMA VOICES",
 ];
 const MAMA_AI_MIGRATION_VERSION = 1;
 const aiProjectForMamaTask = (task) => {
   const text = `${task.title || ""} ${task.description || ""}`.toLowerCase();
-  if (/drive.*duplicat|duplicat.*drive|alexa/.test(text)) return AI_PROJECT_NAMES[0];
-  if (/amplified.*brief|chan|brief.*automation/.test(text)) return AI_PROJECT_NAMES[1];
-  if (/mama.*brief|ziss/.test(text)) return AI_PROJECT_NAMES[2];
-  if (/amplified.*report|cassid/.test(text)) return AI_PROJECT_NAMES[3];
-  if (/mama.*voice|voice/.test(text)) return AI_PROJECT_NAMES[4];
+  if (/amplified.*brief|chan|brief.*automation/.test(text)) return AI_PROJECT_NAMES[0];
+  if (/mama.*brief|ziss/.test(text)) return AI_PROJECT_NAMES[1];
+  if (/drive.*duplicat|duplicat.*drive|drive.*mirror|alexa/.test(text)) return AI_PROJECT_NAMES[2];
+  if (/ask.*mama/.test(text)) return AI_PROJECT_NAMES[3];
+  if (/amplified.*report|cassid/.test(text)) return AI_PROJECT_NAMES[4];
   return "Unsorted Mama Admin";
 };
 function moveMamaAdminTasksToAi(ally, mama) {
