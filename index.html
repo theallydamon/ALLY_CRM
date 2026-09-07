@@ -4087,7 +4087,34 @@ const defaultTaskDue = () => shiftISO(todayISO(), 1);
    board but haven't decided are a live priority yet — existing, not urgent. Clicking any L/M/H
    button again un-pauses it, picks that priority, and resets the due date back to blank so you set
    a fresh one rather than reviving a stale old date. */
-function PriorityControls({ item, onChange }) {
+function PrioritySelector({ value, onChange }) {
+  const pr = value || "Medium";
+  return (
+    <div className="flex items-center gap-1">
+      {PRIORITY_LEVELS.map((p) => (
+        <button
+          key={p}
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onChange(p); }}
+          className="rounded-full px-2.5 py-1"
+          style={{
+            fontSize: 11,
+            fontWeight: pr === p ? 600 : 400,
+            cursor: "pointer",
+            fontFamily: "inherit",
+            background: pr === p ? `${PRIORITY_TINT[p]}22` : FILL,
+            border: `1px solid ${pr === p ? PRIORITY_TINT[p] : LINE}`,
+            color: pr === p ? PRIORITY_TINT[p] : MUT,
+          }}
+        >
+          {p}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function PriorityControls({ item, onChange, showWaitingOnReply }) {
   const pr = item.priority || "Medium";
   const paused = !!item.paused;
   const setPriority = (p) => {
@@ -4095,24 +4122,35 @@ function PriorityControls({ item, onChange }) {
     else if (pr === p) onChange({ paused: true });
     else onChange({ priority: p, paused: false });
   };
+  const isWaiting = !!item.chaseOn;
   return (
     <div className="flex items-center gap-1.5 flex-wrap mt-1.5" style={{ fontSize: 11, opacity: paused ? 0.55 : 1 }}>
-      <div className="flex gap-1">
-        {PRIORITY_LEVELS.map((p) => (
-          <button key={p} onClick={(e) => { e.stopPropagation(); setPriority(p); }} className="rounded-full px-2 py-0.5"
-            style={{
-              fontSize: 10, cursor: "pointer", fontFamily: "inherit",
-              background: !paused && pr === p ? `${PRIORITY_TINT[p]}22` : FILL,
-              border: `1px solid ${!paused && pr === p ? PRIORITY_TINT[p] : LINE}`,
-              color: !paused && pr === p ? PRIORITY_TINT[p] : MUT,
-            }}>
-            {p}
-          </button>
-        ))}
-      </div>
-      <button onClick={(e) => { e.stopPropagation(); onChange(item.chaseOn ? { chaseOn: null } : { chaseOn: todayISO() }); }} className="flex items-center gap-1 rounded-full px-2 py-0.5"
-        style={{ fontSize: 10, cursor: "pointer", fontFamily: "inherit", background: item.chaseOn ? `${C.sky}22` : FILL, border: `1px solid ${item.chaseOn ? C.sky : LINE}`, color: item.chaseOn ? C.sky : MUT, whiteSpace: "nowrap" }}
-        title="Waiting on a reply">waiting on reply</button>
+      {!isWaiting && (
+        <div className="flex gap-1">
+          {PRIORITY_LEVELS.map((p) => (
+            <button key={p} onClick={(e) => { e.stopPropagation(); setPriority(p); }} className="rounded-full px-2 py-0.5"
+              style={{
+                fontSize: 10, cursor: "pointer", fontFamily: "inherit",
+                background: !paused && pr === p ? `${PRIORITY_TINT[p]}22` : FILL,
+                border: `1px solid ${!paused && pr === p ? PRIORITY_TINT[p] : LINE}`,
+                color: !paused && pr === p ? PRIORITY_TINT[p] : MUT,
+              }}>
+              {p}
+            </button>
+          ))}
+        </div>
+      )}
+      {showWaitingOnReply && (
+        <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+          <button onClick={(e) => { e.stopPropagation(); onChange(item.chaseOn ? { chaseOn: null } : { chaseOn: todayISO() }); }} className="flex items-center gap-1 rounded-full px-2 py-0.5"
+            style={{ fontSize: 10, cursor: "pointer", fontFamily: "inherit", background: item.chaseOn ? `${C.sky}22` : FILL, border: `1px solid ${item.chaseOn ? C.sky : LINE}`, color: item.chaseOn ? C.sky : MUT, whiteSpace: "nowrap" }}
+            title="Waiting on a reply">waiting on reply</button>
+          {isWaiting && (
+            <input type="date" value={item.chaseOn || ""} onClick={(e) => e.stopPropagation()} onChange={(e) => onChange({ chaseOn: e.target.value || todayISO() })}
+              className="rounded-md px-1.5 py-0.5" style={{ ...inputStyle, fontSize: 10.5, cursor: "pointer" }} />
+          )}
+        </div>
+      )}
       {paused && <span style={{ marginLeft: "auto", color: FAINT, fontWeight: 600, whiteSpace: "nowrap" }}>paused</span>}
     </div>
   );
@@ -4401,6 +4439,7 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [openDesc, setOpenDesc] = useState({});
+  const [priority, setPriority] = useState("Medium");
   const [showArchive, setShowArchive] = useState(false); const [expandedId, setExpandedId] = useState(null);
   const [dragOverCol, setDragOverCol] = useState(null);
   const dropIntoColumn = (id, status) => setData((d) => ({ ...d, [pipelineKey]: { ...d[pipelineKey], items: d[pipelineKey].items.map((item) => item.id !== id ? item : { ...item, status }) } }));
@@ -4408,7 +4447,7 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
   const openIfNot = (id) => setOpenDesc((o) => (o[id] ? o : { ...o, [id]: true }));
   const patch = (p) => setData((d) => ({ ...d, [pipelineKey]: { ...d[pipelineKey], ...p } }));
   const ql = (q || "").toLowerCase();
-  const add = () => { const t = title.trim(); if (!t) return; patch({ items: [{ id: uid(), title: t, desc: description.trim(), status: "Ideas", created: todayISO(), due: null, scheduledFor: null }, ...content.items] }); setTitle(""); setDescription(""); };
+  const add = () => { const t = title.trim(); if (!t) return; patch({ items: [{ id: uid(), title: t, desc: description.trim(), status: "Ideas", priority, created: todayISO(), due: null, scheduledFor: null }, ...content.items] }); setTitle(""); setDescription(""); setPriority("Medium"); };
   const move = (id, dir) => setData((d) => {
     const items = d[pipelineKey].items.map((i) => {
       if (i.id !== id) return i;
@@ -5113,25 +5152,32 @@ function ApartmentModule({ data, setData, unlocked, go, q }) {
    make), sharing the exact same due-date/priority engine as every other pillar (PriorityControls,
    computeUrgency) so it feeds the main Priorities dashboard with zero special-casing. */
 function LifeAdminModule({ data, setData, q, boardKey = "lifeAdmin", boardTitle = "General tasks", subtitle = "Your own stuff: paperwork, errands, calls to make. Same due date and priority logic as everywhere else." }) {
-  const [title, setTitle] = useState(""); const [description, setDescription] = useState(""); const [due, setDue] = useState("");
+  const [title, setTitle] = useState(""); const [description, setDescription] = useState(""); const [due, setDue] = useState(""); const [priority, setPriority] = useState("Medium");
   const [openDesc, setOpenDesc] = useState({});
   const items = (data[boardKey] && data[boardKey].items) || [];
   const ql = (q || "").toLowerCase();
   const add = () => {
     const t = title.trim(); if (!t) return;
     const taskDue = due || defaultTaskDue();
-    setData((d) => ({ ...d, [boardKey]: { ...(d[boardKey] || { items: [] }), items: [{ id: uid(), title: t, description: description.trim(), status: "To do", created: todayISO(), due: taskDue, priority: priorityForNewTask(taskDue), lastProgress: null }, ...((d[boardKey] || {}).items || [])] } }));
-    setTitle(""); setDescription(""); setDue("");
+    setData((d) => ({ ...d, [boardKey]: { ...(d[boardKey] || { items: [] }), items: [{ id: uid(), title: t, description: description.trim(), status: "To do", created: todayISO(), due: taskDue, priority: priority || priorityForNewTask(taskDue), lastProgress: null }, ...((d[boardKey] || {}).items || [])] } }));
+    setTitle(""); setDescription(""); setDue(""); setPriority("Medium");
   };
   const toggleDone = (id) => setData((d) => ({ ...d, [boardKey]: { ...d[boardKey], items: d[boardKey].items.map((t) => { if (t.id !== id) return t; const done = t.status === "Done"; return { ...t, status: done ? "To do" : "Done", doneAt: done ? null : Date.now() }; }) } }));
   const update = (id, p) => setData((d) => ({ ...d, [boardKey]: { ...d[boardKey], items: d[boardKey].items.map((t) => (t.id === id ? { ...t, ...p } : t)) } }));
   const remove = (id) => setData((d) => ({ ...d, [boardKey]: { ...d[boardKey], items: d[boardKey].items.filter((t) => t.id !== id) } }));
   const clearDone = () => setData((d) => ({ ...d, [boardKey]: { ...d[boardKey], items: d[boardKey].items.filter((t) => t.status !== "Done") } }));
+  const today = todayISO();
   const matched = ql ? items.filter((t) => t.title.toLowerCase().includes(ql) || (t.description || "").toLowerCase().includes(ql)) : items;
   const visible = matched.filter((t) => t.status !== "Done");
+  const processedVisible = visible.map((t) => {
+    if (t.chaseOn && t.chaseOn <= today) {
+      return { ...t, priority: "High" };
+    }
+    return t;
+  });
 const __groupDefs = [{ key: "High", label: "High priority" }, { key: "Medium", label: "Medium priority" }, { key: "Low", label: "Low priority" }];
-const __waitingItems = visible.filter((t) => !!t.chaseOn);
-const __priorityGroups = __groupDefs.map((g) => ({ ...g, items: visible.filter((t) => !t.chaseOn && (t.priority || "Medium") === g.key) }));
+const __waitingItems = processedVisible.filter((t) => !!t.chaseOn && t.chaseOn > today);
+const __priorityGroups = __groupDefs.map((g) => ({ ...g, items: processedVisible.filter((t) => !(t.chaseOn && t.chaseOn > today) && (t.priority || "Medium") === g.key) }));
 const __groupHead = (label, count) => (<div style={{ fontSize: 12, fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", color: MUT, marginBottom: 10 }}>{label} <span style={{ opacity: 0.6 }}>{count}</span></div>);
 const renderCard = (t) => {
 const descOpen = openDesc[t.id] !== undefined ? openDesc[t.id] : true;
@@ -5145,7 +5191,7 @@ return (
 <button onClick={(e) => { e.stopPropagation(); remove(t.id); }} style={{ ...iconBtn, padding: 2 }} aria-label="Delete"><X size={12} /></button>
 </div>
 <div style={{ marginTop: 4, marginLeft: 26 }}><AutoTextarea value={t.description || ""} onChange={(v) => update(t.id, { description: v })} placeholder="Add a description…" open={descOpen} onToggle={toggleDesc} /></div>
-{!isDone && <div style={{ marginLeft: 26 }}><PriorityControls item={t} onChange={(p) => update(t.id, p)} /></div>}
+{!isDone && <div style={{ marginLeft: 26 }}><PriorityControls item={t} onChange={(p) => update(t.id, p)} showWaitingOnReply={true} /></div>}
 </div>
 );
 };
@@ -5207,7 +5253,7 @@ const DEAL_TYPE_TINT = { Active: C.mint, Prospect: C.sky };
    capture row after the existing tasks instead of before them, so scanning the card reads task
    list first, capture-a-new-one last. */
 function MiniTaskList({ tasks, onChange, withLink, composerAtBottom }) {
-  const [title, setTitle] = useState(""); const [description, setDescription] = useState(""); const [due, setDue] = useState(""); const [link, setLink] = useState("");
+  const [title, setTitle] = useState(""); const [description, setDescription] = useState(""); const [due, setDue] = useState(""); const [link, setLink] = useState(""); const [priority, setPriority] = useState("Medium");
   const list = tasks || [];
   const visibleList = list.filter((t) => !t.done);
   const add = () => {
@@ -5215,8 +5261,8 @@ function MiniTaskList({ tasks, onChange, withLink, composerAtBottom }) {
     const taskDue = due || defaultTaskDue();
     const initLink = link.trim();
     const links = initLink ? [{ id: uid(), url: initLink.startsWith("http") ? initLink : `https://${initLink}`, label: initLink.replace(/^https?:\/\//, "").slice(0, 30) }] : [];
-    onChange([{ id: uid(), title: t, description: description.trim(), link: initLink, links, due: taskDue, priority: priorityForNewTask(taskDue), lastProgress: null, done: false, created: todayISO() }, ...list]);
-    setTitle(""); setDescription(""); setDue(""); setLink("");
+    onChange([{ id: uid(), title: t, description: description.trim(), link: initLink, links, due: taskDue, priority: priority || priorityForNewTask(taskDue), lastProgress: null, done: false, created: todayISO() }, ...list]);
+    setTitle(""); setDescription(""); setDue(""); setLink(""); setPriority("Medium");
   };
   const update = (id, p) => onChange(list.map((t) => (t.id === id ? { ...t, ...p } : t)));
   const remove = (id) => onChange(list.filter((t) => t.id !== id));
@@ -5503,6 +5549,7 @@ function AITaskProjects({ data, setData, mama, setMama, q }) {
   const [draftLinks, setDraftLinks] = useState([]);
   const [linkLabel, setLinkLabel] = useState("");
   const [linkUrl, setLinkUrl] = useState("");
+  const [priority, setPriority] = useState("Medium");
 
   const projects = ((data.aiTasks || {}).projects || []);
   const ql = (q || "").toLowerCase();
@@ -6001,7 +6048,7 @@ function Creators({ data, setData, q, navRequest }) {
 
 function CreatorDetailPage({ c, onUpdate, onRemove }) {
   const aura = AURAS[c.aura % AURAS.length];
-  const [linkLabel, setLinkLabel] = useState(""); const [linkUrl, setLinkUrl] = useState("");
+  const [linkLabel, setLinkLabel] = useState(""); const [linkUrl, setLinkUrl] = useState(""); const [priority, setPriority] = useState("Medium");
   const addLink = () => { if (!linkUrl.trim()) return; const url = linkUrl.trim().startsWith("http") ? linkUrl.trim() : `https://${linkUrl.trim()}`; onUpdate({ links: [...c.links, { id: uid(), label: linkLabel.trim() || url.replace(/^https?:\/\//, "").slice(0, 30), url }] }); setLinkLabel(""); setLinkUrl(""); };
   return (
     <div className="flex flex-col gap-4">
@@ -6091,8 +6138,8 @@ function AdminTasks({ data, setData, ally, setAlly }) {
       ? [...draftLinks, { id: uid(), url: trailing.startsWith("http") ? trailing : `https://${trailing}`, label: linkLabel.trim() || trailing.replace(/^https?:\/\//, "").slice(0, 30) }]
       : draftLinks;
     const taskDue = due || defaultTaskDue();
-    setData((d) => ({ ...d, tasks: [{ id: uid(), title: t, description: description.trim(), links, status: "To do", created: new Date().toISOString().slice(0, 10), due: taskDue, priority: priorityForNewTask(taskDue), lastProgress: null }, ...d.tasks] }));
-    setTitle(""); setDescription(""); setDue(""); setDraftLinks([]); setLinkLabel(""); setLinkUrl("");
+    setData((d) => ({ ...d, tasks: [{ id: uid(), title: t, description: description.trim(), links, status: "To do", created: new Date().toISOString().slice(0, 10), due: taskDue, priority: priority || priorityForNewTask(taskDue), lastProgress: null }, ...d.tasks] }));
+    setTitle(""); setDescription(""); setDue(""); setDraftLinks([]); setLinkLabel(""); setLinkUrl(""); setPriority("Medium");
   };
   const moveToColumn = (id, col) => setData((d) => ({ ...d, tasks: d.tasks.map((t) => {
     if (t.id !== id) return t;
