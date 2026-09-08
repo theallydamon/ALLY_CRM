@@ -3040,8 +3040,24 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
     return () => { clearTimeout(kickoff); clearInterval(id); };
   }, []);
 
-  const go = (next) => { setNavOpen(false); if (next === tab) return; setHistory((h) => [...h, tab].slice(-20)); setTab(next); setQ(""); };
-  const back = () => { setHistory((h) => { if (!h.length) return h; const prev = h[h.length - 1]; setTab(prev); setQ(""); return h.slice(0, -1); }); };
+  const go = (next) => {
+    setNavOpen(false);
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+    if (next === tab) return;
+    setHistory((h) => [...h, tab].slice(-20));
+    setTab(next);
+    setQ("");
+  };
+  const back = () => {
+    setHistory((h) => {
+      if (!h.length) return h;
+      const prev = h[h.length - 1];
+      if (scrollRef.current) scrollRef.current.scrollTop = 0;
+      setTab(prev);
+      setQ("");
+      return h.slice(0, -1);
+    });
+  };
 
   /* ---------- dashboard task navigation hub: turns the Priorities/Mama hub cards into a
      navigation surface. navigateToTask switches to the task's tab (via go, a no-op if already
