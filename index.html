@@ -1949,10 +1949,17 @@ function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, onDeleteEven
     results.forEach(({ cal: c, items }) => {
       (items || []).forEach((ev) => {
         if (ev.status === "cancelled" || !ev.start) return;
+        const selfAtt = Array.isArray(ev.attendees)
+          ? (ev.attendees.find((att) => att.self) || ev.attendees.find((att) => att.email && att.email.toLowerCase() === String(c.id || "").toLowerCase()))
+          : null;
+        const respStatus = selfAtt ? selfAtt.responseStatus : null;
+        if (respStatus === "declined") return;
+        const unconfirmed = respStatus === "needsAction" || respStatus === "tentative";
+
         const writable = c.role === "owner" || c.role === "writer";
         if (ev.start.date) {
           const crmContentId = (((ev.extendedProperties || {}).private) || {}).allyCrmContentId || null;
-          out.push({ id: `${c.id}::${ev.id}`, crmContentId, title: ev.summary || "(no title)", calId: c.id, calName: c.name, writable, allDay: true,
+          out.push({ id: `${c.id}::${ev.id}`, crmContentId, title: ev.summary || "(no title)", calId: c.id, calName: c.name, writable, allDay: true, unconfirmed,
             start: new Date(`${ev.start.date}T00:00:00`), end: new Date(`${(ev.end && ev.end.date) || ev.start.date}T00:00:00`) });
           return;
         }
@@ -1961,7 +1968,7 @@ function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, onDeleteEven
            get the move / resize / remove controls: everything else on the calendar is a real-world
            commitment the CRM has no business rearranging, even on a writable calendar. */
         const crmTaskId = (((ev.extendedProperties || {}).private) || {}).allyCrmTaskId || null;
-        out.push({ id: `${c.id}::${ev.id}`, eventId: ev.id, crmTaskId, desc: ev.description || "", title: ev.summary || "(no title)", calId: c.id, calName: c.name, writable, allDay: false,
+        out.push({ id: `${c.id}::${ev.id}`, eventId: ev.id, crmTaskId, desc: ev.description || "", title: ev.summary || "(no title)", calId: c.id, calName: c.name, writable, allDay: false, unconfirmed,
           start: new Date(ev.start.dateTime), end: new Date((ev.end && ev.end.dateTime) || ev.start.dateTime) });
       });
     });
@@ -2050,8 +2057,8 @@ function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, onDeleteEven
               {allDay.length > 0 && (
                 <div className="flex flex-col" style={{ gap: 2, padding: "3px 3px 0" }}>
                   {allDay.map((e) => (
-                    <button key={e.id} onClick={(ev) => { ev.stopPropagation(); if (e.crmContentId) onOpenTask && onOpenTask(e.crmContentId); }} title={`${e.title} · ${e.calName} · all day${e.crmContentId ? " · click to open card" : ""}`}
-                      style={{ fontFamily: "inherit", cursor: e.crmContentId ? "pointer" : "default", fontSize: 9, padding: "1px 5px", borderRadius: 4, background: FILL, border: `1px solid ${LINE}`, color: MUT, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.title}</button>
+                    <button key={e.id} onClick={(ev) => { ev.stopPropagation(); if (e.crmContentId) onOpenTask && onOpenTask(e.crmContentId); }} title={`${e.title}${e.unconfirmed ? " (Unconfirmed)" : ""} · ${e.calName} · all day${e.crmContentId ? " · click to open card" : ""}`}
+                      style={{ fontFamily: "inherit", cursor: e.crmContentId ? "pointer" : "default", fontSize: 9, padding: "1px 5px", borderRadius: 4, background: FILL, border: `1px ${e.unconfirmed ? "dashed" : "solid"} ${LINE}`, color: MUT, opacity: e.unconfirmed ? 0.8 : 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.unconfirmed ? "❓ " : ""}{e.title}</button>
                   ))}
                 </div>
               )}
@@ -2151,7 +2158,7 @@ function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, onDeleteEven
                 const writing = busyEvent === taskId;
                 return (
                   <div key={e.id} className="dayevent"
-                    title={`${e.title}\n${minToLabel(Math.max(e.sMin, DAY_START_MIN))} – ${minToLabel(Math.min(shownEnd, DAY_END_MIN))}\n${e.calName}${mine ? "\nClick to open task · drag to move · drag the bottom edge to lengthen · × to unschedule" : ""}`}
+                    title={`${e.title}${e.unconfirmed ? " (Unconfirmed)" : ""}\n${minToLabel(Math.max(e.sMin, DAY_START_MIN))} – ${minToLabel(Math.min(shownEnd, DAY_END_MIN))}\n${e.calName}${mine ? "\nClick to open task · drag to move · drag the bottom edge to lengthen · × to unschedule" : ""}`}
                     draggable={mine && !isResizing}
                     onDragStart={mine ? (ev) => {
                       /* refuse the move drag if this gesture began on the resize handle — otherwise
@@ -2168,8 +2175,8 @@ function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, onDeleteEven
                     } : undefined}
                     style={{ position: "absolute", top, height: hh, left: `calc(${e.lane * w}% + 2px)`, width: `calc(${w}% - 4px)`,
                       borderRadius: 5, padding: "1px 4px", overflow: "visible",
-                      background: t.fill, border: `1px solid ${isResizing ? C.mint : t.line}`, borderLeft: `2px solid ${t.bar}`,
-                      cursor: mine ? "grab" : "default", opacity: writing ? 0.6 : 1, zIndex: isResizing ? 6 : "auto" }}>
+                      background: t.fill, border: `1px ${e.unconfirmed ? "dashed" : "solid"} ${isResizing ? C.mint : t.line}`, borderLeft: `2px ${e.unconfirmed ? "dashed" : "solid"} ${t.bar}`,
+                      cursor: mine ? "grab" : "default", opacity: writing ? 0.6 : (e.unconfirmed ? 0.8 : 1), zIndex: isResizing ? 6 : "auto" }}>
                     {/* The block itself must stay overflow:visible so the × and the resize grip can sit
                         on its edge, which means the text needs its own clipped box — otherwise a long
                         title spills straight out of the block, as it did. Height is pinned to the
@@ -2180,7 +2187,7 @@ function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, onDeleteEven
                       <div style={{ fontSize: 9.5, fontWeight: 600, lineHeight: "11.5px", color: C.ink,
                         display: "-webkit-box", WebkitBoxOrient: "vertical",
                         WebkitLineClamp: Math.max(1, Math.floor((hh - 2 - (hh >= 34 ? 11 : 0)) / 11.5)),
-                        overflow: "hidden", wordBreak: "break-word", paddingRight: mine || orphan ? 12 : 0 }}>{e.title}</div>
+                        overflow: "hidden", wordBreak: "break-word", paddingRight: mine || orphan ? 12 : 0 }}>{e.unconfirmed ? "❓ " : ""}{e.title}</div>
                       {hh >= 34 && <div style={{ fontSize: 8.5, color: MUT, lineHeight: "11px", whiteSpace: "nowrap" }}>{minToLabel(Math.max(e.sMin, DAY_START_MIN))}–{minToLabel(Math.min(shownEnd, DAY_END_MIN))}</div>}
                     </div>
                     {/* live readout while stretching, since on a short block there is no room for the
