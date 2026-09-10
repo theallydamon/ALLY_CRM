@@ -1347,9 +1347,22 @@ const scriptText = (value) => {
 const skitRow = (item, updatedAt) => [item.id || "", item.title || "", scriptText(item.desc || ""), item.created || "", updatedAt || new Date().toISOString(), "ALLY CRM", ""];
 const skitSnapshot = (item) => ({ id: item.id || "", title: item.title || "", script: scriptText(item.desc || ""), status: item.status || "Ideas", created: item.created || "", pipeline: "Content" });
 
+const GOOGLE_TOKEN_STORAGE_KEY = "ally_google_token_v1";
+
 /* Unified Google Token Manager: single source of truth for the Google access token for Calendar & Sheets. */
 const googleTokenManager = {
-  token: null, // { value, expiresAt }
+  token: (() => {
+    try {
+      const saved = localStorage.getItem(GOOGLE_TOKEN_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && parsed.value && parsed.expiresAt && Date.now() < parsed.expiresAt - CAL_EXPIRY_MARGIN_MS) {
+          return parsed;
+        }
+      }
+    } catch (e) {}
+    return null;
+  })(), // { value, expiresAt }
   listeners: new Set(),
   client: null,
   clientScope: "",
@@ -1371,11 +1384,17 @@ const googleTokenManager = {
     const expiresAt = Date.now() + Math.max(60, (Number(expiresInSeconds) || 3600) - 120) * 1000;
     this.token = { value: accessToken, expiresAt };
     this.revoked = false;
+    try {
+      localStorage.setItem(GOOGLE_TOKEN_STORAGE_KEY, JSON.stringify(this.token));
+    } catch (e) {}
     this.notify();
   },
 
   clearToken() {
     this.token = null;
+    try {
+      localStorage.removeItem(GOOGLE_TOKEN_STORAGE_KEY);
+    } catch (e) {}
     this.notify();
   },
 
@@ -1385,6 +1404,9 @@ const googleTokenManager = {
     this.clientScope = "";
     this.tokenPromise = null;
     this.revoked = false;
+    try {
+      localStorage.removeItem(GOOGLE_TOKEN_STORAGE_KEY);
+    } catch (e) {}
     this.notify();
   },
 
@@ -1465,6 +1487,10 @@ const googleTokenManager = {
     this.clearToken();
   }
 };
+
+if (typeof window !== "undefined") {
+  window.googleTokenManager = googleTokenManager;
+}
 
 /* Unified Hook owning Google OAuth token lifecycle for both Calendar and Skit Registry */
 function useCalendarAuth(crmUser) {
@@ -2714,18 +2740,17 @@ function AllyCRM() {
     const client = window.google.accounts.oauth2.initTokenClient({
       client_id: GOOGLE_CLIENT_ID,
       hint: (() => { try { return firebase.auth().currentUser.email; } catch (e) { return undefined; } })(),
-      /* Identity only. Once Firebase knows which account signed in, the feature hooks request the
-         correct account-specific grant: Calendar only for work, Calendar + Sheets for personal.
-         This prevents the MAMA account from ever receiving or using a Skit Registry token. */
-      scope: "openid email profile",
+      scope: `openid email profile ${ALL_FEATURE_SCOPES}`,
       callback: async (response) => {
         if (!response || response.error || !response.access_token) {
           setAuthError("Google sign-in did not finish. Try again."); return;
         }
         try {
+          if (response.access_token) {
+            googleTokenManager.setToken(response.access_token, response.expires_in || 3600);
+          }
           const credential = window.firebase.auth.GoogleAuthProvider.credential(null, response.access_token);
           await fbAuth.signInWithCredential(credential);
-          googleTokenManager.resetForAccount();
         } catch (e) {
           const code = (e && e.code) || "";
           setAuthError(AUTH_ERRORS[code] || "Google sign-in could not be completed. Try again.");
