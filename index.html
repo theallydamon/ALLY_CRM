@@ -1943,7 +1943,7 @@ function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, onDeleteEven
       if (finalEnd == null || finalEnd === st.originEndMin) return;   // no actual change
       setActionError("");
       setBusyEvent(st.taskId);
-      const ok = await onResize(st.taskId, finalEnd, st.day);
+      const ok = await onResize(st.taskId, finalEnd, st.day, st.calId, st.eventId);
       setBusyEvent(null);
       if (ok) setLocalRefresh((n) => n + 1);
       else setActionError("Could not change that block's length.");
@@ -2139,9 +2139,9 @@ function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, onDeleteEven
                       const moveRaw = e.dataTransfer.getData(MOVE_MIME);
                       if (moveRaw) {
                         let mv; try { mv = JSON.parse(moveRaw); } catch (err) { return; }
-                        if (!mv || !mv.taskId) return;
-                        setBusyEvent(mv.taskId); setDropping(key);
-                        const ok = await onMove(mv.taskId, day, m);
+                        if (!mv || (!mv.taskId && !mv.eventId)) return;
+                        setBusyEvent(mv.taskId || mv.eventId); setDropping(key);
+                        const ok = await onMove(mv.taskId, day, m, mv.calId, mv.eventId);
                         setDropping(null); setBusyEvent(null);
                         if (ok) refetch(); else setActionError("Could not move that block. Nothing was changed.");
                         return;
@@ -2191,7 +2191,7 @@ function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, onDeleteEven
                          the edge-drag runs a resize AND a move at once, which is what produced the
                          phantom duplicate block */
                       if (dragBlockedRef.current) { ev.preventDefault(); return; }
-                      ev.dataTransfer.setData(MOVE_MIME, JSON.stringify({ taskId }));
+                      ev.dataTransfer.setData(MOVE_MIME, JSON.stringify({ taskId, calId: e.calId, eventId: e.eventId }));
                       ev.dataTransfer.effectAllowed = "move";
                     } : undefined}
                     onClick={mine ? (ev) => {
@@ -2241,7 +2241,7 @@ function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, onDeleteEven
                             ev.stopPropagation(); ev.preventDefault();
                             setActionError("");
                             setBusyEvent(taskId || e.eventId);
-                            const ok = orphan ? await onDeleteEvent(e.calId, e.eventId) : await onUnschedule(taskId);
+                            const ok = orphan ? await onDeleteEvent(e.calId, e.eventId) : await onUnschedule(taskId, e.calId, e.eventId);
                             setBusyEvent(null);
                             if (ok) refetch(); else setActionError("Could not remove that from your calendar.");
                           }}
@@ -2259,8 +2259,8 @@ function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, onDeleteEven
                             /* Capture the pointer on the handle so a fast edge drag cannot be handed
                                to the draggable event beneath it. */
                             if (ev.currentTarget.setPointerCapture) ev.currentTarget.setPointerCapture(ev.pointerId);
-                            resizeRef.current = { taskId, day, originY: ev.clientY, startMin: e.sMin, originEndMin: e.eMin, latestEnd: e.eMin };
-                            setResizing({ taskId, dayIndex: ci, startMin: e.sMin, endMin: e.eMin });
+                            resizeRef.current = { taskId, calId: e.calId, eventId: e.eventId, day, originY: ev.clientY, startMin: e.sMin, originEndMin: e.eMin, latestEnd: e.eMin };
+                            setResizing({ taskId, calId: e.calId, eventId: e.eventId, dayIndex: ci, startMin: e.sMin, endMin: e.eMin });
                           }}
                           style={{ position: "absolute", left: 0, right: 0, bottom: -5, height: 12, cursor: "ns-resize", touchAction: "none" }}>
                           <div style={{ position: "absolute", left: "50%", transform: "translateX(-50%)", bottom: 2, width: 16, height: 2, borderRadius: 2, background: isResizing ? C.mint : t.bar, opacity: isResizing ? 1 : 0.65 }} />
@@ -2429,17 +2429,21 @@ function AllyCRM() {
        exactly the reported symptom, and a bare false gives nothing to act on. */
     if (!r.ok) { cal.setCalError(`Google refused to create the event${r.status ? ` (HTTP ${r.status})` : r.network ? " — could not reach Google" : r.expired ? " — the connection had expired" : ""}.`); return false; }
     if (!r.data || !r.data.id) { cal.setCalError("Google accepted the request but returned no event, so nothing was saved."); return false; }
+    const baseId = String(payload.taskId || "").replace(/-sched$/, "");
+    const entry = {
+      eventId: r.data.id,
+      calendarId: "primary",
+      startISO: start.toISOString(),
+      endISO: end.toISOString(),
+      label: `${start.toLocaleDateString("en-ZA", { weekday: "short", day: "numeric" })} ${minToLabel(startMin)}`,
+    };
     setAlly((d) => ({
       ...d,
       schedule: {
         ...(d.schedule || {}),
-        [payload.taskId]: {
-          eventId: r.data.id,
-          calendarId: "primary",
-          startISO: start.toISOString(),
-          endISO: end.toISOString(),
-          label: `${start.toLocaleDateString("en-ZA", { weekday: "short", day: "numeric" })} ${minToLabel(startMin)}`,
-        },
+        [payload.taskId]: entry,
+        [baseId]: entry,
+        [`${baseId}-sched`]: entry,
       },
     }));
     return true;
@@ -2492,47 +2496,97 @@ function AllyCRM() {
      chip goes grey — and stays exactly where it was on its card. This is the "×" on a block.
      A 404/410 is treated as success: the event is already gone, which is the desired end state, so
      the CRM should stop claiming it exists rather than refusing to let go of a phantom. */
-  const unscheduleTask = async (taskId) => {
-    const s = (ally.schedule || {})[taskId];
-    if (!s || !s.eventId) return false;
-    const r = await cal.calFetch(`/calendars/${encodeURIComponent(s.calendarId || "primary")}/events/${encodeURIComponent(s.eventId)}`, { method: "DELETE", quiet: true });
+  const unscheduleTask = async (taskId, fallbackCalId, fallbackEventId) => {
+    const baseId = String(taskId || "").replace(/-sched$/, "");
+    const schedObj = ally.schedule || {};
+    const s = schedObj[taskId] || schedObj[baseId] || schedObj[`${baseId}-sched`];
+    const targetCalId = (s && s.calendarId) || fallbackCalId || "primary";
+    const targetEventId = (s && s.eventId) || fallbackEventId;
+    if (!targetEventId) return false;
+    const r = await cal.calFetch(`/calendars/${encodeURIComponent(targetCalId)}/events/${encodeURIComponent(targetEventId)}`, { method: "DELETE", quiet: true });
     if (!r.ok && r.status !== 404 && r.status !== 410) { cal.setCalError("Could not remove that from your calendar."); return false; }
-    setAlly((d) => { const next = { ...(d.schedule || {}) }; delete next[taskId]; return { ...d, schedule: next }; });
+    setAlly((d) => {
+      const next = { ...(d.schedule || {}) };
+      delete next[taskId];
+      delete next[baseId];
+      delete next[`${baseId}-sched`];
+      return { ...d, schedule: next };
+    });
     return true;
   };
 
   /* Move an existing block to a new day/slot, keeping its current length. PATCH the SAME event rather
      than delete-and-recreate: recreating would churn the event id, lose the CRM link and spam any
      guests or notifications attached to it. */
-  const moveScheduled = async (taskId, day, startMin) => {
-    const s = (ally.schedule || {})[taskId];
-    if (!s || !s.eventId) return false;
-    const durMs = Math.max(SLOT_MIN * 60000, new Date(s.endISO) - new Date(s.startISO));
+  const moveScheduled = async (taskId, day, startMin, fallbackCalId, fallbackEventId) => {
+    const baseId = String(taskId || "").replace(/-sched$/, "");
+    const schedObj = ally.schedule || {};
+    const s = schedObj[taskId] || schedObj[baseId] || schedObj[`${baseId}-sched`];
+    const targetCalId = (s && s.calendarId) || fallbackCalId || "primary";
+    const targetEventId = (s && s.eventId) || fallbackEventId;
+    if (!targetEventId) return false;
+
+    let durMs = (s && s.startISO && s.endISO) ? (new Date(s.endISO) - new Date(s.startISO)) : NaN;
+    if (isNaN(durMs) || durMs < SLOT_MIN * 60000) durMs = SLOT_MIN * 60000;
+
     const start = new Date(day.getFullYear(), day.getMonth(), day.getDate(), Math.floor(startMin / 60), startMin % 60, 0);
     const end = new Date(start.getTime() + durMs);
-    const r = await cal.calFetch(`/calendars/${encodeURIComponent(s.calendarId || "primary")}/events/${encodeURIComponent(s.eventId)}`, {
+    const r = await cal.calFetch(`/calendars/${encodeURIComponent(targetCalId)}/events/${encodeURIComponent(targetEventId)}`, {
       method: "PATCH",
       body: JSON.stringify({ start: { dateTime: start.toISOString() }, end: { dateTime: end.toISOString() } }),
     });
     if (!r.ok) return false;
-    setAlly((d) => ({ ...d, schedule: { ...(d.schedule || {}), [taskId]: { ...s, startISO: start.toISOString(), endISO: end.toISOString(), label: schedLabel(start) } } }));
+    const updatedEntry = {
+      ...(s || {}),
+      eventId: targetEventId,
+      calendarId: targetCalId,
+      startISO: start.toISOString(),
+      endISO: end.toISOString(),
+      label: schedLabel(start)
+    };
+    setAlly((d) => {
+      const nextSched = { ...(d.schedule || {}) };
+      if (taskId) nextSched[taskId] = updatedEntry;
+      if (baseId) nextSched[baseId] = updatedEntry;
+      if (baseId) nextSched[`${baseId}-sched`] = updatedEntry;
+      return { ...d, schedule: nextSched };
+    });
     return true;
   };
 
   /* Change only the END of a block — dragging its bottom edge to cover more slots. Start is untouched,
      and a block can never be shorter than one slot. */
-  const resizeScheduled = async (taskId, endMin, day) => {
-    const s = (ally.schedule || {})[taskId];
-    if (!s || !s.eventId) return false;
-    const start = new Date(s.startISO);
+  const resizeScheduled = async (taskId, endMin, day, fallbackCalId, fallbackEventId) => {
+    const baseId = String(taskId || "").replace(/-sched$/, "");
+    const schedObj = ally.schedule || {};
+    const s = schedObj[taskId] || schedObj[baseId] || schedObj[`${baseId}-sched`];
+    const targetCalId = (s && s.calendarId) || fallbackCalId || "primary";
+    const targetEventId = (s && s.eventId) || fallbackEventId;
+    if (!targetEventId) return false;
+
+    const start = (s && s.startISO) ? new Date(s.startISO) : new Date(day.getFullYear(), day.getMonth(), day.getDate(), DAY_START_MIN / 60, 0, 0);
     const end = new Date(day.getFullYear(), day.getMonth(), day.getDate(), Math.floor(endMin / 60), endMin % 60, 0);
-    if (end.getTime() - start.getTime() < SLOT_MIN * 60000) return false;
-    const r = await cal.calFetch(`/calendars/${encodeURIComponent(s.calendarId || "primary")}/events/${encodeURIComponent(s.eventId)}`, {
+    if (isNaN(start.getTime()) || end.getTime() - start.getTime() < SLOT_MIN * 60000) return false;
+    const r = await cal.calFetch(`/calendars/${encodeURIComponent(targetCalId)}/events/${encodeURIComponent(targetEventId)}`, {
       method: "PATCH",
       body: JSON.stringify({ end: { dateTime: end.toISOString() } }),
     });
     if (!r.ok) return false;
-    setAlly((d) => ({ ...d, schedule: { ...(d.schedule || {}), [taskId]: { ...s, endISO: end.toISOString() } } }));
+    const updatedEntry = {
+      ...(s || {}),
+      eventId: targetEventId,
+      calendarId: targetCalId,
+      startISO: start.toISOString(),
+      endISO: end.toISOString(),
+      label: schedLabel(start)
+    };
+    setAlly((d) => {
+      const nextSched = { ...(d.schedule || {}) };
+      if (taskId) nextSched[taskId] = updatedEntry;
+      if (baseId) nextSched[baseId] = updatedEntry;
+      if (baseId) nextSched[`${baseId}-sched`] = updatedEntry;
+      return { ...d, schedule: nextSched };
+    });
     return true;
   };
 
@@ -3985,28 +4039,28 @@ return (
 <TaskGroup label="Ideas" tint={CONTENT_TINT["Ideas"]} count={ideasDated.length || null} empty="—" onDropStatus={(p) => onSetStatus && onSetStatus(p, "Ideas")}>
 {ideasDated.length ? ideasDated.map((i) => (
 <TaskChip key={i.id} taskId={i.id} title={i.title} pillar={pipelineKey}
-scheduled={schedule && schedule[i.id]} statusMove={{ id: i.id, pipe: i._pipe, from: i.status }}
+scheduled={schedule && (schedule[i.id] || schedule[`${i.id}-sched`] || schedule[String(i.id).replace(/-sched$/, "")])} statusMove={{ id: i.id, pipe: i._pipe, from: i.status }}
 onOpen={() => onNavigate && onNavigate({ id: i.id, navTab: "content", navSub })} />
 )) : null}
 </TaskGroup>
 <TaskGroup label="To Film" tint={CONTENT_TINT["To Film"]} count={toFilmDated.length || null} empty="—" onDropStatus={(p) => onSetStatus && onSetStatus(p, "To Film")}>
 {toFilmDated.length ? toFilmDated.map((i) => (
 <TaskChip key={i.id} taskId={i.id} title={i.title} pillar={pipelineKey}
-scheduled={schedule && schedule[i.id]} statusMove={{ id: i.id, pipe: i._pipe, from: i.status }}
+scheduled={schedule && (schedule[i.id] || schedule[`${i.id}-sched`] || schedule[String(i.id).replace(/-sched$/, "")])} statusMove={{ id: i.id, pipe: i._pipe, from: i.status }}
 onOpen={() => onNavigate && onNavigate({ id: i.id, navTab: "content", navSub })} />
 )) : null}
 </TaskGroup>
 <TaskGroup label="To Edit" tint={CONTENT_TINT["To Edit"]} count={toEditDated.length || null} empty="—" onDropStatus={(p) => onSetStatus && onSetStatus(p, "To Edit")}>
 {toEditDated.length ? toEditDated.map((i) => (
 <TaskChip key={i.id} taskId={i.id} title={i.title} pillar={pipelineKey}
-scheduled={schedule && schedule[i.id]} statusMove={{ id: i.id, pipe: i._pipe, from: i.status }}
+scheduled={schedule && (schedule[i.id] || schedule[`${i.id}-sched`] || schedule[String(i.id).replace(/-sched$/, "")])} statusMove={{ id: i.id, pipe: i._pipe, from: i.status }}
 onOpen={() => onNavigate && onNavigate({ id: i.id, navTab: "content", navSub })} />
 )) : null}
 </TaskGroup>
 <TaskGroup label="Ready to Post" tint={CONTENT_TINT["Ready to Post"]} count={toPostDated.length || null} empty="—" onDropStatus={(p) => onSetStatus && onSetStatus(p, "Ready to Post")}>
 {toPostDated.length ? toPostDated.map((i) => (
 <TaskChip key={i.id} taskId={i.id} title={i.title} pillar={pipelineKey}
-scheduled={schedule && schedule[i.id]} statusMove={{ id: i.id, pipe: i._pipe, from: i.status }}
+scheduled={schedule && (schedule[i.id] || schedule[`${i.id}-sched`] || schedule[String(i.id).replace(/-sched$/, "")])} statusMove={{ id: i.id, pipe: i._pipe, from: i.status }}
 onOpen={() => onNavigate && onNavigate({ id: i.id, navTab: "content", navSub })} />
 )) : null}
 </TaskGroup>
@@ -4073,7 +4127,7 @@ function PriorityPillarCard({ pillarKey, tasks, go, rank, onDropPriority, pct, o
                 <div className="grid" style={{ gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 4 }}>
                   {items.map((t) => (
                     <TaskChip key={t.id} taskId={t.id} title={t.title} pillar={pillarKey} due={t.due}
-                      scheduled={schedule && schedule[t.id]} onOpen={() => onNavigate(t)} />
+                      scheduled={schedule && (schedule[t.id] || schedule[`${t.id}-sched`] || schedule[String(t.id).replace(/-sched$/, "")])} onOpen={() => onNavigate(t)} />
                   ))}
                 </div>
               ) : <div style={{ fontSize: 9, color: FAINT }}>—</div>}
