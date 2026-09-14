@@ -1446,11 +1446,29 @@ const googleTokenManager = {
       if (resp && resp.access_token) {
         this.setToken(resp.access_token, resp.expires_in);
         finish(resp.access_token);
+      } else if (silent) {
+        // Silent token request failed (e.g. prompt: "none" returned interaction_required).
+        // Fall back to interactive popup request so Google popup authentication opens and connects calendar.
+        this.connecting = false;
+        this.tokenPromise = null;
+        this.requestToken(false, prompt || "consent", scope).then((token) => {
+          if (resolvePromise) resolvePromise(token);
+        });
       } else {
         finish(null);
       }
     };
-    const handleError = () => finish(null);
+    const handleError = () => {
+      if (silent) {
+        this.connecting = false;
+        this.tokenPromise = null;
+        this.requestToken(false, prompt || "consent", scope).then((token) => {
+          if (resolvePromise) resolvePromise(token);
+        });
+      } else {
+        finish(null);
+      }
+    };
 
     if (!this.client || this.clientScope !== scope) {
       this.clientScope = scope;
@@ -1474,7 +1492,15 @@ const googleTokenManager = {
       const promptValue = silent ? "none" : (prompt !== undefined && prompt !== "" ? prompt : "consent");
       this.client.requestAccessToken({ hint: (() => { try { return firebase.auth().currentUser.email; } catch (e) { return undefined; } })(), prompt: promptValue });
     } catch (e) {
-      finish(null);
+      if (silent) {
+        this.connecting = false;
+        this.tokenPromise = null;
+        this.requestToken(false, prompt || "consent", scope).then((token) => {
+          if (resolvePromise) resolvePromise(token);
+        });
+      } else {
+        finish(null);
+      }
     }
 
     return this.tokenPromise;
