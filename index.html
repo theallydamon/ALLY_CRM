@@ -4176,9 +4176,8 @@ function priorityFromDueDate(daysUntilDue) {
 function priorityForNewTask(due) {
   return due ? (priorityFromDueDate(daysUntil(due)) || "Medium") : "Medium";
 }
-/* Capture forms use tomorrow when no date is selected. This keeps a new task visible in the
-   Medium daily-triage group immediately, instead of storing a date-less task that can be missed. */
-const defaultTaskDue = () => shiftISO(todayISO(), 1);
+/* Capture forms default to null when no date is explicitly selected. */
+const defaultTaskDue = () => null;
 
 /* shared control row: due date + priority (Low/Med/High) + log progress + due-date readout.
    Used on every item across the 6 pillars so the Priorities dashboard can score them all the same way.
@@ -5317,7 +5316,7 @@ function LifeAdminModule({ data, setData, q, boardKey = "lifeAdmin", boardTitle 
   const ql = (q || "").toLowerCase();
   const add = () => {
     const t = title.trim(); if (!t) return;
-    const taskDue = due || defaultTaskDue();
+    const taskDue = due || null;
     setData((d) => ({ ...d, [boardKey]: { ...(d[boardKey] || { items: [] }), items: [{ id: uid(), title: t, description: description.trim(), status: "To do", created: todayISO(), due: taskDue, priority: priority || priorityForNewTask(taskDue), lastProgress: null }, ...((d[boardKey] || {}).items || [])] } }));
     setTitle(""); setDescription(""); setDue(""); setPriority("Medium");
   };
@@ -5422,7 +5421,7 @@ function MiniTaskList({ tasks, onChange, withLink, composerAtBottom }) {
   const waitingList = visibleList.filter((t) => t.chaseOn && t.chaseOn > _today);
   const add = () => {
     const t = title.trim(); if (!t) return;
-    const taskDue = due || defaultTaskDue();
+    const taskDue = due || null;
     const initLink = link.trim();
     const links = initLink ? [{ id: uid(), url: initLink.startsWith("http") ? initLink : `https://${initLink}`, label: initLink.replace(/^https?:\/\//, "").slice(0, 30) }] : [];
     onChange([{ id: uid(), title: t, description: description.trim(), link: initLink, links, due: taskDue, priority: priority || priorityForNewTask(taskDue), lastProgress: null, done: false, created: todayISO() }, ...list]);
@@ -5770,7 +5769,7 @@ function AITaskProjects({ data, setData, mama, setMama, q }) {
       ? [...draftLinks, { id: uid(), url: trailing.startsWith("http") ? trailing : `https://${trailing}`, label: linkLabel.trim() || trailing.replace(/^https?:\/\//, "").slice(0, 30) }]
       : draftLinks;
 
-    const taskDue = due || defaultTaskDue();
+    const taskDue = due || null;
     const newTask = {
       id: uid(),
       title: t,
@@ -5780,7 +5779,7 @@ function AITaskProjects({ data, setData, mama, setMama, q }) {
       done: false,
       created: todayISO(),
       due: taskDue,
-      priority: priorityForNewTask(taskDue),
+      priority: priority || priorityForNewTask(taskDue),
       lastProgress: null,
     };
 
@@ -6336,7 +6335,7 @@ function AdminTasks({ data, setData, ally, setAlly }) {
     const links = trailing
       ? [...draftLinks, { id: uid(), url: trailing.startsWith("http") ? trailing : `https://${trailing}`, label: linkLabel.trim() || trailing.replace(/^https?:\/\//, "").slice(0, 30) }]
       : draftLinks;
-    const taskDue = due || defaultTaskDue();
+    const taskDue = due || null;
     setData((d) => ({ ...d, tasks: [{ id: uid(), title: t, description: description.trim(), links, status: "To do", created: new Date().toISOString().slice(0, 10), due: taskDue, priority: priority || priorityForNewTask(taskDue), lastProgress: null }, ...d.tasks] }));
     setTitle(""); setDescription(""); setDue(""); setDraftLinks([]); setLinkLabel(""); setLinkUrl(""); setPriority("Medium");
   };
