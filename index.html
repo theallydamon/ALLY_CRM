@@ -1494,7 +1494,7 @@ if (typeof window !== "undefined") {
 }
 
 /* Unified Hook owning Google OAuth token lifecycle for both Calendar and Skit Registry */
-function useCalendarAuth(crmUser) {
+function useCalendarAuth(crmUser, authReady = true) {
   const [tokenState, setTokenState] = useState(() => ({ value: googleTokenManager.getToken(), valid: googleTokenManager.isValid() }));
   const [calendars, setCalendars] = useState(null);
   const [account, setAccount] = useState("");
@@ -1521,13 +1521,13 @@ function useCalendarAuth(crmUser) {
     return () => id && clearTimeout(id);
   }, []);
 
-  /* Drop token and account diagnostics on logout/account change. */
+  /* Drop token and account diagnostics on logout/account change once auth status is confirmed. */
   useEffect(() => {
-    if (!crmUser) {
+    if (authReady && !crmUser) {
       googleTokenManager.clearToken();
       setCalendars(null); setAccount(""); setAccountMismatch(false); setCalError("");
     }
-  }, [crmUser]);
+  }, [crmUser, authReady]);
 
   const connect = useCallback((silent = true) => {
     if (!gisReady) return;
@@ -2376,7 +2376,7 @@ function AllyCRM() {
 
   /* Calendar authorisation is account-bound. The work profile deliberately never starts the Skit
      Registry hook because that is a personal Content backup and has no place in the MAMA shell. */
-  const cal = useCalendarAuth(user);
+  const cal = useCalendarAuth(user, authReady);
   const registry = useSkitRegistry(user, ally, profile.id !== "work");
   /* Creators / Admin Tasks / AI Tasks are subtabs of "mama" in the personal profile but top-level
      tabs in the work one, and collectPriorityTasks stamps every Mama task with navTab "mama".
