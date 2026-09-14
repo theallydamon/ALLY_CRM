@@ -1260,10 +1260,9 @@ const MAMA_KEY = "creator-strategy-hq-v1";
 
    SECURITY RULES FOR THIS SECTION. These come from 02-GOAL.md and are not stylistic:
 
-   1. The access token lives in a ref and in nothing else. Never localStorage, never
-      sessionStorage, never window.storage, never Firestore, never the URL, never the JSON
-      export. If you find yourself wanting to persist it "just to avoid re-consenting", don't —
-      a one-hour lifetime with a reconnect prompt is the intended design.
+   1. The existing short-lived access-token cache is reused only until expiry. Firebase session
+      restoration must finish before logout cleanup runs. No refresh token or client secret
+      belongs in browser storage, Firestore workspace data, URLs, or exported CRM data.
    2. Never log the token and never put it in an error message or on screen. The helpers below
       deliberately surface only status codes and mapped text.
    3. No client secret. A browser-only implicit flow does not need one, and one must never appear
@@ -1293,33 +1292,12 @@ const CAL_API = "https://www.googleapis.com/calendar/v3";
 const CAL_EXPIRY_MARGIN_MS = 120000;
 const REVOKE_HELP_URL = "https://myaccount.google.com/permissions";
 
-/* HOW THE CONNECTION STAYS UP WITHOUT EVER ASKING AGAIN — read this before changing any of it.
-
-   The owner's requirement is blunt and correct: authorise once, never see a Connect prompt again.
-   What makes that possible is that CONSENT and TOKENS are different things.
-
-   * Consent is the durable part. It lives in the owner's Google account, granted once, and stays
-     until revoked at myaccount.google.com/permissions. Nothing in this app stores it or can lose it.
-   * A token is the short-lived part, about an hour. It is deliberately never persisted (02-GOAL.md).
-
-   Because consent already exists, `requestAccessToken({ prompt: "none" })` returns a fresh token with
-   NO popup, NO user gesture and NO UI whatsoever. So the app simply does that itself:
-
-     - once on load, whenever signed into the CRM
-     - again a few minutes before each token expires, on a timer
-
-   The result is a connection that behaves as permanent while holding nothing sensitive. There is
-   no flag to get out of sync, and no button to click. An earlier version gated the load attempt on
-   a localStorage flag; that was wrong, because a brand-new flag makes an already-consented account
-   look unconnected and re-prompts for no reason. Never reintroduce it.
-
-   A silent attempt that fails is a normal, expected event — access revoked at Google, or offline.
-   It must stay quiet: only the small status dot changes. Do not surface a prompt on page load.
-
-   WHAT CANNOT BE DONE: a token that never expires. That requires a refresh token, which Google only
-   issues to a confidential client authenticating with a client secret, i.e. a server. This app is
-   browser-only and must never contain a secret, so background renewal above is the correct and
-   complete answer, not a workaround. */
+/* Google consent and access tokens have different lifetimes. Reuse a valid cached token
+   after Firebase restores the session. Once it expires, request another token with an empty
+   prompt and the signed-in account as login_hint, preserving the earlier automatic connection
+   behaviour. This GIS token flow can still open a popup; neither prompt "" nor "none" is a
+   guarantee of background renewal. Never escalate a failed automatic request to forced consent.
+   Fully background renewal requires a server-side authorization-code flow with refresh tokens. */
 
 /* Calendars that should never contribute busy slots, decided by the owner 29 Jul 2026:
    Birthdays off, Holidays ON, adamon@amplified.community off. Matched by pattern rather than by
@@ -1431,7 +1409,7 @@ const googleTokenManager = {
     this.notify();
 
     let resolvePromise = null;
-    this.tokenPromise = new Promise((resolve) => {
+    const pending = this.tokenPromise = new Promise((resolve) => {
       resolvePromise = resolve;
     });
 
@@ -1446,35 +1424,17 @@ const googleTokenManager = {
       if (resp && resp.access_token) {
         this.setToken(resp.access_token, resp.expires_in);
         finish(resp.access_token);
-      } else if (silent) {
-        // Silent token request failed (e.g. prompt: "none" returned interaction_required).
-        // Fall back to interactive popup request so Google popup authentication opens and connects calendar.
-        this.connecting = false;
-        this.tokenPromise = null;
-        this.requestToken(false, prompt || "consent", scope).then((token) => {
-          if (resolvePromise) resolvePromise(token);
-        });
       } else {
         finish(null);
       }
     };
-    const handleError = () => {
-      if (silent) {
-        this.connecting = false;
-        this.tokenPromise = null;
-        this.requestToken(false, prompt || "consent", scope).then((token) => {
-          if (resolvePromise) resolvePromise(token);
-        });
-      } else {
-        finish(null);
-      }
-    };
+    const handleError = () => finish(null);
 
     if (!this.client || this.clientScope !== scope) {
       this.clientScope = scope;
       this.client = window.google.accounts.oauth2.initTokenClient({
         client_id: GOOGLE_CLIENT_ID,
-        hint: (() => { try { return firebase.auth().currentUser.email; } catch (e) { return undefined; } })(),
+        login_hint: (() => { try { return firebase.auth().currentUser.email; } catch (e) { return undefined; } })(),
         scope,
         callback: (resp) => {
           if (this.currentCallback) this.currentCallback(resp);
@@ -1489,21 +1449,13 @@ const googleTokenManager = {
     this.currentErrorCallback = handleError;
 
     try {
-      const promptValue = silent ? "none" : (prompt !== undefined && prompt !== "" ? prompt : "consent");
-      this.client.requestAccessToken({ hint: (() => { try { return firebase.auth().currentUser.email; } catch (e) { return undefined; } })(), prompt: promptValue });
+      const promptValue = silent ? "" : prompt;
+      this.client.requestAccessToken({ login_hint: (() => { try { return firebase.auth().currentUser.email; } catch (e) { return undefined; } })(), prompt: promptValue });
     } catch (e) {
-      if (silent) {
-        this.connecting = false;
-        this.tokenPromise = null;
-        this.requestToken(false, prompt || "consent", scope).then((token) => {
-          if (resolvePromise) resolvePromise(token);
-        });
-      } else {
-        finish(null);
-      }
+      finish(null);
     }
 
-    return this.tokenPromise;
+    return pending;
   },
 
   revoke() {
@@ -1520,7 +1472,7 @@ if (typeof window !== "undefined") {
 }
 
 /* Unified Hook owning Google OAuth token lifecycle for both Calendar and Skit Registry */
-function useCalendarAuth(crmUser) {
+function useCalendarAuth(crmUser, authReady) {
   const [tokenState, setTokenState] = useState(() => ({ value: googleTokenManager.getToken(), valid: googleTokenManager.isValid() }));
   const [calendars, setCalendars] = useState(null);
   const [account, setAccount] = useState("");
@@ -1547,13 +1499,13 @@ function useCalendarAuth(crmUser) {
     return () => id && clearTimeout(id);
   }, []);
 
-  /* Drop token and account diagnostics on logout/account change. */
+  /* Wait for Firebase restoration before interpreting a missing user as sign-out. */
   useEffect(() => {
-    if (!crmUser) {
+    if (authReady && !crmUser) {
       googleTokenManager.clearToken();
       setCalendars(null); setAccount(""); setAccountMismatch(false); setCalError("");
     }
-  }, [crmUser]);
+  }, [crmUser, authReady]);
 
   const connect = useCallback((silent = true) => {
     if (!gisReady) return;
@@ -1651,7 +1603,7 @@ function useCalendarAuth(crmUser) {
     }
   }, [calFetch, crmUser]);
 
-  useEffect(() => { if (tokenState.valid && !calendars) loadCalendars(); }, [tokenState.valid, calendars, loadCalendars]);
+  useEffect(() => { if (authReady && crmUser && tokenState.valid && !calendars) loadCalendars(); }, [authReady, crmUser, tokenState.valid, calendars, loadCalendars]);
 
   const disconnect = useCallback(() => {
     googleTokenManager.revoke();
@@ -2402,7 +2354,7 @@ function AllyCRM() {
 
   /* Calendar authorisation is account-bound. The work profile deliberately never starts the Skit
      Registry hook because that is a personal Content backup and has no place in the MAMA shell. */
-  const cal = useCalendarAuth(user);
+  const cal = useCalendarAuth(user, authReady);
   const registry = useSkitRegistry(user, ally, profile.id !== "work");
   /* Creators / Admin Tasks / AI Tasks are subtabs of "mama" in the personal profile but top-level
      tabs in the work one, and collectPriorityTasks stamps every Mama task with navTab "mama".
@@ -2820,7 +2772,7 @@ function AllyCRM() {
     setAuthError(""); setAuthStalled(false);
     const client = window.google.accounts.oauth2.initTokenClient({
       client_id: GOOGLE_CLIENT_ID,
-      hint: (() => { try { return firebase.auth().currentUser.email; } catch (e) { return undefined; } })(),
+      login_hint: (() => { try { return firebase.auth().currentUser.email; } catch (e) { return undefined; } })(),
       scope: `openid email profile ${ALL_FEATURE_SCOPES}`,
       callback: async (response) => {
         if (!response || response.error || !response.access_token) {
@@ -2843,10 +2795,9 @@ function AllyCRM() {
   };
   const signOutGoogle = async () => {
     if (!fbAuth) return;
-    /* Drop the calendar grant FIRST. useCalendarAuth also clears on `user` going null, but that is
-       a reactive backstop; doing it explicitly here means the token is gone even if the sign-out
-       below throws partway. Required by 02-GOAL.md: signing out clears the calendar token. */
-    try { cal.disconnect(); } catch (e) {}
+    /* Sign-out clears this browser's token, but leaves Google's consent intact.
+       Revoking the grant belongs only to the explicit Calendar disconnect action. */
+    googleTokenManager.resetForAccount();
     try { await fbAuth.signOut(); } catch (e) {}
     cloudLoadedFor.current = null; reconcileDone.current = false; setCloudState("offline"); setUser(null);
   };
