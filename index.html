@@ -1302,7 +1302,7 @@ const REVOKE_HELP_URL = "https://myaccount.google.com/permissions";
      until revoked at myaccount.google.com/permissions. Nothing in this app stores it or can lose it.
    * A token is the short-lived part, about an hour. It is deliberately never persisted (02-GOAL.md).
 
-   Because consent already exists, `requestAccessToken({ prompt: "" })` returns a fresh token with
+   Because consent already exists, `requestAccessToken({ prompt: "none" })` returns a fresh token with
    NO popup, NO user gesture and NO UI whatsoever. So the app simply does that itself:
 
      - once on load, whenever signed into the CRM
@@ -1471,7 +1471,8 @@ const googleTokenManager = {
     this.currentErrorCallback = handleError;
 
     try {
-      this.client.requestAccessToken({ hint: (() => { try { return firebase.auth().currentUser.email; } catch (e) { return undefined; } })(), prompt: prompt !== undefined ? prompt : (silent ? "" : "consent") });
+      const promptValue = silent ? "none" : (prompt !== undefined && prompt !== "" ? prompt : "consent");
+      this.client.requestAccessToken({ hint: (() => { try { return firebase.auth().currentUser.email; } catch (e) { return undefined; } })(), prompt: promptValue });
     } catch (e) {
       finish(null);
     }
