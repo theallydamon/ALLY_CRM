@@ -877,23 +877,9 @@ const adminTaskBucket = (t) => {
   return (t.paused || !PRIORITY_LEVELS.includes(t.priority) ? "None" : t.priority);
 };
 
-/* single source of truth for "how urgent is this due date" — one set of day bands, reused
-   for the Urgent/Medium/Low bucket (the 3 columns on each pillar's card, and sort order within
-   them) and the auto-escalation to High priority (priorityFromDueDate/PriorityControls):
-     - due today or overdue   -> guarantees Urgent (the discrete columns have no bucket above
-       Urgent, there's no separate "LATE/critical" bucket, just the Urgent column itself)
-     - due in 1-3 days        -> guarantees at least Medium, regardless of priority
-     - due in 4+ days (or no due date at all) -> the calendar stops forcing anything; priority
-       and stalled-progress alone decide the bucket, same as always
-   The due-date signal DOMINATES rather than stacking with priority (max, not addition) — a
-   deadline is pass/fail, so priority can only push urgency up from there, never override a close
-   deadline down.
-   Note this only feeds the bucket/score used for sorting within a pillar's card, not the ring's
-   fill % anymore — that's taskFillPercent below, which reads the priority label alone (which this
-   day-band logic already sets automatically) rather than adding its own separate, bigger number on
-   top. The two used to double up, which is how a couple of due-today tasks could read as 300%+.
-   Does not apply to Content, which has its own separate days-since-last-post urgency model
-   (computeContentUrgency) untouched by any of this. */
+/* Due dates and stalled progress are secondary sort signals within a priority lane. They must not
+   move a task into a different lane: the priority saved on the source task is the single source of
+   truth for whether the main board shows it under Urgent, Medium or Low. */
 function dueBandScore(daysUntilDue) {
   if (daysUntilDue === null || daysUntilDue === undefined) return 0;
   if (daysUntilDue <= 0) return 4.2; // today or overdue
@@ -911,17 +897,17 @@ function stallUrgency(daysSinceProgress, daysUntilDue) {
   return 0;
 }
 
-/* score + bucket for one item shaped like { due, priority, lastProgress, created } */
+const priorityBucket = (priority) => priority === "High" ? "Urgent" : priority === "Low" ? "Low" : "Medium";
+
+/* Score one item shaped like { due, priority, lastProgress, created }. The score only controls
+   ordering inside its saved-priority lane; it can never promote Low to Medium/Urgent. */
 function computeUrgency(item) {
   const base = PRIORITY_WEIGHT[item.priority] || PRIORITY_WEIGHT.Medium;
   const dUntil = item.due ? daysUntil(item.due) : null;
   const touch = item.lastProgress || item.created || null;
   const dSince = touch ? daysSince(touch) : null;
   const score = Math.max(base, dueBandScore(dUntil)) + stallUrgency(dSince, dUntil);
-  /* A manually selected Medium task must actually live in Medium even before a date is chosen.
-     A tomorrow date still supplies the stronger 2.2 score, but the priority itself is enough to
-     keep daily triage truthful rather than silently shelving it in Low. */
-  const bucket = score >= 4.2 ? "Urgent" : score >= PRIORITY_WEIGHT.Medium ? "Medium" : "Low";
+  const bucket = priorityBucket(item.priority);
   return { score: Math.round(score * 10) / 10, bucket, daysUntilDue: dUntil, daysSinceProgress: dSince };
 }
 
@@ -1006,29 +992,31 @@ pushContentTasks(ally.musicContent.items, "music", computeContentUrgency(ally.mu
     }
   });
   ally.deals.clients.forEach((c) => (c.tasks || []).filter((t) => !t.done && !t.paused).forEach((t) => out.push({
-    id: t.id, pillar: "deals", title: `${t.title} (${c.name})`, due: t.due || null,
+    id: t.id, pillar: "deals", title: `${t.title} (${c.name})`, due: null,
     priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
     sourceType: "clientTask", navTab: "deals", navSub: null, navOpenId: null, chaseOn: t.chaseOn || null,
   })));
+  /* General task due dates were removed from the product. Ignore legacy dates still present in old
+     Firestore records so those invisible values cannot create overdue labels on the main board. */
   mama.tasks.filter((t) => t.status !== "Done" && !t.paused).forEach((t) => out.push({
-    id: t.id, pillar: "mama", title: t.title, due: t.due || null,
+    id: t.id, pillar: "mama", title: t.title, due: null,
     priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
     sourceType: "mamaAdmin", navTab: "mama", navSub: "adminTasks", navOpenId: null, chaseOn: t.chaseOn || null,
   }));
   (mama.creators || []).forEach((cr) => (cr.tasks || []).filter((t) => !t.done && !t.paused).forEach((t) => out.push({
-    id: t.id, pillar: "mama", title: `${t.title} (${cr.name})`, due: t.due || null,
+    id: t.id, pillar: "mama", title: `${t.title} (${cr.name})`, due: null,
     priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
     sourceType: "mamaCreator", navTab: "mama", navSub: "creators", navOpenId: cr.id, chaseOn: t.chaseOn || null,
   })));
   /* AI work belongs to MAMA too: preserve the project in the chip title, then feed it through
      the exact same urgency and High/Medium/Low lanes as creator and admin tasks. */
   ((ally.aiTasks || {}).projects || []).forEach((project) => (project.tasks || []).filter((t) => !t.done && !t.paused).forEach((t) => out.push({
-    id: t.id, pillar: "mama", title: `${t.title} (${project.name})`, due: t.due || null,
+    id: t.id, pillar: "mama", title: `${t.title} (${project.name})`, due: null,
     priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
     sourceType: "aiTask", navTab: "mama", navSub: "aiTasks", navOpenId: project.id, chaseOn: t.chaseOn || null,
   })));
 (ally.lifeAdmin.items || []).filter((t) => t.status !== "Done" && !t.paused).forEach((t) => out.push({
-    id: t.id, pillar: "lifeAdmin", title: t.title, due: t.due || null,
+    id: t.id, pillar: "lifeAdmin", title: t.title, due: null,
     priority: t.priority || "Medium", lastProgress: t.lastProgress || null, created: t.created || null,
     sourceType: "lifeAdmin", navTab: "lifeAdmin", navSub: null, navOpenId: null, chaseOn: t.chaseOn || null,
   }));
@@ -4050,7 +4038,8 @@ onOpen={() => onNavigate && onNavigate({ id: i.id, navTab: "content", navSub })}
    setPillarItemPriority, so it feeds straight back into the item's own tab. Drops carry their
    source pillar in the payload, so a drop is ignored unless it lands on a column in its own card —
    dragging across cards (e.g. Deals into Mama) is a strict no-op by design. */
-const DROP_PRIORITY = { Urgent: "High", Medium: "Medium", Low: "Low" }; /* dropping onto a column also sets a matching due date: Urgent -> due today, Medium -> due tomorrow, Low -> due in a week. */ const DROP_DUE_OFFSET = { Urgent: 0, Medium: 1, Low: 7 }; const dropPatchFor = (col) => ({ priority: DROP_PRIORITY[col], due: shiftISO(todayISO(), DROP_DUE_OFFSET[col]) });
+const DROP_PRIORITY = { Urgent: "High", Medium: "Medium", Low: "Low" };
+const dropPatchFor = (col) => ({ priority: DROP_PRIORITY[col] });
 
 function PriorityPillarCard({ pillarKey, tasks, go, rank, onDropPriority, pct, onNavigate, onComplete, schedule }) {
   const mod = MODULES[pillarKey];
