@@ -862,7 +862,7 @@ const PRIORITY_PILLARS = ["mama", "content", "music", "lifeAdmin"]; // "deals" p
 
 /* ---------- priority engine: shared urgency scoring across all 6 pillars ---------- */
 const PRIORITY_LEVELS = ["Low", "Medium", "High"];
-const PRIORITY_WEIGHT = { Low: 1, Medium: 2, High: 3 };
+const PRIORITY_WEIGHT = { Low: 1, Medium: 2, High: 4.2 };
 const PRIORITY_TINT = { Low: C.sky, Medium: C.amber, High: C.rose };
 /* "None" isn't a priority level — it's the absence of one, so it stays out of PRIORITY_LEVELS (which
    drives the L/M/H buttons) and only exists as a board column / summary bucket. A task lands there
@@ -2371,7 +2371,7 @@ function AllyCRM() {
      Chosen strictly by the signed-in Google account. `user` is null for a beat while auth settles
      and profileForEmail falls back to the personal profile, so the bottom strip never renders
      empty. */
-  const profileId = profileForEmail(user && user.email);
+  const profileId = profileForEmail((user && user.email) || localStorage.getItem("userEmail"));
   const profile = VIEW_PROFILES[profileId] || VIEW_PROFILES.personal;
   const modeLabel = profile.id === "work" ? "WORK MODE" : "PERSONAL MODE";
   useEffect(() => { document.title = modeLabel; }, [modeLabel]);
