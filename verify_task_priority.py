@@ -54,6 +54,8 @@ javascript = "\n".join(
         function_source("dueBandScore"),
         function_source("stallUrgency"),
         function_source("computeUrgency"),
+        function_source("computeContentUrgency"),
+        function_source("collectPriorityTasks"),
         const_source("DROP_PRIORITY"),
         const_source("dropPatchFor"),
     ]
@@ -75,6 +77,34 @@ const results = cases.map(test => {{
 }});
 const lowDrop = dropPatchFor("Low");
 results.push({{ name: "lane drag changes priority without creating a due date", pass: lowDrop.priority === "Low" && !("due" in lowDrop), actual: lowDrop }});
+
+const livePost = () => null;
+const REEL_STAGES = [];
+const todayISO = () => new Date().toISOString().slice(0, 10);
+const ally = {{
+  content: {{ items: [], cadence: 3, lastPosted: null }},
+  brandContent: {{ items: [] }},
+  musicContent: {{ items: [], cadence: 4, lastPosted: null }},
+  deals: {{ deals: [], clients: [] }},
+  aiTasks: {{ projects: [{{ id: "notes", name: "Notes", tasks: [{{
+    id: "eitan", title: "compare max notes eitan", priority: "Low", due: "2000-01-01", done: false
+  }}] }}] }},
+  lifeAdmin: {{ items: [] }},
+}};
+const mama = {{ tasks: [], creators: [] }};
+const existingLow = collectPriorityTasks(ally, mama).find(task => task.id === "eitan");
+results.push({{
+  name: "existing Low AI task is collected in Low without a legacy due date",
+  pass: existingLow.bucket === "Low" && existingLow.due === null && existingLow.daysUntilDue === null,
+  actual: existingLow,
+}});
+ally.aiTasks.projects[0].tasks[0].priority = "High";
+const updatedHigh = collectPriorityTasks(ally, mama).find(task => task.id === "eitan");
+results.push({{
+  name: "changing an existing task to High updates the collected lane",
+  pass: updatedHigh.bucket === "Urgent" && updatedHigh.due === null && updatedHigh.daysUntilDue === null,
+  actual: updatedHigh,
+}});
 document.body.textContent = "RESULT:" + JSON.stringify(results);
 </script></body>"""
 
