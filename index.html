@@ -3353,9 +3353,14 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
               <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search this page…" style={{ background: "transparent", border: "none", fontSize: 12.5, color: C.ink, width: "100%", fontFamily: "inherit" }} />
               {q && <button onClick={() => setQ("")} style={{ ...iconBtn, padding: 0 }} aria-label="Clear"><X size={12} /></button>}
             </div>
-            <div className="header-savestate" style={{ fontSize: 10.5, color: saveState === "error" ? C.rose : FAINT, minWidth: 42, textAlign: "right" }}>
-              {saveState === "saving" ? "saving…" : saveState === "saved" ? "saved ✓" : saveState === "error" ? "retry" : ""}
-            </div>
+            {/* Signed-in sessions show only Firestore's status beside the account. The local cache
+                save is still performed, but displaying both "saved" and "syncing" made the cache
+                acknowledgement look like proof that the cloud write had finished. */}
+            {!user && (
+              <div className="header-savestate" style={{ fontSize: 10.5, color: saveState === "error" ? C.rose : FAINT, minWidth: 42, textAlign: "right" }}>
+                {saveState === "saving" ? "saving locally…" : saveState === "saved" ? "saved locally ✓" : saveState === "error" ? "local save error" : ""}
+              </div>
+            )}
             <div className="flex items-center gap-1.5" title="Download or restore a manual backup of the shared CRM">
               {importMsg && <span className="btn-label" style={{ fontSize: 10.5, color: importMsg === "Imported ✓" ? C.mint : C.rose, whiteSpace: "nowrap" }}>{importMsg}</span>}
               <button onClick={exportData} className="flex items-center gap-1" style={{ ...iconBtn, fontSize: 11, padding: "5px 8px", border: `1px solid ${LINE}`, borderRadius: 8 }} aria-label="Export data">
