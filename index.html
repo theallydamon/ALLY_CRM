@@ -3353,9 +3353,14 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
               <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search this page…" style={{ background: "transparent", border: "none", fontSize: 12.5, color: C.ink, width: "100%", fontFamily: "inherit" }} />
               {q && <button onClick={() => setQ("")} style={{ ...iconBtn, padding: 0 }} aria-label="Clear"><X size={12} /></button>}
             </div>
-            <div className="header-savestate" style={{ fontSize: 10.5, color: saveState === "error" ? C.rose : FAINT, minWidth: 42, textAlign: "right" }}>
-              {saveState === "saving" ? "saving…" : saveState === "saved" ? "saved ✓" : saveState === "error" ? "retry" : ""}
-            </div>
+            {/* Signed-in sessions show only Firestore's status beside the account. The local cache
+                save is still performed, but displaying both "saved" and "syncing" made the cache
+                acknowledgement look like proof that the cloud write had finished. */}
+            {!user && (
+              <div className="header-savestate" style={{ fontSize: 10.5, color: saveState === "error" ? C.rose : FAINT, minWidth: 42, textAlign: "right" }}>
+                {saveState === "saving" ? "saving locally…" : saveState === "saved" ? "saved locally ✓" : saveState === "error" ? "local save error" : ""}
+              </div>
+            )}
             <div className="flex items-center gap-1.5" title="Download or restore a manual backup of the shared CRM">
               {importMsg && <span className="btn-label" style={{ fontSize: 10.5, color: importMsg === "Imported ✓" ? C.mint : C.rose, whiteSpace: "nowrap" }}>{importMsg}</span>}
               <button onClick={exportData} className="flex items-center gap-1" style={{ ...iconBtn, fontSize: 11, padding: "5px 8px", border: `1px solid ${LINE}`, borderRadius: 8 }} aria-label="Export data">
@@ -4563,7 +4568,6 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
   const [openDesc, setOpenDesc] = useState({});
   const [priority, setPriority] = useState("Medium");
   const [showArchive, setShowArchive] = useState(false); const [expandedId, setExpandedId] = useState(null);
-  const [showLastPostedPicker, setShowLastPostedPicker] = useState(false);
   const [dragOverCol, setDragOverCol] = useState(null);
   const dropIntoColumn = (id, status) => setData((d) => ({ ...d, [pipelineKey]: { ...d[pipelineKey], items: d[pipelineKey].items.map((item) => item.id !== id ? item : { ...item, status }) } }));
   useEffect(() => { if (focusId) setExpandedId(focusId); }, [focusId]);
@@ -4629,45 +4633,7 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
         <div className="flex-1" style={{ minWidth: 220 }}>
           <div style={{ fontSize: 15, fontWeight: 500, color: h.tint }}>{h.msg}</div>
           <div className="flex items-center gap-2 mt-2 flex-wrap" style={{ fontSize: 12, color: MUT }}>
-            <span>last posted</span>
-            {!showLastPostedPicker ? (
-              <button
-                onClick={() => setShowLastPostedPicker(true)}
-                className="rounded px-2 py-0.5"
-                style={{ ...pillGhost, padding: "2px 8px", fontSize: 12, color: C.ink, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}
-                title="Click to change last posted date"
-              >
-                📅 {content.lastPosted || "Never"}
-              </button>
-            ) : (
-              <div className="flex items-center gap-1.5">
-                <input
-                  type="date"
-                  value={content.lastPosted || todayISO()}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    patch({ lastPosted: val || null });
-                    if (val) setShowLastPostedPicker(false);
-                  }}
-                  className="rounded px-2 py-0.5"
-                  style={{ ...inputStyle, fontSize: 12, padding: "2px 6px" }}
-                />
-                <button
-                  onClick={() => { patch({ lastPosted: todayISO() }); setShowLastPostedPicker(false); }}
-                  className="rounded px-2 py-0.5"
-                  style={{ ...pillGhost, padding: "2px 6px", fontSize: 11 }}
-                >
-                  Today
-                </button>
-                <button
-                  onClick={() => setShowLastPostedPicker(false)}
-                  style={{ ...iconBtn, padding: "2px 4px" }}
-                  aria-label="Close date picker"
-                >
-                  <X size={12} />
-                </button>
-              </div>
-            )}
+            last posted <b style={{ color: C.ink }}>{content.lastPosted || "Never"}</b>
           </div>
         </div>
         {donutTotal > 0 && (
@@ -4734,23 +4700,6 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
                     <ScriptBox value={i.desc || ""} isHtml={!!i.descHtml} open={descOpen} onFocus={() => openIfNot(i.id)} onChange={(v) => updateItem(i.id, { desc: v, descHtml: true })} onToggle={toggleDesc} />
                     {col === "Ready to Post" && <div className="flex items-center gap-2 mt-1.5 flex-wrap" style={{ fontSize: 10.5 }}>
                       <button onClick={(e) => { e.stopPropagation(); markPosted(i.id); }} className="rounded-full px-2 py-0.5" style={{ fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", background: `${C.mint}1a`, border: `1px solid ${C.mint}55`, color: C.mint }} title="Move to posted archive">✓ Posted</button>
-                    </div>}
-                    {col === "Posted" && <div className="flex items-center gap-2 mt-1.5 flex-wrap" style={{ fontSize: 10.5, color: MUT }}>
-                      <span>Posted date:</span>
-                      <input
-                        type="date"
-                        value={i.postedAt || content.lastPosted || todayISO()}
-                        onClick={(e) => e.stopPropagation()}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          updateItem(i.id, { postedAt: val || null });
-                          if (pipelineKey !== "brandContent" && val) {
-                            patch({ lastPosted: val });
-                          }
-                        }}
-                        className="rounded px-1.5 py-0.5"
-                        style={{ ...inputStyle, fontSize: 10.5, padding: "1px 4px" }}
-                      />
                     </div>}
                     {col !== "Posted" && <PriorityControls item={i} onChange={(p) => updateItem(i.id, p)} />}
                     <div className="flex items-center gap-1 mt-1.5"><span className="ml-auto flex gap-1">
