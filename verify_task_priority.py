@@ -137,4 +137,10 @@ for expected in (
 ):
     assert expected in SOURCE, f"Missing legacy-date guard: {expected}"
 
-print(f"PASS: {len(results)} priority behavior checks and 5 legacy-date guards")
+priority_controls_start = SOURCE.index("function PriorityControls(")
+priority_controls_end = SOURCE.index("\nfunction ", priority_controls_start + 1)
+priority_controls = SOURCE[priority_controls_start:priority_controls_end]
+assert "onChange({ priority: p, paused: false });" in priority_controls
+assert "else if (pr === p) onChange({ paused: true });" not in priority_controls
+
+print(f"PASS: {len(results)} priority behavior checks, 5 legacy-date guards, and active-priority idempotence")

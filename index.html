@@ -4156,12 +4156,9 @@ const defaultTaskDue = () => null;
    pass/fail, so once a date is set it drives the priority; the two non-matching L/M/H buttons grey
    out (they're not there to be manually overridden away from what the calendar says). Clear the due
    date, or pause the item, to take manual control of priority again.
-   Clicking the already-selected priority button again PAUSES this item instead: it stops feeding the
-   Priorities dashboard entirely (collectPriorityTasks skips anything with .paused), the due date
-   clears and greys out, and none of L/M/H show as selected. It's for things you want to keep on the
-   board but haven't decided are a live priority yet — existing, not urgent. Clicking any L/M/H
-   button again un-pauses it, picks that priority, and resets the due date back to blank so you set
-   a fresh one rather than reviving a stale old date. */
+   Priority clicks are idempotent: clicking the selected level keeps the item active at that level.
+   This prevents an ordinary attempt to confirm Low/Medium/High from silently pausing the task and
+   removing it from the main board. */
 function PrioritySelector({ value, onChange }) {
   const pr = value || "Medium";
   return (
@@ -4198,9 +4195,7 @@ function PriorityControls({ item, onChange }) {
   const isArrived = isWaiting && item.chaseOn <= _today;
 
   const setPriority = (p) => {
-    if (paused) onChange({ priority: p, paused: false });
-    else if (pr === p) onChange({ paused: true });
-    else onChange({ priority: p, paused: false });
+    onChange({ priority: p, paused: false });
   };
 
   return (
