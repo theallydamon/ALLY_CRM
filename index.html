@@ -1772,14 +1772,10 @@ const TIME_COL_W = 62;
 /* Routine blocks deliberately use colours that do not belong to any event calendar. Their lower
    opacity keeps real events visually dominant, while the stronger edge still marks each boundary. */
 const DAY_PHASES = [
-  { key: "start",          label: "Start",             from: 6 * 60,       to: 6 * 60 + 30,  tint: "rgba(255,255,255,0.035)", edge: "rgba(255,255,255,0.13)" },
-  { key: "morningEditing", label: "Editing",           from: 6 * 60 + 30,  to: 7 * 60 + 30,  tint: "rgba(143,93,193,0.13)",  edge: "rgba(143,93,193,0.38)" },
-  { key: "morningIdeas",   label: "Ideation",          from: 7 * 60 + 30,  to: 8 * 60 + 30,  tint: "rgba(203,82,151,0.12)",  edge: "rgba(203,82,151,0.36)" },
-  { key: "gym",            label: "Gym",               from: 8 * 60 + 30,  to: 11 * 60 + 30, tint: "rgba(35,172,166,0.11)",  edge: "rgba(35,172,166,0.34)" },
-  { key: "postGymEditing", label: "Post gym editing",  from: 12 * 60,      to: 13 * 60,      tint: "rgba(143,93,193,0.09)",  edge: "rgba(143,93,193,0.30)" },
-  { key: "postGymIdeas",   label: "Post gym ideation", from: 13 * 60,      to: 14 * 60,      tint: "rgba(203,82,151,0.08)",  edge: "rgba(203,82,151,0.28)" },
-  { key: "mama",           label: "Mama work",         from: 14 * 60,      to: 18 * 60 + 30, tint: "rgba(205,99,61,0.10)",   edge: "rgba(205,99,61,0.32)" },
-  { key: "music",          label: "Music",             from: 18 * 60 + 30, to: 22 * 60,      tint: "rgba(112,76,175,0.12)",  edge: "rgba(112,76,175,0.36)" },
+  { key: "content",      label: "content",       from: 6 * 60,  to: 11 * 60, tint: "rgba(143,93,193,0.07)", edge: "rgba(143,93,193,0.22)" },
+  { key: "mamaPersonal", label: "mama/personal", from: 11 * 60, to: 18 * 60, tint: "rgba(205,99,61,0.07)",  edge: "rgba(205,99,61,0.22)" },
+  { key: "gym",          label: "gym",           from: 18 * 60, to: 20 * 60, tint: "rgba(35,172,166,0.07)",  edge: "rgba(35,172,166,0.22)" },
+  { key: "music",        label: "music",         from: 20 * 60, to: 22 * 60, tint: "rgba(112,76,175,0.07)", edge: "rgba(112,76,175,0.22)" },
 ];
 const phaseForMin = (m) => DAY_PHASES.find((p) => m >= p.from && m < p.to) || DAY_PHASES[DAY_PHASES.length - 1];
 const slotToMin = (i) => DAY_START_MIN + i * SLOT_MIN;
@@ -2128,7 +2124,13 @@ function DayGrid({ cal, onSchedule, onMove, onResize, onUnschedule, onDeleteEven
                       background: isTarget || isDropping ? "rgba(47,163,124,0.34)" : busy ? "rgba(255,255,255,0.05)" : ph.tint,
                       borderTop: `1px solid ${m % 60 === 0 ? ph.edge : "rgba(255,255,255,0.045)"}`,
                       boxShadow: isTarget ? `inset 0 0 0 2px ${C.mint}` : isDropping ? `inset 0 0 0 2px ${C.mint}` : "none",
-                      transform: isTarget ? "scaleY(1.12)" : "none", zIndex: isTarget ? 2 : "auto", position: "relative" }} />
+                      transform: isTarget ? "scaleY(1.12)" : "none", zIndex: isTarget ? 2 : "auto", position: "relative" }}>
+                    {m === ph.from && (
+                      <span style={{ position: "absolute", top: 1, left: 4, fontSize: 9, fontWeight: 700, textTransform: "lowercase", letterSpacing: "0.05em", color: "rgba(242,242,244,0.22)", pointerEvents: "none", userSelect: "none", zIndex: 0 }}>
+                        {ph.label}
+                      </span>
+                    )}
+                  </div>
                 );
               })}
 
