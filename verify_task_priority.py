@@ -140,7 +140,7 @@ for expected in (
 priority_controls_start = SOURCE.index("function PriorityControls(")
 priority_controls_end = SOURCE.index("\nfunction ", priority_controls_start + 1)
 priority_controls = SOURCE[priority_controls_start:priority_controls_end]
+assert "onChange({ paused: true });" in priority_controls
 assert "onChange({ priority: p, paused: false });" in priority_controls
-assert "else if (pr === p) onChange({ paused: true });" not in priority_controls
 
-print(f"PASS: {len(results)} priority behavior checks, 5 legacy-date guards, and active-priority idempotence")
+print(f"PASS: {len(results)} priority behavior checks, 5 legacy-date guards, and active-priority toggle behavior")

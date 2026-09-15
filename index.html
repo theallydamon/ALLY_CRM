@@ -953,6 +953,7 @@ Items with neither date keep inheriting the shared pillar-wide posting-countdown
 as before, purely so they still contribute to that pillar's open-task badge count. */
 const pushContentTasks = (items, pillarKey, urgency) => {
 items.forEach((i) => {
+if (i.paused) return;
 const inProgress = i.status === "To Film" || i.status === "To Edit" || i.status === "Ideas";
 let any = false;
 if (inProgress && i.due && !i.dueOff) {
@@ -4161,9 +4162,8 @@ const defaultTaskDue = () => null;
    pass/fail, so once a date is set it drives the priority; the two non-matching L/M/H buttons grey
    out (they're not there to be manually overridden away from what the calendar says). Clear the due
    date, or pause the item, to take manual control of priority again.
-   Priority clicks are idempotent: clicking the selected level keeps the item active at that level.
-   This prevents an ordinary attempt to confirm Low/Medium/High from silently pausing the task and
-   removing it from the main board. */
+   Clicking the selected level when active toggles paused (disables priority and removes it from the main board).
+   Clicking it again re-enables priority. */
 function PrioritySelector({ value, onChange }) {
   const pr = value || "Medium";
   return (
@@ -4200,7 +4200,11 @@ function PriorityControls({ item, onChange }) {
   const isArrived = isWaiting && item.chaseOn <= _today;
 
   const setPriority = (p) => {
-    onChange({ priority: p, paused: false });
+    if (!paused && pr === p) {
+      onChange({ paused: true });
+    } else {
+      onChange({ priority: p, paused: false });
+    }
   };
 
   return (
