@@ -828,6 +828,13 @@ function moveMamaAdminTasksToAi(ally, mama) {
     mama: { ...mama, tasks: [] },
   };
 }
+function ensureSeedCreators(mama) {
+  if (!mama) return mama;
+  const existingNames = new Set((mama.creators || []).map((c) => c.name));
+  const missing = MAMA_SEED.creators.filter((c) => !existingNames.has(c.name));
+  if (missing.length === 0) return mama;
+  return { ...mama, creators: [...(mama.creators || []), ...missing] };
+}
 const DEAL_STAGES = ["Brief", "Script", "Script approval", "Film", "Edit", "Final approval", "Posted"];
 /* Reel production stages. Each carries its own per-stage deadline (deal.stageDue[key]); the
    current stage (deal.stage) is what surfaces in the Priorities hub, titled by `hub`. When the
@@ -1235,6 +1242,9 @@ const MAMA_SEED = {
     { id: uid(), name: "Rami Even-Esh", niche: "", goals: [], aura: 1, links: [], notes: [], tasks: [] },
     { id: uid(), name: "Keren Picker", niche: "", goals: [], aura: 3, links: [], notes: [], tasks: [] },
     { id: uid(), name: "Joshua Washington", niche: "", goals: [], aura: 0, links: [], notes: [], tasks: [] },
+    { id: uid(), name: "Tali Aynalem", niche: "", bio: "", nextSteps: "", goals: [], aura: 1, links: [], notes: "", tasks: [], updatedAt: Date.now() },
+    { id: uid(), name: "Alana Zeitchik", niche: "", bio: "", nextSteps: "", goals: [], aura: 2, links: [], notes: "", tasks: [], updatedAt: Date.now() },
+    { id: uid(), name: "Melissa Ellis", niche: "", bio: "", nextSteps: "", goals: [], aura: 3, links: [], notes: "", tasks: [], updatedAt: Date.now() },
   ],
   tasks: [],
 };
@@ -2322,6 +2332,7 @@ function AllyCRM() {
          once, the first time this loads after the change. */
       m = { ...m, tasks: (m.tasks || []).map((t) => t.links !== undefined ? t : { ...t, links: t.link ? [{ id: uid(), url: t.link, label: t.link.replace(/^https?:\/\//, "").slice(0, 30) }] : [] }) };
       m = { ...m, tasks: migrateMamaTasks(m.tasks) };
+      m = ensureSeedCreators(m);
       ({ ally: a, mama: m } = moveMamaAdminTasksToAi(a, m));
       setAlly(a); setMama(m); loaded.current = true; setLocalLoaded(true);
     })();
@@ -2807,7 +2818,8 @@ function AllyCRM() {
   const normaliseCloudData = (raw) => {
     if (!raw || !raw.ally || !raw.mama) return null;
     const remoteAlly = migrateAlly(raw.ally);
-    const migrated = moveMamaAdminTasksToAi(remoteAlly, { ...raw.mama, tasks: migrateMamaTasks(raw.mama.tasks) });
+    const remoteMama = ensureSeedCreators({ ...raw.mama, tasks: migrateMamaTasks(raw.mama.tasks) });
+    const migrated = moveMamaAdminTasksToAi(remoteAlly, remoteMama);
     return { ally: migrated.ally, mama: migrated.mama };
   };
 
