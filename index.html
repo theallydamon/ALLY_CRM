@@ -828,12 +828,17 @@ function moveMamaAdminTasksToAi(ally, mama) {
     mama: { ...mama, tasks: [] },
   };
 }
+const RETIRED_CREATOR_NAMES = new Set(["Natalia Mehlman Petrzela", "Keren Picker", "Joshua Washington"]);
 function ensureSeedCreators(mama) {
   if (!mama) return mama;
-  const existingNames = new Set((mama.creators || []).map((c) => c.name));
+  /* These former seed records were removed from the roster. Filter any copies already saved in
+     Firestore as well as removing them from the seed, otherwise every normalisation pass restores
+     a creator immediately after the user deletes it. */
+  const retained = (mama.creators || []).filter((c) => !RETIRED_CREATOR_NAMES.has(c.name));
+  const existingNames = new Set(retained.map((c) => c.name));
   const missing = MAMA_SEED.creators.filter((c) => !existingNames.has(c.name));
-  if (missing.length === 0) return mama;
-  return { ...mama, creators: [...(mama.creators || []), ...missing] };
+  if (missing.length === 0 && retained.length === (mama.creators || []).length) return mama;
+  return { ...mama, creators: [...retained, ...missing] };
 }
 const DEAL_STAGES = ["Brief", "Script", "Script approval", "Film", "Edit", "Final approval", "Posted"];
 /* Reel production stages. Each carries its own per-stage deadline (deal.stageDue[key]); the
@@ -1237,11 +1242,8 @@ const ALLY_SEED = {
 const MAMA_SEED = {
   creators: [
     { id: uid(), name: "Yoni Weinberg", niche: "Substack / newsletter", goals: [{ id: uid(), text: "Grow the Substack" }], aura: 0, links: [], notes: [], tasks: [] },
-    { id: uid(), name: "Natalia Mehlman Petrzela", niche: "Politics / history commentary", goals: [], aura: 4, links: [], notes: [], tasks: [] },
     { id: uid(), name: "Amir Grunhaus", niche: "", goals: [], aura: 2, links: [], notes: [], tasks: [] },
     { id: uid(), name: "Rami Even-Esh", niche: "", goals: [], aura: 1, links: [], notes: [], tasks: [] },
-    { id: uid(), name: "Keren Picker", niche: "", goals: [], aura: 3, links: [], notes: [], tasks: [] },
-    { id: uid(), name: "Joshua Washington", niche: "", goals: [], aura: 0, links: [], notes: [], tasks: [] },
     { id: uid(), name: "Tali Aynalem", niche: "", bio: "", nextSteps: "", goals: [], aura: 1, links: [], notes: "", tasks: [], updatedAt: Date.now() },
     { id: uid(), name: "Alana Zeitchik", niche: "", bio: "", nextSteps: "", goals: [], aura: 2, links: [], notes: "", tasks: [], updatedAt: Date.now() },
     { id: uid(), name: "Melissa Ellis", niche: "", bio: "", nextSteps: "", goals: [], aura: 3, links: [], notes: "", tasks: [], updatedAt: Date.now() },
