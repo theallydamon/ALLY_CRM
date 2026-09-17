@@ -528,6 +528,31 @@ try {
 const CRM_WORKSPACE_ID = "ally-crm";
 const CRM_WORKSPACE_PATH = `workspaces/${CRM_WORKSPACE_ID}`;
 
+/* ---------- cloud sync resilience ----------
+   A Firestore transaction is online-only. Unlike an ordinary write the SDK never parks it in the
+   offline queue: it is rejected outright the moment the connection is not there. Dropped Wi-Fi, a
+   laptop waking from sleep, a phone changing network, a tab left in the background long enough for
+   Firestore to close its stream, and two saves landing on this one document at the same time all
+   produce a rejection that has nothing to do with the data being saved. Every code below means
+   "not now", never "this will never work", so the sync effects retry instead of stopping. */
+const TRANSIENT_SYNC_CODES = ["unavailable", "aborted", "cancelled", "deadline-exceeded", "internal", "resource-exhausted", "failed-precondition", "unknown"];
+/* Backoff between attempts: quick twice (a blink of connectivity), then progressively calmer so a
+   long outage does not sit in a tight loop. Coming back online, or returning to the tab, resets it. */
+const SYNC_RETRY_DELAYS = [1200, 3000, 8000, 20000, 45000];
+const syncRetryDelay = (attempt) => SYNC_RETRY_DELAYS[Math.min(attempt, SYNC_RETRY_DELAYS.length - 1)];
+const isOffline = () => typeof navigator !== "undefined" && navigator.onLine === false;
+const isTransientSyncError = (e) => {
+  if (isOffline()) return true;
+  if (!e) return true;
+  if (e.code) return TRANSIENT_SYNC_CODES.indexOf(e.code) !== -1;
+  return true; /* no code at all is a dropped request far more often than it is bad data */
+};
+/* The reason is kept where it can actually be found later. The banners stay in plain English, but
+   without this there is no way to tell a flaky connection apart from data Firestore refuses. */
+const noteSyncFailure = (what, e) => {
+  try { window.__crmLastSyncError = e; console.warn("[CRM sync] " + what + ":", (e && e.code) || "(no code)", (e && e.message) || e); } catch (err) {}
+};
+
 const jsonEqual = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const isRecord = (value) => !!value && typeof value === "object" && !Array.isArray(value);
 const isIdCollection = (value) => Array.isArray(value) && value.every((item) => isRecord(item) && item.id != null);
@@ -2352,7 +2377,7 @@ function AllyCRM() {
   /* ---------- cloud sync: Google Sign-In + Firestore (purely additive on top of localStorage) ---------- */
   const [user, setUser] = useState(null);
   const [authReady, setAuthReady] = useState(false); // becomes true once we've heard back from Firebase at least once
-  const [cloudState, setCloudState] = useState("offline"); // offline | loading | saving | synced | error
+  const [cloudState, setCloudState] = useState("offline"); // offline | loading | saving | synced | retry | error
   const [workspaceError, setWorkspaceError] = useState("");
 
   /* ---------- active view profile (see VIEW_PROFILES) ----------
@@ -2847,37 +2872,21 @@ function AllyCRM() {
     const legacyRef = fbDb.collection("users").doc(user.uid);
     let unsub = () => {};
     let cancelled = false;
+    /* Opening the workspace and listening to it are both retried. A network blip at the wrong
+       second used to leave this tab with no listener at all for the rest of the session. */
+    let attempt = 0;
+    let retryTimer = null;
+    const retryLater = (fn) => {
+      const wait = syncRetryDelay(attempt);
+      attempt += 1;
+      clearTimeout(retryTimer);
+      retryTimer = setTimeout(() => { if (!cancelled) fn(); }, wait);
+    };
 
-    (async () => {
-      try {
-        /* Transaction prevents two first-time sessions from creating competing workspace copies. */
-        await fbDb.runTransaction(async (transaction) => {
-          const shared = await transaction.get(docRef);
-          if (shared.exists) return;
-          const legacy = await transaction.get(legacyRef);
-          const legacyData = legacy.exists ? normaliseCloudData(legacy.data()) : null;
-          const seed = legacyData || { ally: allyRef.current, mama: mamaRef.current };
-          transaction.set(docRef, {
-            ...seed,
-            workspaceId: CRM_WORKSPACE_ID,
-            updatedAt: window.firebase.firestore.FieldValue.serverTimestamp(),
-            updatedBy: user.email || user.uid,
-          });
-        });
-      } catch (e) {
-        if (!cancelled) {
-          setCloudState("error");
-          setWorkspaceError(e && e.code === "permission-denied"
-            ? `${user.email || "This account"} does not have access to the shared CRM.`
-            : "The shared CRM could not be opened. Check Firebase and reload.");
-          reconcileDone.current = true;
-        }
-        return;
-      }
-      if (cancelled) return;
-
+    const listen = () => {
       unsub = docRef.onSnapshot(
       async (snap) => {
+        attempt = 0;
         if (!snap.exists || (snap.metadata && snap.metadata.hasPendingWrites)) return;
         const remote = normaliseCloudData(snap.data());
         if (!remote) return;
@@ -2894,80 +2903,216 @@ function AllyCRM() {
         reconcileDone.current = true;
       },
       (err) => {
-        setCloudState("error");
-        setWorkspaceError(err && err.code === "permission-denied"
-          ? `${user.email || "This account"} does not have access to the shared CRM.`
-          : "Live sync was interrupted. Changes remain saved on this device while it reconnects.");
-        reconcileDone.current = true;
+        if (cancelled) return;
+        noteSyncFailure("live listener dropped", err);
+        if (err && err.code === "permission-denied") {
+          setCloudState("error");
+          setWorkspaceError(`${user.email || "This account"} does not have access to the shared CRM.`);
+          reconcileDone.current = true;
+          return;
+        }
+        /* Firestore does not restart a listener that has reported an error — it is finished, and
+           this tab would quietly stop receiving anybody else's changes until the page was reloaded.
+           Drop it properly and attach a fresh one. */
+        try { unsub(); } catch (e) {}
+        unsub = () => {};
+        setCloudState("retry");
+        setWorkspaceError(attempt >= 2 ? "Live updates dropped out. Reconnecting on its own — this device keeps working and keeps its own copy meanwhile." : "");
+        retryLater(listen);
       }
       );
-    })();
+    };
+
+    const open = async () => {
+      try {
+        /* Transaction prevents two first-time sessions from creating competing workspace copies. */
+        await fbDb.runTransaction(async (transaction) => {
+          const shared = await transaction.get(docRef);
+          if (shared.exists) return;
+          const legacy = await transaction.get(legacyRef);
+          const legacyData = legacy.exists ? normaliseCloudData(legacy.data()) : null;
+          const seed = legacyData || { ally: allyRef.current, mama: mamaRef.current };
+          transaction.set(docRef, {
+            ...seed,
+            workspaceId: CRM_WORKSPACE_ID,
+            updatedAt: window.firebase.firestore.FieldValue.serverTimestamp(),
+            updatedBy: user.email || user.uid,
+          });
+        });
+      } catch (e) {
+        if (cancelled) return;
+        noteSyncFailure("workspace could not be opened", e);
+        if (e && e.code === "permission-denied") {
+          setCloudState("error");
+          setWorkspaceError(`${user.email || "This account"} does not have access to the shared CRM.`);
+          reconcileDone.current = true;
+          return;
+        }
+        /* Deliberately NOT marking the reconcile done here. That flag is what unlocks the writer
+           below, and unlocking it without ever having seen the server copy would let this device
+           push its own state over whatever is actually in the cloud. Keep trying instead. */
+        setCloudState("retry");
+        setWorkspaceError(attempt >= 2 ? "Cannot reach the shared CRM right now. Still trying — nothing is lost, this device keeps its own copy." : "");
+        retryLater(open);
+        return;
+      }
+      if (cancelled) return;
+      listen();
+    };
+    open();
 
     return () => {
       cancelled = true;
+      clearTimeout(retryTimer);
       unsub();
     };
   }, [user, localLoaded]);
 
   /* Ongoing sync writes through a transaction. The merge is calculated against the newest server
-     snapshot inside that transaction, so an edit made by another user during our 300 ms debounce
-     is incorporated instead of overwritten. */
+     snapshot inside that transaction, so an edit made by another user during our debounce window
+     is incorporated instead of overwritten.
+
+     17 Sep 2026 FIX — "That change could not sync yet."
+     A rejected write used to be the end of the road: the catch painted "sync error" and then
+     nothing happened until the user happened to make ANOTHER edit. Since a transaction cannot be
+     queued offline (see TRANSIENT_SYNC_CODES), one dropped moment of connection — or two saves
+     colliding on this single large document — stranded that change on one device for as long as
+     nobody touched anything, which is exactly what the old message admitted. A write is now
+     retried on a backoff, again the instant the browser comes back online or the tab is looked at,
+     and on a one-minute heartbeat as a floor. Only a genuinely permanent failure still stops. */
+  const syncAttempt = useRef(0);
+  const syncInFlight = useRef(false);
+  /* Set only by a failure that retrying cannot fix (no permission, data Firestore refuses). It
+     stops the heartbeat below from hammering the same doomed write once a minute forever; any new
+     edit, or coming back online, clears it and gives the write another go. */
+  const syncFatal = useRef(false);
+  const runCloudSync = useRef(() => {});
+
+  runCloudSync.current = async () => {
+    if (!fbDb || !user || !reconcileDone.current || syncInFlight.current) return;
+    const local = { ally: allyRef.current, mama: mamaRef.current };
+    if (!local.ally || !local.mama) return;
+    const localStr = JSON.stringify(local);
+    if (lastCloudStr.current && localStr === lastCloudStr.current) {
+      syncAttempt.current = 0; setWorkspaceError(""); setCloudState("synced"); return;
+    }
+    /* Nothing is gained by attempting a transaction with no connection — it cannot be queued, it
+       just fails. Hold the change; the online listener below fires the moment the network is back. */
+    if (isOffline()) {
+      setCloudState("retry");
+      setWorkspaceError("No connection right now. This change is saved on this device and goes up as soon as you are back online.");
+      return;
+    }
+
+    syncInFlight.current = true;
+    try {
+      const docRef = fbDb.doc(CRM_WORKSPACE_PATH);
+      const merged = await fbDb.runTransaction(async (transaction) => {
+        const snapshot = await transaction.get(docRef);
+        const remote = snapshot.exists ? normaliseCloudData(snapshot.data()) : null;
+        const base = lastRemoteData.current || remote || local;
+        const resolved = remote ? mergeLiveValue(base, local, remote) : local;
+        transaction.set(docRef, {
+          ally: resolved.ally,
+          mama: resolved.mama,
+          workspaceId: CRM_WORKSPACE_ID,
+          updatedAt: window.firebase.firestore.FieldValue.serverTimestamp(),
+          updatedBy: user.email || user.uid,
+        });
+        return resolved;
+      });
+      lastRemoteData.current = merged;
+      lastCloudStr.current = JSON.stringify(merged);
+      syncAttempt.current = 0;
+
+      // If local state hasn't changed while transaction was in flight, sync state.
+      // If local state HAS changed (user was typing), do not overwrite latest local state;
+      // re-merge new local state with merged remote data so keystrokes are preserved.
+      const currentLocal = { ally: allyRef.current, mama: mamaRef.current };
+      if (jsonEqual(local, currentLocal)) {
+        if (!jsonEqual(merged.ally, allyRef.current)) setAlly(merged.ally);
+        if (!jsonEqual(merged.mama, mamaRef.current)) setMama(merged.mama);
+        setWorkspaceError("");
+        setCloudState("synced");
+      } else {
+        // User typed during the transaction! Merge new local state on top of merged transaction result.
+        const reMerged = mergeLiveValue(local, currentLocal, merged);
+        if (!jsonEqual(reMerged.ally, allyRef.current)) setAlly(reMerged.ally);
+        if (!jsonEqual(reMerged.mama, mamaRef.current)) setMama(reMerged.mama);
+        setWorkspaceError("");
+        setCloudState("saving");
+      }
+    } catch (e) {
+      noteSyncFailure("write rejected", e);
+      if (e && e.code === "permission-denied") {
+        syncAttempt.current = 0;
+        syncFatal.current = true;
+        setCloudState("error");
+        setWorkspaceError(`${user.email || "This account"} does not have permission to edit the shared CRM.`);
+        return;
+      }
+      if (isTransientSyncError(e)) {
+        const wait = syncRetryDelay(syncAttempt.current);
+        syncAttempt.current += 1;
+        setCloudState("retry");
+        /* Quiet for the first couple of attempts — a one-second blip that fixes itself does not
+           deserve a banner across the top of the app. */
+        setWorkspaceError(syncAttempt.current >= 3
+          ? "Still trying to reach Google. Your changes are saved on this device and will go up by themselves as soon as the connection is back — there is nothing to do."
+          : "");
+        clearTimeout(cloudTimer.current);
+        cloudTimer.current = setTimeout(() => runCloudSync.current(), wait);
+        return;
+      }
+      /* Not a connection problem: retrying this would loop forever. Say so, and carry the reason so
+         it can actually be diagnosed rather than guessed at. */
+      syncFatal.current = true;
+      setCloudState("error");
+      setWorkspaceError(`That change could not be saved to Google, so it is kept on this device only. Reload the page — if it keeps happening, report this reason: ${(e && e.code) || (e && e.message) || "unknown"}.`);
+    } finally {
+      syncInFlight.current = false;
+    }
+  };
+
   useEffect(() => {
     if (!fbDb || !user || !reconcileDone.current) return;
     const currentStr = JSON.stringify({ ally, mama });
     if (lastCloudStr.current && currentStr === lastCloudStr.current) {
+      syncAttempt.current = 0;
       setCloudState("synced");
       return;
     }
+    syncFatal.current = false;
     setCloudState("saving"); clearTimeout(cloudTimer.current);
-    cloudTimer.current = setTimeout(async () => {
-      try {
-        const docRef = fbDb.doc(CRM_WORKSPACE_PATH);
-        const local = { ally, mama };
-        const merged = await fbDb.runTransaction(async (transaction) => {
-          const snapshot = await transaction.get(docRef);
-          const remote = snapshot.exists ? normaliseCloudData(snapshot.data()) : null;
-          const base = lastRemoteData.current || remote || local;
-          const resolved = remote ? mergeLiveValue(base, local, remote) : local;
-          transaction.set(docRef, {
-            ally: resolved.ally,
-            mama: resolved.mama,
-            workspaceId: CRM_WORKSPACE_ID,
-            updatedAt: window.firebase.firestore.FieldValue.serverTimestamp(),
-            updatedBy: user.email || user.uid,
-          });
-          return resolved;
-        });
-        const finalStr = JSON.stringify(merged);
-        lastRemoteData.current = merged;
-        lastCloudStr.current = finalStr;
-
-        // If local state hasn't changed while transaction was in flight, sync state.
-        // If local state HAS changed (user was typing), do not overwrite latest local state;
-        // re-merge new local state with merged remote data so keystrokes are preserved.
-        const currentLocal = { ally: allyRef.current, mama: mamaRef.current };
-        if (jsonEqual(local, currentLocal)) {
-          if (!jsonEqual(merged.ally, allyRef.current)) setAlly(merged.ally);
-          if (!jsonEqual(merged.mama, mamaRef.current)) setMama(merged.mama);
-          setWorkspaceError("");
-          setCloudState("synced");
-        } else {
-          // User typed during the transaction! Merge new local state on top of merged transaction result.
-          const reMerged = mergeLiveValue(local, currentLocal, merged);
-          if (!jsonEqual(reMerged.ally, allyRef.current)) setAlly(reMerged.ally);
-          if (!jsonEqual(reMerged.mama, mamaRef.current)) setMama(reMerged.mama);
-          setWorkspaceError("");
-          setCloudState("saving");
-        }
-      } catch (e) {
-        setCloudState("error");
-        setWorkspaceError(e && e.code === "permission-denied"
-          ? `${user.email || "This account"} does not have permission to edit the shared CRM.`
-          : "That change could not sync yet. It remains saved on this device and will retry after the next edit.");
-      }
-    }, 300);
+    /* 900 ms rather than 300. Every save rewrites the whole workspace document, and Firestore rate
+       limits repeated writes to one document. 300 ms is an ordinary pause mid-sentence, so typing a
+       paragraph of creator notes fired a stream of full-document transactions that collided with
+       each other — one of the ways the old code reached its dead end. */
+    cloudTimer.current = setTimeout(() => runCloudSync.current(), 900);
     return () => clearTimeout(cloudTimer.current);
   }, [ally, mama, user]);
+
+  /* A stranded change must not need the user to notice it. Anything unsaved is pushed again the
+     moment the browser reports it is online, whenever the tab is brought back to the front, and on
+     a slow heartbeat as a last resort. Each of these is a no-op when everything is already in sync. */
+  useEffect(() => {
+    if (!fbDb || !user) return;
+    const kick = () => {
+      syncAttempt.current = 0;
+      syncFatal.current = false;
+      clearTimeout(cloudTimer.current);
+      cloudTimer.current = setTimeout(() => runCloudSync.current(), 250);
+    };
+    const onVisible = () => { if (document.visibilityState === "visible") kick(); };
+    window.addEventListener("online", kick);
+    document.addEventListener("visibilitychange", onVisible);
+    const beat = setInterval(() => { if (!syncFatal.current) runCloudSync.current(); }, 60000);
+    return () => {
+      window.removeEventListener("online", kick);
+      document.removeEventListener("visibilitychange", onVisible);
+      clearInterval(beat);
+    };
+  }, [user]);
 
   const useSave = (key, data) => {
     useEffect(() => {
@@ -3406,8 +3551,10 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
                 {user.photoURL
                   ? <img src={user.photoURL} alt={`${user.displayName || user.email} Google profile`} referrerPolicy="no-referrer" style={{ width: 30, height: 30, borderRadius: 99, objectFit: "cover", flexShrink: 0 }} />
                   : <div className="flex items-center justify-center" style={{ width: 30, height: 30, borderRadius: 99, background: C.accentBg, border: `1px solid ${C.accentLine}`, color: C.accent, fontSize: 12, fontWeight: 800, flexShrink: 0 }}>{String(user.displayName || user.email || "A").charAt(0).toUpperCase()}</div>}
-                <span className="btn-label" style={{ fontSize: 10.5, color: cloudState === "error" ? C.rose : MUT, whiteSpace: "nowrap" }}>
-                  {cloudState === "saving" ? "syncing…" : cloudState === "synced" ? "synced ✓" : cloudState === "loading" ? "loading…" : cloudState === "error" ? "sync error" : ""}
+                {/* "reconnecting…" is deliberately not "sync error": the change is safe, the app is
+                    still trying, and there is nothing for anyone to do about it. */}
+                <span className="btn-label" style={{ fontSize: 10.5, color: cloudState === "error" ? C.rose : cloudState === "retry" ? C.amber : MUT, whiteSpace: "nowrap" }}>
+                  {cloudState === "saving" ? "syncing…" : cloudState === "synced" ? "synced ✓" : cloudState === "loading" ? "loading…" : cloudState === "retry" ? "reconnecting…" : cloudState === "error" ? "sync error" : ""}
                 </span>
                 <button onClick={signOutGoogle} style={{ ...iconBtn, fontSize: 11, padding: "5px 8px", border: `1px solid ${LINE}`, borderRadius: 8 }}><span className="btn-label">Sign out</span></button>
               </div>
