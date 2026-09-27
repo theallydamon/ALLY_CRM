@@ -4780,7 +4780,7 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
   const openIfNot = (id) => setOpenDesc((o) => (o[id] ? o : { ...o, [id]: true }));
   const patch = (p) => setData((d) => ({ ...d, [pipelineKey]: { ...d[pipelineKey], ...p } }));
   const ql = (q || "").toLowerCase();
-  const add = () => { const t = title.trim(); if (!t) return; patch({ items: [{ id: uid(), title: t, desc: description.trim(), status: "Ideas", priority, created: todayISO(), due: null, scheduledFor: null }, ...content.items] }); setTitle(""); setDescription(""); setPriority("Medium"); };
+  const add = () => { const t = title.trim(); if (!t) return; patch({ items: [{ id: uid(), title: t, desc: description.trim(), status: "Ideas", created: todayISO(), due: null, scheduledFor: null, ...capturePriorityFields(priority, null) }, ...content.items] }); setTitle(""); setDescription(""); setPriority("Medium"); };
   const move = (id, dir) => setData((d) => {
     const items = d[pipelineKey].items.map((i) => {
       if (i.id !== id) return i;
@@ -4896,7 +4896,7 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
       {activeStage === "Ideas" && <div className="rounded-2xl mb-4" style={{ ...card, borderRadius: 12, padding: 12 }}>
         <div className="flex gap-2 flex-wrap mb-2 items-center">
           <input value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} placeholder="Drop a skit idea in the bank…" className="flex-1 rounded-lg px-3 py-2" style={{ ...inputStyle, minWidth: 200, fontSize: 13.5 }} />
-          <PrioritySelector value={priority} onChange={setPriority} />
+          <PrioritySelector value={priority} onChange={setPriority} withNA />
         </div>
         <div className="flex gap-2 flex-wrap items-start">
           <GrowingTextarea value={description} onChange={setDescription} placeholder="Description (optional) — the actual detail. Keeps the title short." rows={2} className="flex-1 rounded-lg px-3 py-2" style={{ ...inputStyle, minWidth: 200, fontSize: 13.5, lineHeight: 1.45 }} />
@@ -4931,8 +4931,8 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
                 <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 12.5, letterSpacing: "0.05em", textTransform: "uppercase", color: CONTENT_TINT[col] }}>{col}</span>
                 <span className="flex items-center gap-1"><span style={{ fontSize: 12.5, color: MUT }}>{cItems.length}</span><button onClick={() => setColumnCards(true)} style={{ ...iconBtn, padding: "2px 4px", fontSize: 10 }} title="Expand all cards">Expand all</button><button onClick={() => setColumnCards(false)} style={{ ...iconBtn, padding: "2px 4px", fontSize: 10 }} title="Collapse all cards">Collapse all</button></span>
               </div>
-              <div className="flex flex-col gap-2.5">
-                {cItems.map((i) => {
+              {(() => {
+                const renderCard = (i) => {
                   /* description defaults to open (full height) the moment it has content, so an
                      idea with a pasted paragraph always shows the whole thing without a click —
                      openDesc only overrides that once you've explicitly toggled it yourself. */
@@ -4970,9 +4970,53 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
                     </span></div>
                   </div>
                   );
-                })}
-                {cItems.length === 0 && <div className="rounded-lg text-center" style={{ border: `1px dashed ${LINE}`, fontSize: 12, color: FAINT, borderRadius: 10, padding: "14px 6px" }}>{ql ? "No match" : "Empty"}</div>}
-              </div>
+                };
+
+                const ideaGroupDefs = [
+                  { key: "High", label: "HIGH", color: PRIORITY_TINT.High },
+                  { key: "Medium", label: "MEDIUM", color: PRIORITY_TINT.Medium },
+                  { key: "Low", label: "LOW", color: PRIORITY_TINT.Low },
+                  { key: "None", label: "N/A", color: PRIORITY_NA_TINT },
+                ];
+
+                if (col === "Ideas") {
+                  return (
+                    <div className="flex flex-col gap-3">
+                      {ideaGroupDefs.map((g, gIdx) => {
+                        const gItems = cItems.filter((i) => (i.paused ? "None" : (i.priority || "Medium")) === g.key);
+                        return (
+                          <div key={g.key}>
+                            {gIdx > 0 && <div style={{ borderTop: `1px solid ${LINE}`, margin: "12px 0 10px" }} />}
+                            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: g.color, marginBottom: 8 }}>
+                              {g.label} <span style={{ color: MUT, fontWeight: 400 }}>({gItems.length})</span>
+                            </div>
+                            <div className="flex flex-col gap-2.5">
+                              {gItems.map(renderCard)}
+                              {gItems.length === 0 && (
+                                <div style={{ fontSize: 11.5, color: FAINT, fontStyle: "italic", padding: "2px 0" }}>
+                                  No {g.label.toLowerCase()} ideas
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                      {cItems.length === 0 && ql && (
+                        <div className="rounded-lg text-center" style={{ border: `1px dashed ${LINE}`, fontSize: 12, color: FAINT, borderRadius: 10, padding: "14px 6px" }}>
+                          No match
+                        </div>
+                      )}
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="flex flex-col gap-2.5">
+                    {cItems.map(renderCard)}
+                    {cItems.length === 0 && <div className="rounded-lg text-center" style={{ border: `1px dashed ${LINE}`, fontSize: 12, color: FAINT, borderRadius: 10, padding: "14px 6px" }}>{ql ? "No match" : "Empty"}</div>}
+                  </div>
+                );
+              })()}
             </div>
           );
         })}
