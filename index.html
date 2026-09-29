@@ -6702,7 +6702,7 @@ function CreatorDetailPage({ c, onUpdate, onRemove }) {
         </div>
       </div>
 
-      <div className="rounded-2xl p-4" style={{ ...card, borderRadius: 18 }}>
+      <div className="rounded-2xl p-4" style={{ ...card, borderRadius: 18, background: "rgba(62,143,214,0.08)", border: "1px solid rgba(62,143,214,0.25)" }}>
         <Label text="Links" />
         <div className="flex gap-2 flex-wrap mb-2">{c.links.map((l) => (<span key={l.id} className="rounded-full px-3 py-1 flex items-center gap-1.5" style={{ ...cardSoft, borderRadius: 99, fontSize: 12 }}><a href={l.url} target="_blank" rel="noreferrer" style={{ color: C.sky, textDecoration: "none", display: "flex", alignItems: "center", gap: 4 }}><ExternalLink size={11} />{l.label}</a><button onClick={() => onUpdate({ links: c.links.filter((x) => x.id !== l.id) })} style={{ ...iconBtn, padding: 0 }} aria-label="Remove link"><X size={11} /></button></span>))}</div>
         <div className="flex gap-2 flex-wrap"><input value={linkLabel} onChange={(e) => setLinkLabel(e.target.value)} placeholder="Label" className="rounded-lg px-3 py-2" style={{ ...inputStyle, width: 110 }} /><input value={linkUrl} onChange={(e) => setLinkUrl(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addLink()} placeholder="URL (Basecamp, doc, Creator IQ…)" className="flex-1 rounded-lg px-3 py-2" style={{ ...inputStyle, minWidth: 160 }} /><button onClick={addLink} style={pillAccent(aura)}>Add</button></div>
