@@ -4745,6 +4745,11 @@ return (
 {calendarFocus && (() => {
 const item = ((data[calendarFocus.pipelineKey] || {}).items || []).find((z) => z.id === calendarFocus.id);
 if (!item) return null;
+const focusLinks = item.links || (item.link ? [{ id: uid(), url: item.link.startsWith("http") ? item.link : `https://${item.link}`, label: item.link.replace(/^https?:\/\//, "").slice(0, 30) }] : []);
+const removeFocusLink = (linkId) => {
+  const newLinks = focusLinks.filter((l) => l.id !== linkId);
+  patchFocused({ links: newLinks, link: newLinks[0] ? newLinks[0].url : "" });
+};
 return (
 <div onClick={() => { if (hasTextSelection()) return; setCalendarFocus(null); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
 <div onClick={(e) => e.stopPropagation()} style={{ ...card, borderRadius: 16, padding: 20, width: "100%", maxWidth: 640, maxHeight: "85vh", display: "flex", flexDirection: "column", gap: 10, overflow: "auto" }}>
@@ -4757,6 +4762,16 @@ return (
 <span style={{ color: PIPELINE_TINT[item.pipelineKey] || MUT }}>{PIPELINE_LABEL[item.pipelineKey]}</span>
 {item.status !== "Posted" && <button onClick={() => { patchFocused({ status: "Posted", postedAt: todayISO() }); if (calendarFocus.pipelineKey !== "brandContent") setData((d) => ({ ...d, [calendarFocus.pipelineKey]: { ...d[calendarFocus.pipelineKey], lastPosted: todayISO() } })); }} className="rounded-full px-2.5 py-1" style={{ fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", background: C.mint + "1a", border: "1px solid " + C.mint + "55", color: C.mint }}>✓ Posted</button>}
 </div>
+{focusLinks.length > 0 && (
+  <div className="flex gap-1.5 flex-wrap">
+    {focusLinks.map((l) => (
+      <span key={l.id} className="rounded-full px-2.5 py-0.5 flex items-center gap-1.5" style={{ background: FILL, border: `1px solid ${LINE}`, fontSize: 11 }}>
+        <a href={l.url} target="_blank" rel="noreferrer" style={{ color: C.sky, textDecoration: "none", display: "flex", alignItems: "center", gap: 4 }}><ExternalLink size={11} />{l.label}</a>
+        <button onClick={() => removeFocusLink(l.id)} style={{ ...iconBtn, padding: 0 }} aria-label="Remove link"><X size={10} /></button>
+      </span>
+    ))}
+  </div>
+)}
 <ScriptBox value={item.desc || ""} isHtml={!!item.descHtml} open big onFocus={() => {}} onChange={(v) => patchFocused({ desc: v, descHtml: true })} onToggle={() => {}} />
 </div>
 </div>
@@ -4765,11 +4780,83 @@ return (
 </section>
 );
 }
+function SkitCard({ item: i, col, openDesc, setOpenDesc, openIfNot, updateItem, markPosted, content, pipelineKey, patch, setExpandedId, move, remove }) {
+  const [linkDraft, setLinkDraft] = useState("");
+  const [labelDraft, setLabelDraft] = useState("");
+  const descOpen = openDesc[i.id] !== undefined ? openDesc[i.id] : false;
+  const toggleDesc = () => { if (hasTextSelection()) return; setOpenDesc((o) => ({ ...o, [i.id]: !descOpen })); };
+  const links = i.links || (i.link ? [{ id: uid(), url: i.link.startsWith("http") ? i.link : `https://${i.link}`, label: i.link.replace(/^https?:\/\//, "").slice(0, 30) }] : []);
+
+  const addCardLink = () => {
+    const raw = linkDraft.trim(); if (!raw) return;
+    const url = raw.startsWith("http") ? raw : `https://${raw}`;
+    const newLinks = [...links, { id: uid(), url, label: labelDraft.trim() || url.replace(/^https?:\/\//, "").slice(0, 30) }];
+    updateItem(i.id, { links: newLinks, link: newLinks[0] ? newLinks[0].url : "" });
+    setLinkDraft(""); setLabelDraft("");
+  };
+
+  const removeCardLink = (linkId) => {
+    const newLinks = links.filter((l) => l.id !== linkId);
+    updateItem(i.id, { links: newLinks, link: newLinks[0] ? newLinks[0].url : "" });
+  };
+
+  return (
+    <div data-nav-id={i.id} onClick={toggleDesc} className="rounded-lg" style={{ cursor: "pointer", background: "rgba(255,255,255,0.035)", border: `1px solid ${LINE}`, borderLeft: `2px solid ${CONTENT_TINT[col]}`, borderRadius: 10, padding: "11px 13px" }}>
+      <InlineEdit value={i.title} onChange={(v) => updateItem(i.id, { title: v })} strong bubbleClicks />{livePost(i) && <span title={"Posts on " + i.scheduledFor} style={{ marginLeft: 6, fontSize: 12 }}>📅</span>}<button onClick={(e) => { e.stopPropagation(); setExpandedId(i.id); }} style={{ ...iconBtn, padding: 2, marginLeft: 6 }} aria-label="Expand description" title="Expand description to full screen">⤢</button>
+      <ScriptBox value={i.desc || ""} isHtml={!!i.descHtml} open={descOpen} onFocus={() => openIfNot(i.id)} onChange={(v) => updateItem(i.id, { desc: v, descHtml: true })} onToggle={toggleDesc} />
+      {links.length > 0 && (
+        <div onClick={(e) => e.stopPropagation()} className="flex gap-1.5 flex-wrap mt-1.5">
+          {links.map((l) => (
+            <span key={l.id} className="rounded-full px-2 py-0.5 flex items-center gap-1" style={{ background: FILL, border: `1px solid ${LINE}`, fontSize: 10.5 }}>
+              <a href={l.url} target="_blank" rel="noreferrer" style={{ color: C.sky, textDecoration: "none", display: "flex", alignItems: "center", gap: 3 }}><ExternalLink size={10} />{l.label}</a>
+              <button onClick={() => removeCardLink(l.id)} style={{ ...iconBtn, padding: 0 }} aria-label="Remove link"><X size={9} /></button>
+            </span>
+          ))}
+        </div>
+      )}
+      <div onClick={(e) => e.stopPropagation()} className="flex gap-1.5 mt-1.5">
+        <input value={labelDraft} onChange={(e) => setLabelDraft(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addCardLink()} placeholder="Name" className="rounded-lg px-2 py-1" style={{ ...inputStyle, fontSize: 10.5, width: 68 }} aria-label="Link name" />
+        <input value={linkDraft} onChange={(e) => setLinkDraft(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addCardLink()} placeholder="Add a URL…" className="flex-1 rounded-lg px-2 py-1" style={{ ...inputStyle, fontSize: 10.5, minWidth: 60 }} aria-label="Link URL" />
+        <button onClick={addCardLink} style={{ ...iconBtn, fontSize: 10.5, background: FILL, border: `1px solid ${LINE}`, borderRadius: 6, padding: "3px 9px" }} title="Add link">+</button>
+      </div>
+      {col === "Ready to Post" && <div className="flex items-center gap-2 mt-1.5 flex-wrap" style={{ fontSize: 10.5 }}>
+        <button onClick={(e) => { e.stopPropagation(); markPosted(i.id); }} className="rounded-full px-2 py-0.5" style={{ fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", background: `${C.mint}1a`, border: `1px solid ${C.mint}55`, color: C.mint }} title="Move to posted archive">✓ Posted</button>
+      </div>}
+      {col === "Posted" && <div className="flex items-center gap-2 mt-1.5 flex-wrap" style={{ fontSize: 10.5, color: MUT }}>
+        <span>Posted date:</span>
+        <input
+          type="date"
+          value={i.postedAt || content.lastPosted || todayISO()}
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => {
+            const val = e.target.value;
+            updateItem(i.id, { postedAt: val || null });
+            if (pipelineKey !== "brandContent" && val) {
+              patch({ lastPosted: val });
+            }
+          }}
+          className="rounded px-1.5 py-0.5"
+          style={{ ...inputStyle, fontSize: 10.5, padding: "1px 4px" }}
+        />
+      </div>}
+      {col !== "Posted" && <PriorityControls item={i} onChange={(p) => updateItem(i.id, p)} />}
+      <div className="flex items-center gap-1 mt-1.5"><span className="ml-auto flex gap-1">
+        {col === "Posted" ? <button onClick={(e) => { e.stopPropagation(); updateItem(i.id, { status: "Ready to Post", postedAt: null }); }} style={{ ...iconBtn, padding: 2, color: C.mint }} title="Restore to Ready to Post">←</button> : col !== "Ideas" && <button onClick={(e) => { e.stopPropagation(); move(i.id, -1); }} style={{ ...iconBtn, padding: 2, color: C.mint }} aria-label="Back" title="Move to previous stage">←</button>}
+        {col !== "Posted" && <button onClick={(e) => { e.stopPropagation(); col === "Ready to Post" ? markPosted(i.id) : move(i.id, 1); }} style={{ ...iconBtn, padding: 2, color: C.mint }} aria-label="Forward" title={col === "Ready to Post" ? "Move to posted archive" : "Move to next stage"}>→</button>}
+        <button onClick={(e) => { e.stopPropagation(); remove(i.id); }} style={{ ...iconBtn, padding: 2 }} aria-label="Delete"><X size={11} /></button>
+      </span></div>
+    </div>
+  );
+}
+
 function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = null, activeStage = "Ideas", onContentSchedule }) {
   const content = data[pipelineKey];
   const h = contentHealth(content);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [draftLinks, setDraftLinks] = useState([]);
+  const [linkLabel, setLinkLabel] = useState("");
+  const [linkUrl, setLinkUrl] = useState("");
   const [openDesc, setOpenDesc] = useState({});
   const [priority, setPriority] = useState("Medium");
   const [showArchive, setShowArchive] = useState(false); const [expandedId, setExpandedId] = useState(null);
@@ -4780,7 +4867,22 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
   const openIfNot = (id) => setOpenDesc((o) => (o[id] ? o : { ...o, [id]: true }));
   const patch = (p) => setData((d) => ({ ...d, [pipelineKey]: { ...d[pipelineKey], ...p } }));
   const ql = (q || "").toLowerCase();
-  const add = () => { const t = title.trim(); if (!t) return; patch({ items: [{ id: uid(), title: t, desc: description.trim(), status: "Ideas", created: todayISO(), due: null, scheduledFor: null, ...capturePriorityFields(priority, null) }, ...content.items] }); setTitle(""); setDescription(""); setPriority("Medium"); };
+  const addDraftLink = () => {
+    const raw = linkUrl.trim(); if (!raw) return;
+    const url = raw.startsWith("http") ? raw : `https://${raw}`;
+    setDraftLinks((ls) => [...ls, { id: uid(), url, label: linkLabel.trim() || raw.replace(/^https?:\/\//, "").slice(0, 30) }]);
+    setLinkLabel(""); setLinkUrl("");
+  };
+  const removeDraftLink = (id) => setDraftLinks((ls) => ls.filter((l) => l.id !== id));
+  const add = () => {
+    const t = title.trim(); if (!t) return;
+    const trailing = linkUrl.trim();
+    const links = trailing
+      ? [...draftLinks, { id: uid(), url: trailing.startsWith("http") ? trailing : `https://${trailing}`, label: linkLabel.trim() || trailing.replace(/^https?:\/\//, "").slice(0, 30) }]
+      : draftLinks;
+    patch({ items: [{ id: uid(), title: t, desc: description.trim(), links, status: "Ideas", created: todayISO(), due: null, scheduledFor: null, ...capturePriorityFields(priority, null) }, ...content.items] });
+    setTitle(""); setDescription(""); setDraftLinks([]); setLinkLabel(""); setLinkUrl(""); setPriority("Medium");
+  };
   const move = (id, dir) => setData((d) => {
     const items = d[pipelineKey].items.map((i) => {
       if (i.id !== id) return i;
@@ -4898,6 +5000,22 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
           <input value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} placeholder="Drop a skit idea in the bank…" className="flex-1 rounded-lg px-3 py-2" style={{ ...inputStyle, minWidth: 200, fontSize: 13.5 }} />
           <PrioritySelector value={priority} onChange={setPriority} withNA />
         </div>
+        {draftLinks.length > 0 && (
+          <div className="flex gap-1.5 flex-wrap mb-2">
+            {draftLinks.map((l) => (
+              <span key={l.id} className="rounded-full px-2.5 py-1 flex items-center gap-1.5" style={{ background: FILL, border: `1px solid ${LINE}`, fontSize: 11.5 }}>
+                <ExternalLink size={10} color={C.sky} />
+                <span style={{ color: C.sky }}>{l.label}</span>
+                <button onClick={() => removeDraftLink(l.id)} style={{ ...iconBtn, padding: 0 }} aria-label={`Remove ${l.label}`} title="Remove link"><X size={10} /></button>
+              </span>
+            ))}
+          </div>
+        )}
+        <div className="flex gap-2 flex-wrap mb-2">
+          <input value={linkLabel} onChange={(e) => setLinkLabel(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addDraftLink()} placeholder="Link name" className="rounded-lg px-3 py-2" style={{ ...inputStyle, width: 130, fontSize: 13.5 }} aria-label="Link name" />
+          <input value={linkUrl} onChange={(e) => setLinkUrl(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addDraftLink()} placeholder="URL (optional) — Enter or + to add another" className="flex-1 rounded-lg px-3 py-2" style={{ ...inputStyle, minWidth: 180, fontSize: 13.5 }} aria-label="Link URL" />
+          <button onClick={addDraftLink} disabled={!linkUrl.trim()} style={{ ...pillGhost, padding: "8px 14px", opacity: linkUrl.trim() ? 1 : 0.4, cursor: linkUrl.trim() ? "pointer" : "not-allowed" }} title="Add this link and clear the fields for the next one"><Plus size={14} /></button>
+        </div>
         <div className="flex gap-2 flex-wrap items-start">
           <GrowingTextarea value={description} onChange={setDescription} placeholder="Description (optional) — the actual detail. Keeps the title short." rows={2} className="flex-1 rounded-lg px-3 py-2" style={{ ...inputStyle, minWidth: 200, fontSize: 13.5, lineHeight: 1.45 }} />
           <button onClick={add} style={{ ...pillDark, fontSize: 13, padding: "8px 16px" }}><Plus size={13} style={{ display: "inline", marginRight: 4 }} />Add idea</button>
@@ -4933,42 +5051,23 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
               </div>
               {(() => {
                 const renderCard = (i) => {
-                  /* description defaults to open (full height) the moment it has content, so an
-                     idea with a pasted paragraph always shows the whole thing without a click —
-                     openDesc only overrides that once you've explicitly toggled it yourself. */
-                  const descOpen = openDesc[i.id] !== undefined ? openDesc[i.id] : false;
-                  const toggleDesc = () => { if (hasTextSelection()) return; setOpenDesc((o) => ({ ...o, [i.id]: !descOpen })); };
                   return (
-                  <div key={i.id} data-nav-id={i.id} onClick={toggleDesc} className="rounded-lg" style={{ cursor: "pointer", background: "rgba(255,255,255,0.035)", border: `1px solid ${LINE}`, borderLeft: `2px solid ${CONTENT_TINT[col]}`, borderRadius: 10, padding: "11px 13px" }}>
-                    <InlineEdit value={i.title} onChange={(v) => updateItem(i.id, { title: v })} strong bubbleClicks />{livePost(i) && <span title={"Posts on " + i.scheduledFor} style={{ marginLeft: 6, fontSize: 12 }}>📅</span>}<button onClick={(e) => { e.stopPropagation(); setExpandedId(i.id); }} style={{ ...iconBtn, padding: 2, marginLeft: 6 }} aria-label="Expand description" title="Expand description to full screen">⤢</button>
-                    <ScriptBox value={i.desc || ""} isHtml={!!i.descHtml} open={descOpen} onFocus={() => openIfNot(i.id)} onChange={(v) => updateItem(i.id, { desc: v, descHtml: true })} onToggle={toggleDesc} />
-                    {col === "Ready to Post" && <div className="flex items-center gap-2 mt-1.5 flex-wrap" style={{ fontSize: 10.5 }}>
-                      <button onClick={(e) => { e.stopPropagation(); markPosted(i.id); }} className="rounded-full px-2 py-0.5" style={{ fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", background: `${C.mint}1a`, border: `1px solid ${C.mint}55`, color: C.mint }} title="Move to posted archive">✓ Posted</button>
-                    </div>}
-                    {col === "Posted" && <div className="flex items-center gap-2 mt-1.5 flex-wrap" style={{ fontSize: 10.5, color: MUT }}>
-                      <span>Posted date:</span>
-                      <input
-                        type="date"
-                        value={i.postedAt || content.lastPosted || todayISO()}
-                        onClick={(e) => e.stopPropagation()}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          updateItem(i.id, { postedAt: val || null });
-                          if (pipelineKey !== "brandContent" && val) {
-                            patch({ lastPosted: val });
-                          }
-                        }}
-                        className="rounded px-1.5 py-0.5"
-                        style={{ ...inputStyle, fontSize: 10.5, padding: "1px 4px" }}
-                      />
-                    </div>}
-                    {col !== "Posted" && <PriorityControls item={i} onChange={(p) => updateItem(i.id, p)} />}
-                    <div className="flex items-center gap-1 mt-1.5"><span className="ml-auto flex gap-1">
-                      {col === "Posted" ? <button onClick={(e) => { e.stopPropagation(); updateItem(i.id, { status: "Ready to Post", postedAt: null }); }} style={{ ...iconBtn, padding: 2, color: C.mint }} title="Restore to Ready to Post">←</button> : col !== "Ideas" && <button onClick={(e) => { e.stopPropagation(); move(i.id, -1); }} style={{ ...iconBtn, padding: 2, color: C.mint }} aria-label="Back" title="Move to previous stage">←</button>}
-                      {col !== "Posted" && <button onClick={(e) => { e.stopPropagation(); col === "Ready to Post" ? markPosted(i.id) : move(i.id, 1); }} style={{ ...iconBtn, padding: 2, color: C.mint }} aria-label="Forward" title={col === "Ready to Post" ? "Move to posted archive" : "Move to next stage"}>→</button>}
-                      <button onClick={(e) => { e.stopPropagation(); remove(i.id); }} style={{ ...iconBtn, padding: 2 }} aria-label="Delete"><X size={11} /></button>
-                    </span></div>
-                  </div>
+                    <SkitCard
+                      key={i.id}
+                      item={i}
+                      col={col}
+                      openDesc={openDesc}
+                      setOpenDesc={setOpenDesc}
+                      openIfNot={openIfNot}
+                      updateItem={updateItem}
+                      markPosted={markPosted}
+                      content={content}
+                      pipelineKey={pipelineKey}
+                      patch={patch}
+                      setExpandedId={setExpandedId}
+                      move={move}
+                      remove={remove}
+                    />
                   );
                 };
 
