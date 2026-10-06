@@ -407,9 +407,11 @@ const MODULES = {
   adminTasks:{ icon: "adminTasks",label: "ADMIN TASKS",accent: C.accent, bg: C.accentBg },
   aiTasks:   { icon: "aiTasks",   label: "AI TASKS",   accent: C.accent, bg: C.accentBg },
 };
-/* pseudo-module descriptor for the Music CONTENT pipeline card/subtab — deliberately not added
-to MODULES itself, since MODULES.music already means the unrelated song-roadmap tab. */
+/* pseudo-module descriptors for Music CONTENT and Brand Deals pipeline cards/subtabs — deliberately
+not added to MODULES itself. */
 const MUSIC_CONTENT_MOD = { icon: "music", label: "MUSIC CONTENT", accent: C.accent, bg: C.accentBg };
+const BRAND_DEALS_MOD = { icon: "deals", label: "BRAND DEALS", accent: C.accent, bg: C.accentBg };
+const BRAND_MUSIC_MOD = { icon: "deals", label: "BRAND DEALS & MUSIC", accent: C.accent, bg: C.accentBg };
 
 /* Bottom nav strip order: HOME is centred, with two equally weighted tabs on either side. HOME
    stays the visually dominant entry.
@@ -895,7 +897,7 @@ const MIX_ROUTES = ["Fiverr", "Crighton", "Cassidy's boyfriend", "DIY"];
    completePriorityTask all key off it. */
 const ADMIN_TASK_COLS = ["High", "Medium", "Low", "None"];
 const ADMIN_COL_LABEL = { High: "High", Medium: "Medium", Low: "Low", None: "N/A" };
-const PRIORITY_PILLARS = ["mama", "content", "music", "lifeAdmin"]; // "deals" pulled for now — re-add here to bring its priority card back
+const PRIORITY_PILLARS = ["mama", "content", "brandContent", "music", "lifeAdmin"];
 
 /* ---------- priority engine: shared urgency scoring across all 6 pillars ---------- */
 const PRIORITY_LEVELS = ["Low", "Medium", "High"];
@@ -1013,7 +1015,7 @@ out.push({ id: i.id, pillar: pillarKey, title: i.title, due: null, lastProgress:
 });
 };
 pushContentTasks(ally.content.items, "content", computeContentUrgency(ally.content));
-pushContentTasks(ally.brandContent.items, "content", computeContentUrgency(ally.content));
+pushContentTasks(ally.brandContent.items, "brandContent", computeContentUrgency(ally.content));
 pushContentTasks(ally.musicContent.items, "music", computeContentUrgency(ally.musicContent));
 }
 /* each active deal surfaces its CURRENT stage as the hub task: a Reel shows the current
@@ -3912,9 +3914,11 @@ const byPillar = Object.fromEntries(PRIORITY_PILLARS.map((k) => [k, tasks.filter
 const contentPostUrgency = computeContentUrgency(ally.content);
 const musicPostUrgency = computeContentUrgency(ally.musicContent);
 const contentTaskPct = computePillarFillPercent(byPillar.content.filter((t) => !t._preScored));
+const brandTaskPct = computePillarFillPercent((byPillar.brandContent || []).filter((t) => !t._preScored));
 const musicTaskPct = computePillarFillPercent(byPillar.music.filter((t) => !t._preScored));
 const fillPct = Object.fromEntries(PRIORITY_PILLARS.map((k) => [k,
 k === "content" ? Math.max(contentTaskPct, contentPostUrgency.pct) :
+k === "brandContent" ? brandTaskPct :
 k === "music" ? Math.max(musicTaskPct, musicPostUrgency.pct) :
 computePillarFillPercent(byPillar[k])]));
 /* FIXED ORDER: Life Admin, Comedy Content, Music Content, Mama (where active in profile).
@@ -3945,7 +3949,7 @@ const onSetStatus = ({ id, pipe, from }, status) => {
 return (
 <section>
 <div style={{ marginBottom: 16 }}>
-<h1 className="page-h1" style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700 }}>{onlyPillar ? (onlyPillar === "lifeAdmin" ? "Life Admin" : onlyPillar === "music" ? MUSIC_CONTENT_MOD.label : MODULES[onlyPillar].label) : "Priorities right now"}</h1>
+<h1 className="page-h1" style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700 }}>{onlyPillar ? (onlyPillar === "lifeAdmin" ? "Life Admin" : onlyPillar === "brandContent" ? BRAND_DEALS_MOD.label : onlyPillar === "music" ? MUSIC_CONTENT_MOD.label : MODULES[onlyPillar].label) : "Priorities right now"}</h1>
 </div>
 
 {/* ALL FOUR PILLARS ON ONE ROW, deliberately a fixed 4-up rather than auto-fit.
@@ -3957,9 +3961,9 @@ screens, where a 4-up would be unusable and there is no dragging anyway. */}
 <div className={`grid gap-3${onlyPillar ? "" : " pillar-grid"}`} style={onlyPillar ? { gridTemplateColumns: "minmax(0, 1fr)" } : { "--pillar-count": ranked.length }}>
 {ranked.map((k) => (
 k === "content"
-? <ContentPillarCard key={k} content={ally.content} pipelineKey="content" mod={MODULES.content} go={go} rank={rankOf[k]} taskPct={contentTaskPct} postPct={contentPostUrgency.pct} onNavigate={navigateToTask} onComplete={completeTask} extraItems={ally.brandContent.items} schedule={schedule} onSetStatus={onSetStatus} />
+? <ContentPillarCard key={k} content={ally.content} pipelineKey="content" mod={MODULES.content} go={go} rank={rankOf[k]} taskPct={contentTaskPct} postPct={contentPostUrgency.pct} onNavigate={navigateToTask} onComplete={completeTask} schedule={schedule} onSetStatus={onSetStatus} />
 : k === "music"
-? <ContentPillarCard key={k} content={ally.musicContent} pipelineKey="musicContent" mod={MUSIC_CONTENT_MOD} go={go} rank={rankOf[k]} taskPct={musicTaskPct} postPct={musicPostUrgency.pct} onNavigate={navigateToTask} onComplete={completeTask} schedule={schedule} onSetStatus={onSetStatus} />
+? <BrandMusicPillarCard key={k} brandContent={ally.brandContent} musicContent={ally.musicContent} mod={BRAND_MUSIC_MOD} rank={rankOf[k]} onNavigate={navigateToTask} schedule={schedule} onSetStatus={onSetStatus} />
 : <PriorityPillarCard key={k} pillarKey={k} tasks={byPillar[k]} go={go} rank={rankOf[k]} onDropPriority={onDropPriority} pct={fillPct[k]} onNavigate={navigateToTask} onComplete={completeTask} schedule={schedule} />
 ))}
 </div>
@@ -4116,6 +4120,107 @@ function dueLabel(iso) {
   return `${d}d`;
 }
 
+function PipelineSection({ title, content, pipelineKey, navSub, schedule, onSetStatus, onNavigate }) {
+  const pipelineCols = ["Ready to Post", "To Edit", "To Film", "Ideas"];
+  const items = (content && content.items) || [];
+  const counts = Object.fromEntries(pipelineCols.map((c) => [c, items.filter((i) => i.status === c).length]));
+  const allItems = items.map((i) => ({ ...i, _pipe: pipelineKey }));
+  const ideasDated = allItems.filter((i) => i.status === "Ideas" && !i.paused);
+  const toFilmDated = allItems.filter((i) => i.status === "To Film" && !i.paused);
+  const toEditDated = allItems.filter((i) => i.status === "To Edit" && !i.paused);
+  const toPostDated = allItems.filter((i) => i.status === "Ready to Post" && !i.paused);
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center justify-between" style={{ marginTop: 2, marginBottom: 2 }}>
+        <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 13, letterSpacing: "0.04em", color: C.ink, textTransform: "uppercase" }}>{title}</span>
+        <span style={{ fontSize: 10.5, color: MUT, cursor: "pointer" }} onClick={(e) => { e.stopPropagation(); onNavigate && onNavigate({ navTab: "content", navSub }); }}>
+          Open board →
+        </span>
+      </div>
+      <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
+        {pipelineCols.map((c) => (
+          <div key={c} className="rounded-lg py-1.5 text-center" style={{ background: C.soft, border: "1px solid " + LINE }}>
+            <div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 17, color: CONTENT_TINT[c] }}>{counts[c]}</div>
+            <div style={{ fontSize: 9, letterSpacing: "0.04em", textTransform: "uppercase", color: MUT, marginTop: 1 }}>{c}</div>
+          </div>
+        ))}
+      </div>
+      <div className="flex flex-col gap-2 mt-2 pt-2" style={{ borderTop: "1px solid " + LINE }}>
+        <TaskGroup label="Ideas" tint={CONTENT_TINT["Ideas"]} count={ideasDated.length || null} empty="—" onDropStatus={(p) => onSetStatus && onSetStatus(p, "Ideas")}>
+          {ideasDated.length ? ideasDated.map((i) => (
+            <TaskChip key={i.id} taskId={i.id} title={i.title} pillar={pipelineKey}
+              scheduled={schedule && (schedule[i.id] || schedule[`${i.id}-sched`] || schedule[String(i.id).replace(/-sched$/, "")])} statusMove={{ id: i.id, pipe: i._pipe, from: i.status }}
+              onOpen={() => onNavigate && onNavigate({ id: i.id, navTab: "content", navSub })} />
+          )) : null}
+        </TaskGroup>
+        <TaskGroup label="To Film" tint={CONTENT_TINT["To Film"]} count={toFilmDated.length || null} empty="—" onDropStatus={(p) => onSetStatus && onSetStatus(p, "To Film")}>
+          {toFilmDated.length ? toFilmDated.map((i) => (
+            <TaskChip key={i.id} taskId={i.id} title={i.title} pillar={pipelineKey}
+              scheduled={schedule && (schedule[i.id] || schedule[`${i.id}-sched`] || schedule[String(i.id).replace(/-sched$/, "")])} statusMove={{ id: i.id, pipe: i._pipe, from: i.status }}
+              onOpen={() => onNavigate && onNavigate({ id: i.id, navTab: "content", navSub })} />
+          )) : null}
+        </TaskGroup>
+        <TaskGroup label="To Edit" tint={CONTENT_TINT["To Edit"]} count={toEditDated.length || null} empty="—" onDropStatus={(p) => onSetStatus && onSetStatus(p, "To Edit")}>
+          {toEditDated.length ? toEditDated.map((i) => (
+            <TaskChip key={i.id} taskId={i.id} title={i.title} pillar={pipelineKey}
+              scheduled={schedule && (schedule[i.id] || schedule[`${i.id}-sched`] || schedule[String(i.id).replace(/-sched$/, "")])} statusMove={{ id: i.id, pipe: i._pipe, from: i.status }}
+              onOpen={() => onNavigate && onNavigate({ id: i.id, navTab: "content", navSub })} />
+          )) : null}
+        </TaskGroup>
+        <TaskGroup label="Ready to Post" tint={CONTENT_TINT["Ready to Post"]} count={toPostDated.length || null} empty="—" onDropStatus={(p) => onSetStatus && onSetStatus(p, "Ready to Post")}>
+          {toPostDated.length ? toPostDated.map((i) => (
+            <TaskChip key={i.id} taskId={i.id} title={i.title} pillar={pipelineKey}
+              scheduled={schedule && (schedule[i.id] || schedule[`${i.id}-sched`] || schedule[String(i.id).replace(/-sched$/, "")])} statusMove={{ id: i.id, pipe: i._pipe, from: i.status }}
+              onOpen={() => onNavigate && onNavigate({ id: i.id, navTab: "content", navSub })} />
+          )) : null}
+        </TaskGroup>
+      </div>
+    </div>
+  );
+}
+
+function BrandMusicPillarCard({ brandContent, musicContent, mod, rank, onNavigate, schedule, onSetStatus }) {
+  return (
+    <div onClick={() => onNavigate && onNavigate({ navTab: "content", navSub: "brandDeals" })} className="rounded-2xl p-4 pillar-card" style={{ ...card, borderRadius: 16, borderLeft: "4px solid " + mod.accent, cursor: "pointer" }}>
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2 min-w-0">
+          <span style={{ width: 28, height: 28, borderRadius: 99, background: mod.accent, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 14, flexShrink: 0 }}>{rank}</span>
+          {(() => { const G = NAV_ICONS[mod.icon]; return G ? <G size={17} color={MUT} strokeWidth={1.9} style={{ flexShrink: 0 }} /> : null; })()}
+          <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 16, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{mod.label}</span>
+        </div>
+        <ArrowUpRight size={16} color={MUT} />
+      </div>
+
+      <div className="flex flex-col gap-4">
+        {/* BRAND DEALS SECTION FIRST */}
+        <PipelineSection
+          title="Brand Deals"
+          content={brandContent}
+          pipelineKey="brandContent"
+          navSub="brandDeals"
+          schedule={schedule}
+          onSetStatus={onSetStatus}
+          onNavigate={onNavigate}
+        />
+
+        <div style={{ borderTop: "1px dashed " + LINE, margin: "2px 0" }} />
+
+        {/* MUSIC CONTENT SECTION SECOND */}
+        <PipelineSection
+          title="Music Content"
+          content={musicContent}
+          pipelineKey="musicContent"
+          navSub="musicContent"
+          schedule={schedule}
+          onSetStatus={onSetStatus}
+          onNavigate={onNavigate}
+        />
+      </div>
+    </div>
+  );
+}
+
 /* Content's card doesn't show Urgent/Medium/Low task columns like the other pillars — content has no
    individual priorities anymore, just one master signal (days since last post, entirely independent
    of the pipeline) rendered as its own fill ring, plus a glance at where ideas sit in the pipeline. */
@@ -4126,7 +4231,7 @@ const postTint = urgencyTint(postPct);
 const critical = postPct > 100;
 const filmType = pipelineKey === "musicContent" ? "musicToFilm" : "contentToFilm";
 const editType = pipelineKey === "musicContent" ? "musicToEdit" : "contentToEdit";
-const navSub = pipelineKey === "musicContent" ? "musicContent" : "content";
+const navSub = pipelineKey === "brandContent" ? "brandDeals" : pipelineKey === "musicContent" ? "musicContent" : "content";
 const pipelineCols = ["Ready to Post", "To Edit", "To Film", "Ideas"];
 const counts = Object.fromEntries(pipelineCols.map((c) => [c, content.items.filter((i) => i.status === c).length]));
 /* two separate deadline feeds so filming deadlines and editing deadlines stay visually apart —
