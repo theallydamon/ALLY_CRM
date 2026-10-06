@@ -6,12 +6,15 @@ const { getAuth } = require("firebase-admin/auth");
 const { FieldValue, getFirestore } = require("firebase-admin/firestore");
 const {
   ALLOWED_EMAILS,
-  CLAUDE_REDIRECT_URI,
   normaliseTask,
   randomToken,
   sha256,
   taskRecord,
 } = require("./lib");
+
+const { SCOPES, redirectUriAllowed, requestedScopes, hasScope } = require("./crm-auth");
+const { TOOL_DEFINITIONS } = require("./crm-records");
+const { makeService } = require("./crm-service");
 
 initializeApp();
 const db = getFirestore();
@@ -38,10 +41,6 @@ function parseBody(req) {
   return Object.fromEntries(new URLSearchParams(req.rawBody ? req.rawBody.toString("utf8") : ""));
 }
 
-function redirectUriAllowed(uri) {
-  return uri === CLAUDE_REDIRECT_URI;
-}
-
 async function authenticate(req) {
   const header = req.get("authorization") || "";
   if (!header.startsWith("Bearer ")) return null;
@@ -49,30 +48,35 @@ async function authenticate(req) {
   const snap = await OAUTH.collection("tokens").doc(tokenHash).get();
   if (!snap.exists) return null;
   const token = snap.data();
+  if (token.resource && token.resource !== originFor(req) + "/mcp") return null;
   if (token.kind !== "access" || token.expiresAt <= Date.now() || !ALLOWED_EMAILS.has(token.email)) return null;
   return token;
 }
 
-async function issueTokens(email, clientId, oldRefreshHash = null) {
+async function issueTokens(email, clientId, consumeRef = null, scope = "crm.tasks.write", resource = null) {
   const accessToken = randomToken(36);
   const refreshToken = randomToken(48);
-  const batch = db.batch();
-  batch.set(OAUTH.collection("tokens").doc(sha256(accessToken)), {
-    kind: "access", email, clientId, expiresAt: Date.now() + ACCESS_TTL_MS, createdAt: FieldValue.serverTimestamp(),
+  await db.runTransaction(async (tx) => {
+    if (consumeRef) {
+      const consumed = await tx.get(consumeRef);
+      if (!consumed.exists || consumed.data().expiresAt <= Date.now()) throw new Error("OAuth grant already consumed or expired.");
+      tx.delete(consumeRef);
+    }
+    tx.set(OAUTH.collection("tokens").doc(sha256(accessToken)), {
+      kind: "access", email, clientId, scope, resource, expiresAt: Date.now() + ACCESS_TTL_MS, createdAt: FieldValue.serverTimestamp(),
+    });
+    tx.set(OAUTH.collection("tokens").doc(sha256(refreshToken)), {
+      kind: "refresh", email, clientId, scope, resource, expiresAt: Date.now() + REFRESH_TTL_MS, createdAt: FieldValue.serverTimestamp(),
+    });
   });
-  batch.set(OAUTH.collection("tokens").doc(sha256(refreshToken)), {
-    kind: "refresh", email, clientId, expiresAt: Date.now() + REFRESH_TTL_MS, createdAt: FieldValue.serverTimestamp(),
-  });
-  if (oldRefreshHash) batch.delete(OAUTH.collection("tokens").doc(oldRefreshHash));
-  await batch.commit();
-  return { access_token: accessToken, token_type: "Bearer", expires_in: ACCESS_TTL_MS / 1000, refresh_token: refreshToken, scope: "crm.tasks.write" };
+  return { access_token: accessToken, token_type: "Bearer", expires_in: ACCESS_TTL_MS / 1000, refresh_token: refreshToken, scope };
 }
 
 async function registerClient(req, res) {
   const body = parseBody(req);
   const redirects = Array.isArray(body.redirect_uris) ? body.redirect_uris : [];
   if (!redirects.length || redirects.some((uri) => !redirectUriAllowed(uri))) {
-    return oauthError(res, 400, "invalid_redirect_uri", "Only Claude's official MCP callback is allowed.");
+    return oauthError(res, 400, "invalid_redirect_uri", "Only approved official Claude or ChatGPT MCP callbacks are allowed.");
   }
   const clientId = randomToken(24);
   const clientSecret = randomToken(36);
@@ -93,6 +97,15 @@ async function registerClient(req, res) {
   });
 }
 
+function authorizationError(req, res, query, error, description) {
+  const redirect = new URL(String(query.redirect_uri));
+  redirect.searchParams.set("error", error);
+  redirect.searchParams.set("error_description", description);
+  redirect.searchParams.set("iss", originFor(req));
+  if (query.state) redirect.searchParams.set("state", String(query.state));
+  return res.redirect(302, redirect.toString());
+}
+
 async function authorize(req, res) {
   const q = req.query;
   if (q.response_type !== "code" || !q.client_id || !q.redirect_uri || !q.code_challenge || q.code_challenge_method !== "S256") {
@@ -102,16 +115,20 @@ async function authorize(req, res) {
   if (!client.exists || !client.data().redirectUris.includes(String(q.redirect_uri)) || !redirectUriAllowed(String(q.redirect_uri))) {
     return res.status(400).send("Unknown OAuth client or redirect URI.");
   }
+  const resource = q.resource ? String(q.resource) : originFor(req) + "/mcp";
+  if (resource !== originFor(req) + "/mcp") return authorizationError(req, res, q, "invalid_target", "Unsupported MCP resource.");
+  let scope;
+  try { scope = requestedScopes(q.scope, String(q.redirect_uri)); } catch (error) { return authorizationError(req, res, q, "invalid_scope", error.message); }
   const pendingId = randomToken(24);
   await OAUTH.collection("pending").doc(pendingId).set({
     clientId: String(q.client_id), redirectUri: String(q.redirect_uri), state: String(q.state || ""),
-    codeChallenge: String(q.code_challenge), expiresAt: Date.now() + CODE_TTL_MS,
+    codeChallenge: String(q.code_challenge), scope, resource, expiresAt: Date.now() + CODE_TTL_MS,
   });
   const approveUrl = `${originFor(req)}/oauth/approve`;
   return res.status(200).set("Content-Security-Policy", "default-src 'self' https://www.gstatic.com https://apis.google.com; script-src 'self' 'unsafe-inline' https://www.gstatic.com https://apis.google.com; frame-src https://accounts.google.com; connect-src 'self' https://*.googleapis.com https://*.firebaseio.com").send(`<!doctype html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Connect Claude to ALLY CRM</title>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Connect your assistant to ALLY CRM</title>
 <style>body{font:16px system-ui;max-width:520px;margin:12vh auto;padding:24px;color:#202124}button{border:0;border-radius:12px;padding:13px 18px;background:#202124;color:white;font-weight:650;cursor:pointer}.muted{color:#667085;font-size:14px}#error{color:#b42318}</style></head>
-<body><h1>Connect ALLY CRM</h1><p>Sign in with an approved CRM account. Claude will receive permission only to add inbox tasks.</p><button id="connect">Continue with Google</button><p id="error"></p><p class="muted">No Google password or service-account key is shared with Claude.</p>
+<body><h1>Connect ALLY CRM</h1><p>Sign in with an approved CRM account. Your assistant will receive these permissions: ${scope.split(" ").map((s) => ({ "crm.tasks.write": "add inbox tasks", "crm.records.read": "read CRM records", "crm.records.write": "create and update CRM records (no deletion)", "offline_access": "keep the approved connection active" }[s])).join("; ")}.</p><button id="connect">Continue with Google</button><p id="error"></p><p class="muted">No Google password or service-account key is shared with your assistant.</p>
 <script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-app-compat.js"></script><script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-auth-compat.js"></script>
 <script>
 firebase.initializeApp({apiKey:"AIzaSyBkjEWhqucPPFVCi5cnx_15LccgbI4B-pQ",authDomain:"ally-crm-cbdd1.firebaseapp.com",projectId:"ally-crm-cbdd1",appId:"1:139362174943:web:ea4df75838f6dfcf80a66a"});
@@ -134,7 +151,7 @@ async function approve(req, res) {
   batch.delete(pendingRef);
   batch.set(OAUTH.collection("codes").doc(sha256(code)), { ...data, email, expiresAt: Date.now() + CODE_TTL_MS });
   await batch.commit();
-  const redirect = new URL(data.redirectUri); redirect.searchParams.set("code", code); if (data.state) redirect.searchParams.set("state", data.state);
+  const redirect = new URL(data.redirectUri); redirect.searchParams.set("iss", originFor(req)); redirect.searchParams.set("code", code); if (data.state) redirect.searchParams.set("state", data.state);
   return json(res, 200, { redirect: redirect.toString() });
 }
 
@@ -151,14 +168,18 @@ async function token(req, res) {
     const value = code.data();
     const challenge = Buffer.from(sha256(Buffer.from(String(body.code_verifier || ""))), "hex").toString("base64url");
     if (value.expiresAt <= Date.now() || value.clientId !== clientId || value.redirectUri !== body.redirect_uri || challenge !== value.codeChallenge) return oauthError(res, 400, "invalid_grant", "Authorization code verification failed.");
-    await codeRef.delete();
-    return json(res, 200, await issueTokens(value.email, clientId));
+    if (body.resource && body.resource !== value.resource) return oauthError(res, 400, "invalid_target", "Resource does not match authorization.");
+    try { return json(res, 200, await issueTokens(value.email, clientId, codeRef, value.scope || "crm.tasks.write", value.resource || originFor(req) + "/mcp")); }
+    catch (_) { return oauthError(res, 400, "invalid_grant", "Authorization code already consumed or expired."); }
   }
   if (body.grant_type === "refresh_token") {
     const refreshHash = sha256(String(body.refresh_token || ""));
     const refresh = await OAUTH.collection("tokens").doc(refreshHash).get();
-    if (!refresh.exists || refresh.data().kind !== "refresh" || refresh.data().clientId !== clientId || refresh.data().expiresAt <= Date.now()) return oauthError(res, 400, "invalid_grant", "Refresh token is invalid.");
-    return json(res, 200, await issueTokens(refresh.data().email, clientId, refreshHash));
+    if (!refresh.exists || refresh.data().kind !== "refresh" || refresh.data().clientId !== clientId || refresh.data().expiresAt <= Date.now() || !ALLOWED_EMAILS.has(refresh.data().email)) return oauthError(res, 400, "invalid_grant", "Refresh token is invalid.");
+    const value = refresh.data();
+    if (body.resource && body.resource !== (value.resource || originFor(req) + "/mcp")) return oauthError(res, 400, "invalid_target", "Resource does not match authorization.");
+    try { return json(res, 200, await issueTokens(value.email, clientId, OAUTH.collection("tokens").doc(refreshHash), value.scope || "crm.tasks.write", value.resource || originFor(req) + "/mcp")); }
+    catch (_) { return oauthError(res, 400, "invalid_grant", "Refresh token already consumed or expired."); }
   }
   return oauthError(res, 400, "unsupported_grant_type", "Use authorization_code or refresh_token.");
 }
@@ -188,16 +209,20 @@ async function logCrmTask(args, actorEmail) {
   });
 }
 
+const callCrmTool = makeService(db, WORKSPACE, OAUTH, () => FieldValue.serverTimestamp());
+
 async function mcp(req, res) {
   const actor = await authenticate(req);
   if (!actor) {
     return res.status(401).set("WWW-Authenticate", `Bearer resource_metadata=\"${originFor(req)}/.well-known/oauth-protected-resource\"`).json({ error: "unauthorized" });
   }
   const body = parseBody(req);
+  if (!body || body.jsonrpc !== "2.0") return json(res, 400, { error: "Invalid JSON-RPC request." });
   const base = { jsonrpc: "2.0", id: body.id == null ? null : body.id };
-  if (body.method === "initialize") return json(res, 200, { ...base, result: { protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "ALLY CRM Inbox", version: "1.0.0" } } });
+  if (body.method === "initialize") return json(res, 200, { ...base, result: { protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "ALLY CRM Inbox", version: "2.0.0" } } });
   if (body.method === "notifications/initialized") return res.status(202).end();
-  if (body.method === "tools/list") return json(res, 200, { ...base, result: { tools: [{
+  if (body.method === "ping") return json(res, 200, { ...base, result: {} });
+  if (body.method === "tools/list") return json(res, 200, { ...base, result: { tools: [...(hasScope(actor, "crm.tasks.write") ? [{
     name: "logCrmTask",
     description: "Add one genuine actionable Gmail item to the correct live ALLY CRM task board. Use the Gmail message ID for idempotency. Do not use for FYIs, newsletters, receipts, marketing, calendar notices, or already-completed actions.",
     inputSchema: { type: "object", additionalProperties: false, required: ["profile", "title", "sourceMessageId"], properties: {
@@ -208,13 +233,25 @@ async function mcp(req, res) {
       sourceMessageId: { type: "string", maxLength: 500, description: "Stable Gmail message ID; required to prevent duplicate tasks" },
       sourceUrl: { type: "string", maxLength: 2000, description: "Optional HTTPS Gmail permalink" },
     } },
-  }] } });
+  }] : []), ...TOOL_DEFINITIONS.filter((tool) => hasScope(actor, tool.name === "saveCrmRecord" ? "crm.records.write" : "crm.records.read")).map((tool) => ({ ...tool, securitySchemes: [{ type: "oauth2", scopes: [tool.name === "saveCrmRecord" ? "crm.records.write" : "crm.records.read"] }] }))] } });
   if (body.method === "tools/call" && body.params && body.params.name === "logCrmTask") {
+    if (!hasScope(actor, "crm.tasks.write")) return json(res, 200, { ...base, result: { isError: true, content: [{ type: "text", text: "Missing crm.tasks.write permission. Reconnect with approval." }] } });
     try {
       const result = await logCrmTask(body.params.arguments, actor.email);
       return json(res, 200, { ...base, result: { content: [{ type: "text", text: result.created ? `Task logged in ${result.profile} ALLY CRM (${result.taskId}).` : `Already logged; no duplicate created (${result.taskId}).` }], structuredContent: result } });
     } catch (error) {
       return json(res, 200, { ...base, result: { isError: true, content: [{ type: "text", text: error.message || "Task could not be logged." }] } });
+    }
+  }
+  if (body.method === "tools/call" && TOOL_DEFINITIONS.some((tool) => tool.name === body.params?.name)) {
+    const name = body.params.name;
+    const needed = name === "saveCrmRecord" ? "crm.records.write" : "crm.records.read";
+    if (!hasScope(actor, needed)) return json(res, 200, { ...base, result: { isError: true, content: [{ type: "text", text: "Missing " + needed + " permission. Reconnect with approval." }] } });
+    try {
+      const result = await callCrmTool(name, body.params.arguments || {}, actor.email);
+      return json(res, 200, { ...base, result: { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result } });
+    } catch (error) {
+      return json(res, 200, { ...base, result: { isError: true, content: [{ type: "text", text: error.message || "CRM operation failed." }] } });
     }
   }
   return json(res, 200, { ...base, error: { code: -32601, message: "Method not found" } });
@@ -224,18 +261,19 @@ exports.crmConnector = onRequest({ region: REGION, cors: false, invoker: "public
   try {
     const path = req.path.replace(/\/$/, "") || "/";
     const origin = originFor(req);
-    if (req.method === "GET" && path === "/.well-known/oauth-protected-resource") return json(res, 200, { resource: `${origin}/mcp`, authorization_servers: [origin], scopes_supported: ["crm.tasks.write"] });
+    if (req.method === "GET" && path === "/.well-known/oauth-protected-resource") return json(res, 200, { resource: `${origin}/mcp`, authorization_servers: [origin], scopes_supported: SCOPES });
     if (req.method === "GET" && (path === "/.well-known/oauth-authorization-server" || path === "/.well-known/openid-configuration")) return json(res, 200, {
-      issuer: origin, authorization_endpoint: `${origin}/oauth/authorize`, token_endpoint: `${origin}/oauth/token`, registration_endpoint: `${origin}/oauth/register`,
+      issuer: origin, authorization_response_iss_parameter_supported: true, authorization_endpoint: `${origin}/oauth/authorize`, token_endpoint: `${origin}/oauth/token`, registration_endpoint: `${origin}/oauth/register`,
       response_types_supported: ["code"], grant_types_supported: ["authorization_code", "refresh_token"], code_challenge_methods_supported: ["S256"],
-      token_endpoint_auth_methods_supported: ["client_secret_post"], scopes_supported: ["crm.tasks.write"],
+      token_endpoint_auth_methods_supported: ["client_secret_post"], scopes_supported: SCOPES,
     });
     if (req.method === "POST" && path === "/oauth/register") return registerClient(req, res);
     if (req.method === "GET" && path === "/oauth/authorize") return authorize(req, res);
     if (req.method === "POST" && path === "/oauth/approve") return approve(req, res);
     if (req.method === "POST" && path === "/oauth/token") return token(req, res);
+    if (req.method === "GET" && path === "/mcp") return res.status(405).set("Allow", "POST").end();
     if (req.method === "POST" && (path === "/mcp" || path === "/")) return mcp(req, res);
-    if (req.method === "GET" && path === "/health") return json(res, 200, { ok: true, service: "ALLY CRM Inbox connector" });
+    if (req.method === "GET" && path === "/health") return json(res, 200, { ok: true, service: "ALLY CRM assistant connector", version: "2.0.0" });
     return json(res, 404, { error: "not_found" });
   } catch (error) {
     console.error(error);
