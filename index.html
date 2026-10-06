@@ -407,9 +407,10 @@ const MODULES = {
   adminTasks:{ icon: "adminTasks",label: "ADMIN TASKS",accent: C.accent, bg: C.accentBg },
   aiTasks:   { icon: "aiTasks",   label: "AI TASKS",   accent: C.accent, bg: C.accentBg },
 };
-/* pseudo-module descriptor for the Music CONTENT pipeline card/subtab — deliberately not added
-to MODULES itself, since MODULES.music already means the unrelated song-roadmap tab. */
+/* pseudo-module descriptors for Music CONTENT and Brand Deals pipeline cards/subtabs — deliberately
+not added to MODULES itself. */
 const MUSIC_CONTENT_MOD = { icon: "music", label: "MUSIC CONTENT", accent: C.accent, bg: C.accentBg };
+const BRAND_DEALS_MOD = { icon: "deals", label: "BRAND DEALS", accent: C.accent, bg: C.accentBg };
 
 /* Bottom nav strip order: HOME is centred, with two equally weighted tabs on either side. HOME
    stays the visually dominant entry.
@@ -456,7 +457,7 @@ const VIEW_PROFILES = {
     tabs: ["lifeAdmin", "overview", "content"],
     homePillar: null,
     homeSubs: false,
-    homePillars: ["lifeAdmin", "content", "music"],
+    homePillars: ["lifeAdmin", "content", "brandContent", "music"],
   },
 };
 /* Which Google accounts land on the work profile by default. Lower-cased on comparison. */
@@ -895,7 +896,7 @@ const MIX_ROUTES = ["Fiverr", "Crighton", "Cassidy's boyfriend", "DIY"];
    completePriorityTask all key off it. */
 const ADMIN_TASK_COLS = ["High", "Medium", "Low", "None"];
 const ADMIN_COL_LABEL = { High: "High", Medium: "Medium", Low: "Low", None: "N/A" };
-const PRIORITY_PILLARS = ["mama", "content", "music", "lifeAdmin"]; // "deals" pulled for now — re-add here to bring its priority card back
+const PRIORITY_PILLARS = ["mama", "content", "brandContent", "music", "lifeAdmin"];
 
 /* ---------- priority engine: shared urgency scoring across all 6 pillars ---------- */
 const PRIORITY_LEVELS = ["Low", "Medium", "High"];
@@ -1013,7 +1014,7 @@ out.push({ id: i.id, pillar: pillarKey, title: i.title, due: null, lastProgress:
 });
 };
 pushContentTasks(ally.content.items, "content", computeContentUrgency(ally.content));
-pushContentTasks(ally.brandContent.items, "content", computeContentUrgency(ally.content));
+pushContentTasks(ally.brandContent.items, "brandContent", computeContentUrgency(ally.content));
 pushContentTasks(ally.musicContent.items, "music", computeContentUrgency(ally.musicContent));
 }
 /* each active deal surfaces its CURRENT stage as the hub task: a Reel shows the current
@@ -3912,9 +3913,11 @@ const byPillar = Object.fromEntries(PRIORITY_PILLARS.map((k) => [k, tasks.filter
 const contentPostUrgency = computeContentUrgency(ally.content);
 const musicPostUrgency = computeContentUrgency(ally.musicContent);
 const contentTaskPct = computePillarFillPercent(byPillar.content.filter((t) => !t._preScored));
+const brandTaskPct = computePillarFillPercent((byPillar.brandContent || []).filter((t) => !t._preScored));
 const musicTaskPct = computePillarFillPercent(byPillar.music.filter((t) => !t._preScored));
 const fillPct = Object.fromEntries(PRIORITY_PILLARS.map((k) => [k,
 k === "content" ? Math.max(contentTaskPct, contentPostUrgency.pct) :
+k === "brandContent" ? brandTaskPct :
 k === "music" ? Math.max(musicTaskPct, musicPostUrgency.pct) :
 computePillarFillPercent(byPillar[k])]));
 /* FIXED ORDER: Life Admin, Comedy Content, Music Content, Mama (where active in profile).
@@ -3922,8 +3925,8 @@ computePillarFillPercent(byPillar[k])]));
    the cursor between visits — bad for muscle memory generally, and actively bad now that tasks are
    dragged out of them onto the calendar. The rings still show urgency; only the position is frozen.
    The number badge is therefore position, not rank. */
-const CARD_ORDER = ["lifeAdmin", "content", "music", "mama"];
-const allowedPillars = profile && profile.homePillars ? profile.homePillars : (onlyPillar ? [onlyPillar] : ["lifeAdmin", "content", "music"]);
+const CARD_ORDER = ["lifeAdmin", "content", "brandContent", "music", "mama"];
+const allowedPillars = profile && profile.homePillars ? profile.homePillars : (onlyPillar ? [onlyPillar] : ["lifeAdmin", "content", "brandContent", "music"]);
 const ranked = CARD_ORDER.filter((k) => PRIORITY_PILLARS.includes(k) && allowedPillars.includes(k));
 const rankOf = Object.fromEntries(ranked.map((k, i) => [k, i + 1]));
 const onDropPriority = (pillar, id, patch) => setPillarItemPriority(setAlly, setMama, pillar, id, patch);
@@ -3945,7 +3948,7 @@ const onSetStatus = ({ id, pipe, from }, status) => {
 return (
 <section>
 <div style={{ marginBottom: 16 }}>
-<h1 className="page-h1" style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700 }}>{onlyPillar ? (onlyPillar === "lifeAdmin" ? "Life Admin" : onlyPillar === "music" ? MUSIC_CONTENT_MOD.label : MODULES[onlyPillar].label) : "Priorities right now"}</h1>
+<h1 className="page-h1" style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700 }}>{onlyPillar ? (onlyPillar === "lifeAdmin" ? "Life Admin" : onlyPillar === "brandContent" ? BRAND_DEALS_MOD.label : onlyPillar === "music" ? MUSIC_CONTENT_MOD.label : MODULES[onlyPillar].label) : "Priorities right now"}</h1>
 </div>
 
 {/* ALL FOUR PILLARS ON ONE ROW, deliberately a fixed 4-up rather than auto-fit.
@@ -3957,7 +3960,9 @@ screens, where a 4-up would be unusable and there is no dragging anyway. */}
 <div className={`grid gap-3${onlyPillar ? "" : " pillar-grid"}`} style={onlyPillar ? { gridTemplateColumns: "minmax(0, 1fr)" } : { "--pillar-count": ranked.length }}>
 {ranked.map((k) => (
 k === "content"
-? <ContentPillarCard key={k} content={ally.content} pipelineKey="content" mod={MODULES.content} go={go} rank={rankOf[k]} taskPct={contentTaskPct} postPct={contentPostUrgency.pct} onNavigate={navigateToTask} onComplete={completeTask} extraItems={ally.brandContent.items} schedule={schedule} onSetStatus={onSetStatus} />
+? <ContentPillarCard key={k} content={ally.content} pipelineKey="content" mod={MODULES.content} go={go} rank={rankOf[k]} taskPct={contentTaskPct} postPct={contentPostUrgency.pct} onNavigate={navigateToTask} onComplete={completeTask} schedule={schedule} onSetStatus={onSetStatus} />
+: k === "brandContent"
+? <ContentPillarCard key={k} content={ally.brandContent} pipelineKey="brandContent" mod={BRAND_DEALS_MOD} go={go} rank={rankOf[k]} taskPct={brandTaskPct} postPct={0} onNavigate={navigateToTask} onComplete={completeTask} schedule={schedule} onSetStatus={onSetStatus} />
 : k === "music"
 ? <ContentPillarCard key={k} content={ally.musicContent} pipelineKey="musicContent" mod={MUSIC_CONTENT_MOD} go={go} rank={rankOf[k]} taskPct={musicTaskPct} postPct={musicPostUrgency.pct} onNavigate={navigateToTask} onComplete={completeTask} schedule={schedule} onSetStatus={onSetStatus} />
 : <PriorityPillarCard key={k} pillarKey={k} tasks={byPillar[k]} go={go} rank={rankOf[k]} onDropPriority={onDropPriority} pct={fillPct[k]} onNavigate={navigateToTask} onComplete={completeTask} schedule={schedule} />
@@ -4126,7 +4131,7 @@ const postTint = urgencyTint(postPct);
 const critical = postPct > 100;
 const filmType = pipelineKey === "musicContent" ? "musicToFilm" : "contentToFilm";
 const editType = pipelineKey === "musicContent" ? "musicToEdit" : "contentToEdit";
-const navSub = pipelineKey === "musicContent" ? "musicContent" : "content";
+const navSub = pipelineKey === "brandContent" ? "brandDeals" : pipelineKey === "musicContent" ? "musicContent" : "content";
 const pipelineCols = ["Ready to Post", "To Edit", "To Film", "Ideas"];
 const counts = Object.fromEntries(pipelineCols.map((c) => [c, content.items.filter((i) => i.status === c).length]));
 /* two separate deadline feeds so filming deadlines and editing deadlines stay visually apart —
