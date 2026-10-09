@@ -1412,6 +1412,7 @@ const googleTokenManager = {
     this.token = null;
     this.client = null;
     this.clientScope = "";
+    this.clientEmail = "";
     this.tokenPromise = null;
     this.revoked = false;
     try {
@@ -1431,7 +1432,7 @@ const googleTokenManager = {
     return !!this.getToken();
   },
 
-  requestToken(silent = true, prompt = "", scope = ALL_FEATURE_SCOPES) {
+  requestToken(silent = true, prompt = "", scope = ALL_FEATURE_SCOPES, emailHint = "") {
     if (this.isValid()) return Promise.resolve(this.getToken());
     if (this.tokenPromise) return this.tokenPromise;
     if (this.revoked) return Promise.resolve(null);
@@ -1462,11 +1463,15 @@ const googleTokenManager = {
     };
     const handleError = () => finish(null);
 
-    if (!this.client || this.clientScope !== scope) {
+    const userEmail = (emailHint || (() => { try { return firebase.auth().currentUser.email; } catch (e) { return ""; } })() || "").trim().toLowerCase();
+
+    if (!this.client || this.clientScope !== scope || this.clientEmail !== userEmail) {
       this.clientScope = scope;
+      this.clientEmail = userEmail;
       this.client = window.google.accounts.oauth2.initTokenClient({
         client_id: GOOGLE_CLIENT_ID,
-        login_hint: (() => { try { return firebase.auth().currentUser.email; } catch (e) { return undefined; } })(),
+        hint: userEmail || undefined,
+        login_hint: userEmail || undefined,
         scope,
         callback: (resp) => {
           if (this.currentCallback) this.currentCallback(resp);
@@ -1482,7 +1487,12 @@ const googleTokenManager = {
 
     try {
       const promptValue = silent ? "" : prompt;
-      this.client.requestAccessToken({ login_hint: (() => { try { return firebase.auth().currentUser.email; } catch (e) { return undefined; } })(), prompt: promptValue });
+      const options = { prompt: promptValue };
+      if (userEmail) {
+        options.hint = userEmail;
+        options.login_hint = userEmail;
+      }
+      this.client.requestAccessToken(options);
     } catch (e) {
       finish(null);
     }
@@ -1541,13 +1551,13 @@ function useCalendarAuth(crmUser, authReady) {
 
   const connect = useCallback((silent = true) => {
     if (!gisReady) return;
-    googleTokenManager.requestToken(silent, silent ? "" : "consent", googleScopesForEmail(crmUser && crmUser.email));
+    googleTokenManager.requestToken(silent, silent ? "" : "consent", googleScopesForEmail(crmUser && crmUser.email), crmUser && crmUser.email);
   }, [gisReady, crmUser]);
 
   const grant = useCallback(() => {
     if (!gisReady) return;
     setAccountMismatch(false);
-    googleTokenManager.requestToken(false, "consent", googleScopesForEmail(crmUser && crmUser.email));
+    googleTokenManager.requestToken(false, "consent", googleScopesForEmail(crmUser && crmUser.email), crmUser && crmUser.email);
   }, [gisReady, crmUser]);
 
   /* Silent connect on load */
@@ -1572,7 +1582,7 @@ function useCalendarAuth(crmUser, authReady) {
     const shout = (msg) => { if (!quiet) setCalError(msg); };
     let token = googleTokenManager.getToken();
     if (!token) {
-      token = await googleTokenManager.requestToken(true, "", googleScopesForEmail(crmUser && crmUser.email));
+      token = await googleTokenManager.requestToken(true, "", googleScopesForEmail(crmUser && crmUser.email), crmUser && crmUser.email);
       if (!token) {
         shout("Your calendar connection expired. Reconnect required.");
         return { ok: false, expired: true };
@@ -1590,7 +1600,7 @@ function useCalendarAuth(crmUser, authReady) {
     }
     if (res.status === 401 || res.status === 403) {
       googleTokenManager.clearToken();
-      token = await googleTokenManager.requestToken(true, "", googleScopesForEmail(crmUser && crmUser.email));
+      token = await googleTokenManager.requestToken(true, "", googleScopesForEmail(crmUser && crmUser.email), crmUser && crmUser.email);
       if (token) {
         try {
           res = await fetch(`${CAL_API}${path}`, {
@@ -1700,7 +1710,7 @@ function useSkitRegistry(crmUser, ally, enabled = true) {
   const sheetFetch = useCallback(async (path, options = {}) => {
     let token = googleTokenManager.getToken();
     if (!token) {
-      token = await googleTokenManager.requestToken(true, "", ALL_FEATURE_SCOPES);
+      token = await googleTokenManager.requestToken(true, "", ALL_FEATURE_SCOPES, crmUser && crmUser.email);
     }
     if (!token) throw new Error("No registry access token");
     let response = await fetch(`${SKIT_API}/${SKIT_REGISTRY_ID}${path.startsWith(":") ? "" : "/"}${path}`, {
@@ -1710,7 +1720,7 @@ function useSkitRegistry(crmUser, ally, enabled = true) {
     if (response.status === 401 || response.status === 403) {
       previousRef.current = null;
       googleTokenManager.clearToken();
-      token = await googleTokenManager.requestToken(true, "", ALL_FEATURE_SCOPES);
+      token = await googleTokenManager.requestToken(true, "", ALL_FEATURE_SCOPES, crmUser && crmUser.email);
       if (token) {
         response = await fetch(`${SKIT_API}/${SKIT_REGISTRY_ID}${path.startsWith(":") ? "" : "/"}${path}`, {
           ...options,
@@ -1781,7 +1791,7 @@ function useSkitRegistry(crmUser, ally, enabled = true) {
     previousRef.current = null;
     setError("");
     setState("connecting");
-    googleTokenManager.requestToken(silent, silent ? "" : "consent", ALL_FEATURE_SCOPES);
+    googleTokenManager.requestToken(silent, silent ? "" : "consent", ALL_FEATURE_SCOPES, crmUser && crmUser.email);
   }, [enabled, crmUser, ready]);
 
   useEffect(() => {
@@ -2807,9 +2817,11 @@ function AllyCRM() {
       setAuthError("Google sign-in is still loading. Wait a moment, then try again."); return;
     }
     setAuthError(""); setAuthStalled(false);
+    const userEmail = (() => { try { return firebase.auth().currentUser.email; } catch (e) { return undefined; } })();
     const client = window.google.accounts.oauth2.initTokenClient({
       client_id: GOOGLE_CLIENT_ID,
-      login_hint: (() => { try { return firebase.auth().currentUser.email; } catch (e) { return undefined; } })(),
+      hint: userEmail,
+      login_hint: userEmail,
       scope: `openid email profile ${ALL_FEATURE_SCOPES}`,
       callback: async (response) => {
         if (!response || response.error || !response.access_token) {
@@ -2828,7 +2840,12 @@ function AllyCRM() {
       },
       error_callback: () => setAuthError("Google sign-in window could not be opened. Try again."),
     });
-    client.requestAccessToken({ prompt: "select_account" });
+    const options = { prompt: "select_account" };
+    if (userEmail) {
+      options.hint = userEmail;
+      options.login_hint = userEmail;
+    }
+    client.requestAccessToken(options);
   };
   const signOutGoogle = async () => {
     if (!fbAuth) return;
