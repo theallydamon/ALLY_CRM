@@ -23,6 +23,30 @@ If any command requests a billing upgrade, stop. A successful deployment and hea
 
 ## Google authorization and private plugin
 
+The Firebase browser key has website restrictions. Keep those restrictions and add exactly
+`https://ally-crm-connector.theallydamon.workers.dev/*` to its existing website allowlist.
+The Google popup uses this browser key, while the Worker makes server requests without a
+browser referrer. Those server requests require a separate Firebase project key.
+
+In the same Google Cloud project, create a dedicated key restricted to **Identity Toolkit API**
+and **Token Service API**. Do not bind it to a service account or remove restrictions from
+the existing browser key. Website application restrictions do not fit server requests;
+the dedicated key identifies the project, while Firebase tokens and Firestore rules still
+authorize the user's data access.
+
+Store the dedicated key as the existing Worker's encrypted secret `FIREBASE_SERVER_API_KEY`
+through Cloudflare Settings, Variables and Secrets, or the official Wrangler secret prompt.
+Never put it in source, command arguments or chat. Set the secret before deploying this code;
+the deployment script stops before changing resources if it is absent. Preserve `CONNECTION_KEY`.
+Health now reports `serverAuthConfigured` and requires the server key for `configured: true`.
+The browser login page continues to use only `FIREBASE_API_KEY`.
+
+Register the remote server in ChatGPT Plugins, Add, Add custom MCP server, with the verified
+`/mcp` URL, OAuth and Dynamic Client Registration. Leave OpenID Connect disabled: this server
+provides OAuth, with no OIDC userinfo endpoint. Use read, write and offline access scopes.
+After connection, use its actual registered app ID to add the CRM binding to the existing
+Ally Workflows plugin's `.app.json`; the packaged MCP URL alone does not create that app binding.
+
 In Firebase Console, open project `ally-crm-cbdd1`, Authentication, Settings, Authorized domains. Add exactly `ally-crm-connector.theallydamon.workers.dev` so the existing Google sign-in can run on that host. Do not alter Firestore rules.
 
 After the deployed URL is confirmed, update the private Ally Workflows plugin's MCP URL to that host plus `/mcp`. Reconnect and approve the CRM read/write permissions with the approved Google account. Connection consent performs a live CRM read before issuing credentials. Verify tool discovery and an authenticated read before declaring it live. Perform a write only against a record the user has authorized.
