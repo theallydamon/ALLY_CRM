@@ -1826,10 +1826,10 @@ const TIME_COL_W = 62;
 /* Routine blocks deliberately use colours that do not belong to any event calendar. Their lower
    opacity keeps real events visually dominant, while the stronger edge still marks each boundary. */
 const DAY_PHASES = [
-  { key: "content",      label: "content",       from: 6 * 60,  to: 11 * 60, tint: "rgba(143,93,193,0.07)", edge: "rgba(143,93,193,0.22)" },
-  { key: "mamaPersonal", label: "mama/personal", from: 11 * 60, to: 18 * 60, tint: "rgba(205,99,61,0.07)",  edge: "rgba(205,99,61,0.22)" },
-  { key: "gym",          label: "gym",           from: 18 * 60, to: 20 * 60, tint: "rgba(35,172,166,0.07)",  edge: "rgba(35,172,166,0.22)" },
-  { key: "music",        label: "music",         from: 20 * 60, to: 22 * 60, tint: "rgba(112,76,175,0.07)", edge: "rgba(112,76,175,0.22)" },
+  { key: "content", label: "content", from: 6 * 60,  to: 9 * 60,  tint: "rgba(143,93,193,0.07)", edge: "rgba(143,93,193,0.22)" },
+  { key: "gym",     label: "gym",     from: 9 * 60,  to: 12 * 60, tint: "rgba(35,172,166,0.07)",  edge: "rgba(35,172,166,0.22)" },
+  { key: "mama",    label: "MAMA",    from: 12 * 60, to: 19 * 60, tint: "rgba(205,99,61,0.07)",  edge: "rgba(205,99,61,0.22)" },
+  { key: "music",   label: "music",   from: 19 * 60, to: 22 * 60, tint: "rgba(112,76,175,0.07)", edge: "rgba(112,76,175,0.22)" },
 ];
 const phaseForMin = (m) => DAY_PHASES.find((p) => m >= p.from && m < p.to) || DAY_PHASES[DAY_PHASES.length - 1];
 const slotToMin = (i) => DAY_START_MIN + i * SLOT_MIN;
