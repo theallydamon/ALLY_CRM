@@ -4412,37 +4412,45 @@ function PriorityControls({ item, onChange }) {
   const isWaiting = !!item.chaseOn;
   const _today = todayISO();
   const isArrived = isWaiting && item.chaseOn <= _today;
+  const isPendingWaiting = isWaiting && !isArrived;
+  const effPriority = isArrived ? "High" : pr;
+  const effPaused = isArrived ? false : paused;
 
   const setPriority = (p) => {
+    if (isPendingWaiting) return;
     onChange({ priority: p, paused: false });
   };
   /* N/A switches this task's priority off. The task keeps living on its own tab exactly as it is —
      nothing is deleted, the stored Low/Medium/High is kept underneath — but paused is what
      collectPriorityTasks filters on, so it stops reaching the HOME dashboard. */
-  const setNA = () => onChange({ paused: true });
+  const setNA = () => {
+    if (isPendingWaiting) return;
+    onChange({ paused: true });
+  };
 
   return (
     <div className="flex flex-col gap-1 mt-1.5" onClick={(e) => e.stopPropagation()}>
-      <div className="flex items-center gap-1.5 flex-wrap" style={{ fontSize: 11, opacity: paused ? 0.55 : 1 }}>
-        <div className="flex gap-1">
+      <div className="flex items-center gap-1.5 flex-wrap" style={{ fontSize: 11, opacity: effPaused ? 0.55 : 1 }}>
+        <div className="flex gap-1" style={{ opacity: isPendingWaiting ? 0.45 : 1 }}>
           {PRIORITY_LEVELS.map((p) => (
-            <button key={p} onClick={(e) => { e.stopPropagation(); setPriority(p); }} className="rounded-full px-2 py-0.5"
+            <button key={p} disabled={isPendingWaiting} onClick={(e) => { e.stopPropagation(); setPriority(p); }} className="rounded-full px-2 py-0.5"
+              title={isPendingWaiting ? "Priority selection is disabled while waiting on reply" : undefined}
               style={{
-                fontSize: 10, cursor: "pointer", fontFamily: "inherit",
-                background: !paused && pr === p ? `${PRIORITY_TINT[p]}22` : FILL,
-                border: `1px solid ${!paused && pr === p ? PRIORITY_TINT[p] : LINE}`,
-                color: !paused && pr === p ? PRIORITY_TINT[p] : MUT,
+                fontSize: 10, cursor: isPendingWaiting ? "not-allowed" : "pointer", fontFamily: "inherit",
+                background: !effPaused && effPriority === p ? `${PRIORITY_TINT[p]}22` : FILL,
+                border: `1px solid ${!effPaused && effPriority === p ? PRIORITY_TINT[p] : LINE}`,
+                color: !effPaused && effPriority === p ? PRIORITY_TINT[p] : MUT,
               }}>
               {p}
             </button>
           ))}
-          <button onClick={(e) => { e.stopPropagation(); setNA(); }} className="rounded-full px-2 py-0.5"
-            title="No priority \u2014 keeps the task here, off the HOME dashboard"
+          <button disabled={isPendingWaiting} onClick={(e) => { e.stopPropagation(); setNA(); }} className="rounded-full px-2 py-0.5"
+            title={isPendingWaiting ? "Priority selection is disabled while waiting on reply" : "No priority \u2014 keeps the task here, off the HOME dashboard"}
             style={{
-              fontSize: 10, cursor: "pointer", fontFamily: "inherit",
-              background: paused ? `${PRIORITY_NA_TINT}22` : FILL,
-              border: `1px solid ${paused ? PRIORITY_NA_TINT : LINE}`,
-              color: paused ? PRIORITY_NA_TINT : MUT,
+              fontSize: 10, cursor: isPendingWaiting ? "not-allowed" : "pointer", fontFamily: "inherit",
+              background: effPaused ? `${PRIORITY_NA_TINT}22` : FILL,
+              border: `1px solid ${effPaused ? PRIORITY_NA_TINT : LINE}`,
+              color: effPaused ? PRIORITY_NA_TINT : MUT,
             }}>
             {PRIORITY_NA}
           </button>
