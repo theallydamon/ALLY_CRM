@@ -33,7 +33,7 @@ Google sign-in through Firebase Auth gates access to the app. Every authorised u
 
 Firestore access is defined in `firestore.rules`. The original owner is recognised by the legacy `users/<uid>` document and `ally@mama.co.za` is an explicit collaborator. Deploy rule changes with `firebase deploy --only firestore:rules` before deploying app code that depends on a new access policy.
 
-The Google Sheet integration is a separate Content skit registry. It mirrors skit rows for workflow/reporting and is not the CRM database.
+The Google Sheet integration mirrors regular Content skits into production-stage tabs and Content > Brand Deals creative deliverables into Branded Skits in the same registry. Firebase remains the CRM database. Sync runs in an authenticated personal CRM session with Google Sheets connected. Branded Skits columns A:I mirror CRM fields; J:W hold optional campaign context, feedback and results, preserved by permanent Skit ID across reordering. Removed branded scripts remain as historical rows marked Removed from CRM. Commercial deal records are not imported as duplicate creative deliverables.
 
 ## Working on it
 
