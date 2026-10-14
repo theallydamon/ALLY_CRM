@@ -1345,6 +1345,8 @@ const googleScopesForEmail = (email) => profileForEmail(email) === "work" ? CAL_
 const SKIT_API = "https://sheets.googleapis.com/v4/spreadsheets";
 const SKIT_TABS = ["Ideas", "To Film", "To Edit", "Ready to Post", "Posted"];
 const BRANDED_SKIT_TAB = "Branded Skits";
+// User-selected administrative cards that should stay in CRM but not writing references.
+const SKIT_REGISTRY_EXCLUDED_IDS = new Set(["ohm8pnu"]);
 const BRANDED_SKIT_HEADERS = ["Skit ID", "Title", "Full Script", "Created At", "Last Updated", "Source", "Notes", "Status", "Source Links", "Brand", "Script Version", "Campaign Brief", "Required Messaging", "Ally Feedback", "Client Feedback", "Posted URL", "Platform", "Posted At", "Views", "Likes", "Comments", "Shares", "Metrics As Of"];
 const skitTab = (status) => SKIT_TABS.includes(status) ? status : "Ready to Post";
 const scriptText = (value) => {
@@ -1361,9 +1363,9 @@ const skitSnapshot = (item) => ({ id: item.id || "", title: item.title || "", sc
 
 // Retain sheet annotations by permanent ID, including when CRM items are reordered.
 const brandedSkitRows = (items, existingRows, updatedAt) => {
-  const byId = new Map((existingRows || []).filter((row) => row.values && row.values[0] && row.values[0].userEnteredValue).map((row) => [row.values[0].userEnteredValue.stringValue, row.values]));
+  const byId = new Map((existingRows || []).filter((row) => row.values && row.values[0] && row.values[0].userEnteredValue && !SKIT_REGISTRY_EXCLUDED_IDS.has(row.values[0].userEnteredValue.stringValue)).map((row) => [row.values[0].userEnteredValue.stringValue, row.values]));
   const stringCell = (value) => ({ userEnteredValue: { stringValue: String(value || "") } });
-  const rows = (items || []).map((item) => {
+  const rows = (items || []).filter((item) => !SKIT_REGISTRY_EXCLUDED_IDS.has(item.id)).map((item) => {
     const saved = byId.get(item.id) || [];
     byId.delete(item.id);
     const links = (item.links || []).map((link) => link.url).filter(Boolean);
