@@ -1344,6 +1344,8 @@ const ALL_FEATURE_SCOPES = `${CAL_SCOPES} ${SKIT_SCOPE}`;
 const googleScopesForEmail = (email) => profileForEmail(email) === "work" ? CAL_SCOPES : ALL_FEATURE_SCOPES;
 const SKIT_API = "https://sheets.googleapis.com/v4/spreadsheets";
 const SKIT_TABS = ["Ideas", "To Film", "To Edit", "Ready to Post", "Posted"];
+const BRANDED_SKIT_TAB = "Branded Skits";
+const BRANDED_SKIT_HEADERS = ["Skit ID", "Title", "Full Script", "Created At", "Last Updated", "Source", "Notes", "Status", "Source Links", "Brand", "Script Version", "Campaign Brief", "Required Messaging", "Ally Feedback", "Client Feedback", "Posted URL", "Platform", "Posted At", "Views", "Likes", "Comments", "Shares", "Metrics As Of"];
 const skitTab = (status) => SKIT_TABS.includes(status) ? status : "Ready to Post";
 const scriptText = (value) => {
   if (!value) return "";
@@ -1356,6 +1358,25 @@ const scriptText = (value) => {
 };
 const skitRow = (item, updatedAt) => [item.id || "", item.title || "", scriptText(item.desc || ""), item.created || "", updatedAt || new Date().toISOString(), "ALLY CRM", ""];
 const skitSnapshot = (item) => ({ id: item.id || "", title: item.title || "", script: scriptText(item.desc || ""), status: item.status || "Ideas", created: item.created || "", pipeline: "Content" });
+
+// Retain sheet annotations by permanent ID, including when CRM items are reordered.
+const brandedSkitRows = (items, existingRows, updatedAt) => {
+  const byId = new Map((existingRows || []).filter((row) => row.values && row.values[0] && row.values[0].userEnteredValue).map((row) => [row.values[0].userEnteredValue.stringValue, row.values]));
+  const stringCell = (value) => ({ userEnteredValue: { stringValue: String(value || "") } });
+  const rows = (items || []).map((item) => {
+    const saved = byId.get(item.id) || [];
+    byId.delete(item.id);
+    const links = (item.links || []).map((link) => link.url).filter(Boolean);
+    if (!links.length && item.link) links.push(item.link);
+    if (item.sourceUrl && !links.includes(item.sourceUrl)) links.push(item.sourceUrl);
+    const values = [...skitRow(item, updatedAt).slice(0, 6), item.notes || "", item.status || "Ideas", links.join("\n")].map(stringCell);
+    for (let column = 9; column < BRANDED_SKIT_HEADERS.length; column++) values.push(saved[column] || {});
+    return { values };
+  });
+  // Retain removed scripts as explicitly labelled historical rows, rather than lose feedback.
+  byId.forEach((values) => rows.push({ values: Array.from({ length: BRANDED_SKIT_HEADERS.length }, (_, column) => column === 7 ? stringCell("Removed from CRM") : values[column] || {}) }));
+  return rows;
+};
 
 const GOOGLE_TOKEN_STORAGE_KEY = "ally_google_token_v1";
 
@@ -1742,14 +1763,15 @@ function useSkitRegistry(crmUser, ally, enabled = true) {
     const requests = [];
     if (existing.has("Sheet1") && !existing.has("Ideas")) requests.push({ updateSheetProperties: { properties: { sheetId: existing.get("Sheet1"), title: "Ideas" }, fields: "title" } });
     const afterRename = new Map(existing); if (afterRename.has("Sheet1")) { afterRename.set("Ideas", afterRename.get("Sheet1")); afterRename.delete("Sheet1"); }
-    SKIT_TABS.filter((title) => !afterRename.has(title)).forEach((title) => requests.push({ addSheet: { properties: { title } } }));
+    [...SKIT_TABS, BRANDED_SKIT_TAB].filter((title) => !afterRename.has(title)).forEach((title) => requests.push({ addSheet: { properties: { title } } }));
     if (requests.length) await sheetFetch(":batchUpdate", { method: "POST", body: JSON.stringify({ requests }) });
     const headers = {};
     SKIT_TABS.forEach((tab) => { headers[`'${tab}'!A1:G4`] = [[`Ally Damon Skit Registry | ${tab}`], [`One permanent skit ID. This is the CRM's current ${tab} column.`], [], ["Skit ID", "Title", "Full Script", "Created At", "Last Updated", "Source", "Notes"]]; });
+    headers[`'${BRANDED_SKIT_TAB}'!A1:W4`] = [[`Ally Damon Skit Registry | ${BRANDED_SKIT_TAB}`], ["CRM creative deliverables. A:I synced from Content > Brand Deals; J:W annotation fields retained by Skit ID."], [], BRANDED_SKIT_HEADERS];
     await sheetFetch("values:batchUpdate", { method: "POST", body: JSON.stringify({ valueInputOption: "RAW", data: Object.entries(headers).map(([range, values]) => ({ range, values })) }) });
   }, [sheetFetch]);
 
-  const writeCurrentTabs = useCallback(async (items, updatedAt) => {
+  const writeCurrentTabs = useCallback(async (items, brandedItems, updatedAt) => {
     const meta = await sheetFetch("?fields=sheets.properties(sheetId,title,gridProperties)");
     const sheetMap = new Map((meta.sheets || []).map((sheet) => [sheet.properties.title, sheet.properties]));
     const grouped = Object.fromEntries(SKIT_TABS.map((tab) => [tab, []]));
@@ -1765,18 +1787,31 @@ function useSkitRegistry(crmUser, ally, enabled = true) {
       requests.push({ repeatCell: { range: repeatRange, cell: {}, fields: "userEnteredValue" } });
       if (grouped[tab].length) requests.push({ updateCells: { range: { sheetId, startRowIndex: 4, startColumnIndex: 0 }, rows: grouped[tab].map((row) => ({ values: row.map((value) => ({ userEnteredValue: { stringValue: String(value) } })) })), fields: "userEnteredValue" } });
     });
+    const brandProp = sheetMap.get(BRANDED_SKIT_TAB);
+    if (!brandProp) throw new Error(`Missing ${BRANDED_SKIT_TAB} tab in the skit registry.`);
+    const brandRowCount = brandProp.gridProperties.rowCount;
+    const saved = await sheetFetch(`?ranges=${encodeURIComponent(`'${BRANDED_SKIT_TAB}'!A5:W${brandRowCount}`)}&fields=sheets(data(rowData(values(userEnteredValue,note))))`);
+    const savedRows = (((saved.sheets || [])[0] || {}).data || []).flatMap((data) => data.rowData || []);
+    const brandRows = brandedSkitRows(brandedItems, savedRows, updatedAt);
+    const requiredRows = Math.max(brandRowCount, brandRows.length + 4);
+    if (requiredRows > brandRowCount) requests.push({ appendDimension: { sheetId: brandProp.sheetId, dimension: "ROWS", length: requiredRows - brandRowCount } });
+    requests.push({ repeatCell: { range: { sheetId: brandProp.sheetId, startRowIndex: 4, endRowIndex: requiredRows, startColumnIndex: 0, endColumnIndex: BRANDED_SKIT_HEADERS.length }, cell: {}, fields: "userEnteredValue,note" } });
+    if (brandRows.length) requests.push({ updateCells: { start: { sheetId: brandProp.sheetId, rowIndex: 4, columnIndex: 0 }, rows: brandRows, fields: "userEnteredValue,note" } });
     await sheetFetch(":batchUpdate", { method: "POST", body: JSON.stringify({ requests }) });
   }, [sheetFetch]);
 
-  const syncItems = useCallback(async (items) => {
-    const current = new Map((items || []).map((item) => [item.id, skitSnapshot(item)]));
+  const syncItems = useCallback(async (items, brandedItems) => {
+    const current = new Map([
+      ...(items || []).map((item) => [`content:${item.id}`, skitSnapshot(item)]),
+      ...(brandedItems || []).map((item) => [`brandContent:${item.id}`, { ...skitSnapshot(item), pipeline: "Brand Content", notes: item.notes || "", links: item.links || [], link: item.link || "", sourceUrl: item.sourceUrl || "" }]),
+    ]);
     const previous = previousRef.current;
     if (previous && state === "synced" && JSON.stringify([...previous]) === JSON.stringify([...current])) return;
     setState("syncing");
     try {
       await ensureRegistry();
       const now = new Date().toISOString();
-      await writeCurrentTabs(items, now);
+      await writeCurrentTabs(items, brandedItems, now);
       previousRef.current = current;
       setState("synced"); setError("");
     } catch (e) {
@@ -1796,7 +1831,7 @@ function useSkitRegistry(crmUser, ally, enabled = true) {
 
   useEffect(() => {
     if (!enabled || !tokenValid || !ally) return;
-    const id = setTimeout(() => { queueRef.current = queueRef.current.then(() => syncItems((ally.content || {}).items || [])); }, 650);
+    const id = setTimeout(() => { queueRef.current = queueRef.current.then(() => syncItems((ally.content || {}).items || [], (ally.brandContent || {}).items || [])); }, 650);
     return () => clearTimeout(id);
   }, [enabled, ally, tokenValid, syncItems]);
 
