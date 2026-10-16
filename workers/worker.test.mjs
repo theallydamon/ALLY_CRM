@@ -18,7 +18,7 @@ function jwt(email='theallydamon@gmail.com',uid='owner',changes={}) {
   return 'header.'+Buffer.from(JSON.stringify({aud:'ally-crm-cbdd1',iss:'https://securetoken.google.com/ally-crm-cbdd1',sub:uid,email,exp:now+3600,auth_time:now-10,...changes})).toString('base64url')+'.fixture-only';
 }
 function harness() {
-  const db=sqliteD1(),env={AUTH_DB:db,CONNECTION_KEY:Buffer.alloc(32,7).toString('base64'),FIREBASE_PROJECT:'ally-crm-cbdd1',FIREBASE_API_KEY:'fixture-key',PUBLIC_ORIGIN:BASE};
+  const db=sqliteD1(),env={AUTH_DB:db,CONNECTION_KEY:Buffer.alloc(32,7).toString('base64'),FIREBASE_PROJECT:'ally-crm-cbdd1',FIREBASE_API_KEY:'fixture-browser-key',FIREBASE_SERVER_API_KEY:'fixture-server-key',PUBLIC_ORIGIN:BASE};
   let revision=0,writes=0,conflicts=0,revokeGoogle=false;
   const docs=new Map([
     ['workspaces/ally-crm',{fields:encode({ally:{lifeAdmin:{items:[]},content:{items:[]},brandContent:{items:[]},musicContent:{items:[]},deals:{deals:[]}},mama:{tasks:[]},manualField:{timestampValueAsText:'preserve me'}}).mapValue.fields,updateTime:'revision0'}],
@@ -28,6 +28,7 @@ function harness() {
   const fetcher=async (url,init={})=>{
     url=new URL(url);
     if(url.hostname==='securetoken.googleapis.com') {
+      assert.equal(url.searchParams.get('key'),env.FIREBASE_SERVER_API_KEY);
       if(revokeGoogle)return respond({error:{message:'TOKEN_EXPIRED'}},400);
       const refresh=new URLSearchParams(init.body).get('refresh_token');
       if(refresh==='other-user')return respond({id_token:jwt('ally@mama.co.za','other'),refresh_token:'other-user',project_id:'139362174943'});
@@ -35,6 +36,7 @@ function harness() {
       return respond({id_token:jwt(),refresh_token:'fixture-refresh',project_id:'139362174943'});
     }
     if(url.hostname==='identitytoolkit.googleapis.com') {
+      assert.equal(url.searchParams.get('key'),env.FIREBASE_SERVER_API_KEY);
       const token=JSON.parse(init.body).idToken;
       if(token==='invalid')return respond({error:{}},400);
       const claims=JSON.parse(Buffer.from(token.split('.')[1],'base64url').toString());
@@ -67,6 +69,7 @@ async function login(h,scope='crm.records.read crm.records.write offline_access'
   const verifier='abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG',challenge=Buffer.from(sha256(verifier),'hex').toString('base64url');
   const q=new URLSearchParams({response_type:'code',client_id:client.client_id,redirect_uri:CALLBACK,code_challenge:challenge,code_challenge_method:'S256',scope,resource:BASE+'/mcp',state:'fixture-state'});
   const authorization=await h.request('/oauth/authorize?'+q,{method:'GET'});assert.equal(authorization.status,200);assert.match(authorization.body,/encrypted Firebase/);
+  assert.match(authorization.body,/fixture-browser-key/);assert.ok(!authorization.body.includes('fixture-server-key'));
   const row=h.db.sql.prepare("SELECT key FROM auth_state WHERE key LIKE 'pending:%' AND consumed=0").get();const pendingId=row.key.slice(8);
   const approval=await h.request('/oauth/approve',{body:{pendingId,idToken:jwt(),refreshToken:'fixture-refresh'}});assert.equal(approval.status,200);
   const redirect=new URL(approval.body.redirect);assert.equal(redirect.searchParams.get('iss'),BASE);assert.equal(redirect.searchParams.get('state'),'fixture-state');
@@ -76,6 +79,14 @@ async function login(h,scope='crm.records.read crm.records.write offline_access'
   return {token:token.body.access_token,refresh:token.body.refresh_token,client,exchange,pendingId};
 }
 const saveArgs=(requestId='request1',sourceKey='chat:courier')=>({board:'lifeAdmin',requestId,fields:{title:'Call courier',sourceKey}});
+test('missing server key fails before Google calls and health reports incomplete setup',async()=>{
+  const h=harness();delete h.env.FIREBASE_SERVER_API_KEY;
+  const health=await h.request('/health',{method:'GET'});
+  assert.equal(health.body.configured,false);assert.equal(health.body.serverAuthConfigured,false);
+  let called=false;
+  await assert.rejects(verifyIdentity(h.env,jwt(),()=>{called=true;throw new Error('Unexpected Google request');}),/Set FIREBASE_SERVER_API_KEY/);
+  assert.equal(called,false);assert.equal(h.writes,0);
+});
 test('OAuth, encrypted session, discovery, real REST shapes, save/read and replay',async()=>{
   const h=harness(),session=await login(h);
   assert.equal(h.writes,0); // connection consent only reads CRM

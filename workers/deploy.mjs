@@ -17,6 +17,8 @@ const account=JSON.parse(run(['whoami','--json'],{capture:true}));
 if(!account.loggedIn || !account.accounts?.some(item=>item.id===EXPECTED_ACCOUNT)) throw new Error('Sign in to the verified Ally Cloudflare account first.');
 const config=JSON.parse(readFileSync('wrangler.jsonc','utf8'));
 if(config.name!=='ally-crm-connector' || config.vars.FIREBASE_PROJECT!=='ally-crm-cbdd1') throw new Error('Unexpected deployment target.');
+const existingSecrets=JSON.parse(run(['secret','list','--format','json','--config','wrangler.jsonc'],{capture:true}));
+if(!existingSecrets.some(item=>item.name==='FIREBASE_SERVER_API_KEY')) throw new Error('Set FIREBASE_SERVER_API_KEY on the existing Worker before deploying. Use a dedicated key restricted to Identity Toolkit API and Token Service API; preserve browser-key website restrictions.');
 let databases=JSON.parse(run(['d1','list','--json'],{capture:true}));
 let db=databases.find(item=>item.name==='ally-crm-connector-auth');
 if(!db){run(['d1','create','ally-crm-connector-auth']);databases=JSON.parse(run(['d1','list','--json'],{capture:true}));db=databases.find(item=>item.name==='ally-crm-connector-auth');}

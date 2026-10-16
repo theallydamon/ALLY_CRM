@@ -39,8 +39,12 @@ export async function boundedJson(response, max = 4 * 1024 * 1024) {
   }
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }
+function serverApiKey(env) {
+  if (!env.FIREBASE_SERVER_API_KEY) throw new Error('Connector server authentication is not configured. Set FIREBASE_SERVER_API_KEY in Cloudflare.');
+  return env.FIREBASE_SERVER_API_KEY;
+}
 async function google(env, path, body, fetcher) {
-  const response = await fetcher('https://identitytoolkit.googleapis.com/v1/' + path + '?key=' + encodeURIComponent(env.FIREBASE_API_KEY), {
+  const response = await fetcher('https://identitytoolkit.googleapis.com/v1/' + path + '?key=' + encodeURIComponent(serverApiKey(env)), {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(15000)
   });
   const result = await boundedJson(response, 128 * 1024);
@@ -57,7 +61,7 @@ export async function verifyIdentity(env, idToken, fetcher = (input, init) => fe
   return { email: String(user.email).toLowerCase(), uid: user.localId };
 }
 export async function exchangeFirebase(env, refreshToken, fetcher = (input, init) => fetch(input, init)) {
-  const response = await fetcher('https://securetoken.googleapis.com/v1/token?key=' + encodeURIComponent(env.FIREBASE_API_KEY), {
+  const response = await fetcher('https://securetoken.googleapis.com/v1/token?key=' + encodeURIComponent(serverApiKey(env)), {
     method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refreshToken }).toString(), signal: AbortSignal.timeout(15000)
   });
   const result = await boundedJson(response, 128 * 1024);
