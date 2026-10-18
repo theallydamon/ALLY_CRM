@@ -12,6 +12,10 @@ Everything else loads from CDNs at runtime: React 18 and ReactDOM 18 (unpkg), Ba
 
 Personal Home opens directly on Life Admin, with task text and completion circles sized by priority. Waiting and N/A tasks remain visible below the active priorities. Creative priorities and the calendar follow the Life Admin list. Content, Brand Deals and Music Content each have a main navigation tab, backed by their original `content`, `brandContent` and `musicContent` records. The work profile keeps its existing MAMA Home and navigation.
 
+Task descriptions accept formatted clipboard content or Markdown, including tables, headings, bold text and lists. Descriptions remain strings in the existing fields, with Markdown used for task text and the existing sanitized HTML format used for content scripts. Browser dependencies are pinned locally under `vendor/`. `tests/task-text.html` runs the paste/formatting security checks when served over HTTP; `node --test tests/task-files.test.cjs` checks attachment authorization and upload failure handling.
+
+Saved tasks have a **Connect Drive to attach files** button. This requests `drive.file`, `openid` and `email` only on an explicit click, verifies the account matches the CRM sign-in, and keeps the attachment access token in memory, separate from Calendar and Sheets authorization. After connecting, **Attach file** accepts one or more files, up to 25 MB each. Files are private in the uploader's **Ally CRM Attachments** Drive folder; the CRM stores only file metadata and links. Other workspace members need their own Drive access to open those files. Removing an attachment unlinks it from the task and leaves the Drive file intact. Navigation cancels unfinished uploads; a partially completed file may remain in the Drive folder.
+
 ## Run locally
 
 Nothing to install and nothing to build — just serve the folder over HTTP:
