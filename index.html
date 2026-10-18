@@ -4840,7 +4840,7 @@ return (
   const stage = stageByPipeline[pipelineKey] || "Ideas";
   return <>
     <nav className="flex gap-2 mb-4 flex-wrap" style={{ justifyContent: "flex-start" }}>
-      {CONTENT_STAGES.map((stageId) => <button key={stageId} onClick={() => setStageByPipeline((s) => ({ ...s, [pipelineKey]: stageId }))} className="rounded-full px-3 py-1.5" style={{ background: stage === stageId ? CONTENT_TINT[stageId] || C.dark : C.card, border: `1px solid ${stage === stageId ? CONTENT_TINT[stageId] || C.dark : LINE}`, color: stage === stageId ? "#fff" : C.ink, cursor: "pointer", fontSize: 12, fontWeight: stage === stageId ? 700 : 500, fontFamily: "inherit" }}>{stageId === "Ideas" ? "Idea" : stageId === "Ready to Post" ? "To post" : stageId === "Posted" ? "Posted" : stageId}</button>)}
+      {CONTENT_STAGES.map((stageId) => <button key={stageId} onClick={() => setStageByPipeline((s) => ({ ...s, [pipelineKey]: stageId }))} className="rounded-full px-3 py-1.5" style={{ background: stage === stageId ? CONTENT_TINT[stageId] || C.dark : C.card, border: `1px solid ${stage === stageId ? CONTENT_TINT[stageId] || C.dark : LINE}`, color: stage === stageId ? "#fff" : C.ink, cursor: "pointer", fontSize: 12, fontWeight: stage === stageId ? 700 : 500, fontFamily: "inherit" }}>{stageId === "Ideas" ? (pipelineKey === "brandContent" ? "Lead" : "Idea") : stageId === "Ready to Post" ? "To post" : stageId === "Posted" ? "Posted" : stageId}</button>)}
     </nav>
     <ContentPipeline key={pipelineKey} data={data} setData={setData} q={q} pipelineKey={pipelineKey} heading={pipelineKey === "brandContent" ? "Brand Deals" : pipelineKey === "musicContent" ? "Music" : null} activeStage={stage} onContentSchedule={onContentSchedule} />
   </>;
@@ -5031,8 +5031,8 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
 
       {activeStage === "Ideas" && <div className="rounded-2xl mb-4" style={{ ...card, borderRadius: 12, padding: 12 }}>
         <div className="flex gap-2 flex-wrap mb-2 items-center">
-          <input value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} placeholder="Drop a skit idea in the bank…" className="flex-1 rounded-lg px-3 py-2" style={{ ...inputStyle, minWidth: 200, fontSize: 13.5 }} />
-          <PrioritySelector value={priority} onChange={setPriority} withNA />
+          <input value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} placeholder={pipelineKey === "brandContent" ? "Add a brand lead…" : "Drop a skit idea in the bank…"} className="flex-1 rounded-lg px-3 py-2" style={{ ...inputStyle, minWidth: 200, fontSize: 13.5 }} />
+          {pipelineKey !== "brandContent" && <PrioritySelector value={priority} onChange={setPriority} withNA />}
         </div>
         {draftLinks.length > 0 && (
           <div className="flex gap-1.5 flex-wrap mb-2">
@@ -5052,7 +5052,7 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
         </div>
         <div className="flex gap-2 flex-wrap items-start">
           <GrowingTextarea value={description} onChange={setDescription} placeholder="Description (optional) — the actual detail. Keeps the title short." rows={2} className="flex-1 rounded-lg px-3 py-2" style={{ ...inputStyle, minWidth: 200, fontSize: 13.5, lineHeight: 1.45 }} />
-          <button onClick={add} style={{ ...pillDark, fontSize: 13, padding: "8px 16px" }}><Plus size={13} style={{ display: "inline", marginRight: 4 }} />Add idea</button>
+          <button onClick={add} style={{ ...pillDark, fontSize: 13, padding: "8px 16px" }}><Plus size={13} style={{ display: "inline", marginRight: 4 }} />{pipelineKey === "brandContent" ? "Add lead" : "Add idea"}</button>
         </div>
       </div>}
 
@@ -5080,7 +5080,7 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
           return (
             <div key={col} style={{ background: C.canvas, padding: 16, display: "flex", flexDirection: "column", gap: 9, transition: "background 120ms ease" }}>
               <div className="flex items-center justify-between px-0.5" style={{ paddingBottom: 9, borderBottom: `1px solid ${LINE}`, marginBottom: 2 }}>
-                <span style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif", fontWeight: 700, fontSize: 12.5, letterSpacing: "0.05em", textTransform: "uppercase", color: CONTENT_TINT[col] }}>{col}</span>
+                <span style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif", fontWeight: 700, fontSize: 12.5, letterSpacing: "0.05em", textTransform: "uppercase", color: CONTENT_TINT[col] }}>{pipelineKey === "brandContent" && col === "Ideas" ? "Lead" : col}</span>
                 <span className="flex items-center gap-1"><span style={{ fontSize: 12.5, color: MUT }}>{cItems.length}</span><button onClick={() => setColumnCards(true)} style={{ ...iconBtn, padding: "2px 4px", fontSize: 10 }} title="Expand all cards">Expand all</button><button onClick={() => setColumnCards(false)} style={{ ...iconBtn, padding: "2px 4px", fontSize: 10 }} title="Collapse all cards">Collapse all</button></span>
               </div>
               {(() => {
@@ -5130,7 +5130,7 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
                         style={{ ...inputStyle, fontSize: 10.5, padding: "1px 4px" }}
                       />
                     </div>}
-                    {col !== "Posted" && <PriorityControls item={i} onChange={(p) => updateItem(i.id, p)} />}
+                    {col !== "Posted" && !(pipelineKey === "brandContent" && col === "Ideas") && <PriorityControls item={i} onChange={(p) => updateItem(i.id, p)} />}
                     <div className="flex items-center gap-1 mt-1.5"><span className="ml-auto flex gap-1">
                       {col === "Posted" ? <button onClick={(e) => { e.stopPropagation(); updateItem(i.id, { status: "Ready to Post", postedAt: null }); }} style={{ ...iconBtn, padding: 2, color: C.mint }} title="Restore to Ready to Post">←</button> : col !== "Ideas" && <button onClick={(e) => { e.stopPropagation(); move(i.id, -1); }} style={{ ...iconBtn, padding: 2, color: C.mint }} aria-label="Back" title="Move to previous stage">←</button>}
                       {col !== "Posted" && <button onClick={(e) => { e.stopPropagation(); col === "Ready to Post" ? markPosted(i.id) : move(i.id, 1); }} style={{ ...iconBtn, padding: 2, color: C.mint }} aria-label="Forward" title={col === "Ready to Post" ? "Move to posted archive" : "Move to next stage"}>→</button>}
@@ -5147,7 +5147,7 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
                   { key: "None", label: "N/A", color: PRIORITY_NA_TINT },
                 ];
 
-                if (col === "Ideas") {
+                if (col === "Ideas" && pipelineKey !== "brandContent") {
                   return (
                     <div className="flex flex-col gap-3">
                       {ideaGroupDefs.map((g, gIdx) => {
