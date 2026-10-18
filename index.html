@@ -391,9 +391,8 @@ const MODULES = {
   overview:  { icon: "home",      label: "HOME",       accent: C.accent, bg: C.accentBg },
   mama:      { icon: "mama",      label: "MAMA",       accent: C.accent, bg: C.accentBg },
   content:   { icon: "content",   label: "CONTENT",    accent: C.accent, bg: C.accentBg },
-  /* "music" is no longer a tab, but PRIORITY_PILLARS still has a "music" pillar for the MUSIC
-     CONTENT card on HOME. That card uses MUSIC_CONTENT_MOD below and navigates into Content's
-     Music subtab, so it needs no entry here. */
+  brandContent: { icon: "deals", label: "BRAND DEALS", accent: C.accent, bg: C.accentBg },
+  musicContent: { icon: "music", label: "MUSIC CONTENT", accent: C.accent, bg: C.accentBg },
   lifeAdmin: { icon: "lifeAdmin", label: "LIFE ADMIN", accent: C.accent, bg: C.accentBg },
   /* not in the bottom strip; reached from cards/chains but still need identity when rendered */
   unlocks:   { icon: "unlocks",   label: "Unlocks",    accent: C.accent, bg: C.accentBg },
@@ -407,21 +406,13 @@ const MODULES = {
   adminTasks:{ icon: "adminTasks",label: "ADMIN TASKS",accent: C.accent, bg: C.accentBg },
   aiTasks:   { icon: "aiTasks",   label: "AI TASKS",   accent: C.accent, bg: C.accentBg },
 };
-/* pseudo-module descriptors for Music CONTENT and Brand Deals pipeline cards/subtabs — deliberately
-not added to MODULES itself. */
+/* Labels used by the existing creative priority cards. */
 const MUSIC_CONTENT_MOD = { icon: "music", label: "MUSIC CONTENT", accent: C.accent, bg: C.accentBg };
 const BRAND_DEALS_MOD = { icon: "deals", label: "BRAND DEALS", accent: C.accent, bg: C.accentBg };
 
-/* Bottom nav strip order: HOME is centred, with two equally weighted tabs on either side. HOME
-   stays the visually dominant entry.
-   Removed entirely, data untouched in Firestore and still in the JSON export: "series" and "anchor",
-   and "music" (the song-roadmap tab — music work now lives under Content's Music subtab).
-   "deals" pulled earlier; re-add here to bring the tab back.
-   18 Aug 2026: "furnishing" added as a fifth tab, at the owner's explicit
-   instruction. It supersedes the older "apartment" module, which stays in the file but is no
-   longer the thing being maintained. Furnishing is deliberately NOT wired into PRIORITY_PILLARS,
-   priorityTaskCounts, or any HOME card, and it keeps its own storage key. */
-const TAB_ORDER = ["lifeAdmin", "mama", "overview", "content"];
+/* Personal navigation: Life Admin lives on HOME; each creative pipeline has its own tab.
+   Retired modules and their saved data remain untouched. Active tabs come from VIEW_PROFILES. */
+const TAB_ORDER = ["overview", "content", "brandContent", "musicContent"];
 
 /* ---------- VIEW PROFILES: one app, two faces ----------
    Added 28 Aug 2026 at the owner's instruction, to give the work laptop a MAMA-only CRM without
@@ -454,10 +445,10 @@ const VIEW_PROFILES = {
   personal: {
     id: "personal",
     label: "Personal",
-    tabs: ["lifeAdmin", "overview", "content"],
+    tabs: ["overview", "content", "brandContent", "musicContent"],
     homePillar: null,
     homeSubs: false,
-    homePillars: ["lifeAdmin", "content", "brandContent", "music"],
+    homePillars: ["content", "brandContent", "music"],
   },
 };
 /* Which Google accounts land on the work profile by default. Lower-cased on comparison. */
@@ -2446,6 +2437,10 @@ function AllyCRM() {
      task chip on HOME lands somewhere real in both. navRequest itself is deliberately NOT
      rewritten — Creators and MamaModule both key off navRequest.navTab === "mama" and still must. */
   const resolveNavTab = (navTab, navSub) => {
+    if (profile.id === "personal") {
+      if (navTab === "lifeAdmin") return "overview";
+      if (navTab === "content") return navSub === "brandDeals" ? "brandContent" : navSub === "musicContent" ? "musicContent" : "content";
+    }
     if (profile.id !== "work" || navTab !== "mama") return navTab;
     return navSub === "adminTasks" ? "adminTasks" : navSub === "aiTasks" ? "aiTasks" : "creators";
   };
@@ -3457,6 +3452,8 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
   const aiTaskCount = (((ally.aiTasks || {}).projects) || []).reduce((n, pr) => n + (pr.tasks || []).filter((t) => !t.done).length, 0);
   const badges = {
     content: priorityTaskCounts.content,
+    brandContent: priorityTaskCounts.brandContent,
+    musicContent: priorityTaskCounts.music,
     unlocks: priorityTaskCounts.unlocks,
     lifeAdmin: priorityTaskCounts.lifeAdmin,
     deals: priorityTaskCounts.deals,
@@ -3499,6 +3496,60 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
            used clamp(28px,4.5vw,38px) headings which blew up on a wide monitor while other pages
            stayed put; page-h1 is now the single source of truth for a page heading. */
         .page-h1 { font-size: 26px; line-height: 1.15; letter-spacing: -0.02em; margin: 0; }
+
+        /* Life Admin is an open reading surface. Type, space and circle size encode priority. */
+        .life-intro { display: flex; justify-content: space-between; align-items: center; gap: 32px; padding: 14px 0 32px; }
+        .life-eyebrow { font-size: 10px; font-weight: 600; letter-spacing: .17em; color: ${MUT}; }
+        .life-heading { font-size: clamp(42px, 5vw, 68px); font-weight: 500; letter-spacing: -.055em; line-height: 1.05; margin: 15px 0 12px; }
+        .life-heading span { color: ${C.accent}; }
+        .life-subtitle { color: ${MUT}; font-size: 14px; line-height: 1.5; margin: 0; }
+        .life-priority-key { display: flex; flex-wrap: wrap; gap: 16px; font-size: 10px; margin-top: 20px; }
+        .life-summary { display: flex; align-items: center; gap: 22px; flex-shrink: 0; }
+        .life-summary-counts { display: flex; flex-direction: column; gap: 8px; font-size: 11px; color: ${MUT}; }
+        .life-summary-counts span { display: flex; align-items: center; gap: 7px; }
+        .life-summary-counts i { width: 5px; height: 5px; border-radius: 50%; }
+        .life-priorities { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); column-gap: 56px; align-items: start; }
+        .life-no-high { grid-template-columns: minmax(0, 1fr); }
+        .life-no-high .life-secondary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 40px; }
+        .life-group { min-width: 0; margin-bottom: 28px; }
+        .life-group-heading { display: flex; align-items: center; gap: 9px; padding-bottom: 15px; border-bottom: 1px solid ${LINE}; }
+        .life-group-heading h2 { font-size: 11px; font-weight: 500; letter-spacing: .09em; text-transform: uppercase; margin: 0; color: var(--task-tint); }
+        .life-group-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--task-tint); }
+        .life-group-count { margin-left: auto; color: ${FAINT}; font-size: 12px; }
+        .life-task { border-bottom: 1px solid ${LINE}; padding: 18px 0; }
+        .life-task-main { display: flex; align-items: flex-start; gap: 12px; }
+        .life-task-copy { flex: 1; min-width: 0; }
+        .life-task-title { font-size: 18px; font-weight: 500; line-height: 1.35; letter-spacing: -.02em; }
+        .life-task-title span, .life-task-title input { font-size: inherit !important; font-weight: inherit !important; font-family: inherit !important; }
+        .life-task-description { margin: 7px 0 9px; }
+        .life-task-description textarea { line-height: 1.55 !important; color: ${MUT} !important; background: transparent !important; border: 1px solid transparent !important; padding: 2px 0 !important; resize: none !important; font-size: 12px !important; }
+        .life-task-description textarea:focus { border-bottom-color: ${C.accentLine} !important; }
+        .life-task-actions { display: flex; flex-direction: column; gap: 2px; flex-shrink: 0; }
+        .life-check { width: 32px; height: 32px; margin-top: 1px; padding: 0; border: 1px solid color-mix(in srgb, var(--task-tint) 45%, transparent); background: color-mix(in srgb, var(--task-tint) 8%, transparent); color: var(--task-tint); border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; cursor: pointer; font-family: inherit; font-size: 10px; }
+        .life-check-icon { display: none !important; }
+        .life-check:hover .life-task-number, .life-check:focus-visible .life-task-number { display: none; }
+        .life-check:hover .life-check-icon, .life-check:focus-visible .life-check-icon { display: inline !important; }
+        .life-task-high { padding: 24px 0; }
+        .life-task-high .life-task-title { font-size: 27px; letter-spacing: -.035em; }
+        .life-task-high .life-check { width: 44px; height: 44px; font-size: 12px; }
+        .life-task-low .life-task-title, .life-task-none .life-task-title, .life-task-waiting .life-task-title { font-size: 14px; }
+        .life-task-low .life-check, .life-task-none .life-check, .life-task-waiting .life-check { width: 25px; height: 25px; font-size: 9px; }
+        .life-capture { padding: 24px 0 0; border-top: 1px solid ${LINE}; margin-top: 12px; }
+        @media (max-width: 760px) {
+          .life-intro { align-items: flex-start; gap: 16px; padding-top: 8px; }
+          .life-summary { gap: 0; }
+          .life-summary svg { width: 94px; height: 94px; }
+          .life-summary-counts { display: none; }
+          .life-heading { font-size: 42px; }
+          .life-subtitle { font-size: 12px; }
+          .life-priority-key { gap: 10px; font-size: 9px; }
+          .life-priorities, .life-no-high .life-secondary { display: block; }
+          .life-task-high .life-task-title { font-size: 24px; }
+          .life-task-high .life-check { width: 36px; height: 36px; }
+          .life-task-main { gap: 10px; }
+          .main-nav .navbtn { flex: 1; min-width: 0; max-width: 110px; }
+          .main-nav .navbtn-label { display: block !important; font-size: 8px !important; letter-spacing: .01em !important; }
+        }
 
         /* pillar cards on one row — see the comment at the grid itself for why this is fixed
            rather than auto-fit. Collapses on narrow screens, where dragging is not the use case. */
@@ -3626,7 +3677,7 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
                 </div>
               )}
               {tab === "overview" && <PersonalModule ally={ally} mama={mama} go={goFromHome} setAlly={setAlly} setMama={setMama} q={q} navRequest={navRequest} navigateToTask={navigateToTask} completeTask={completeTask} cal={cal} onSchedule={scheduleTask} onMove={moveScheduled} onResize={resizeScheduled} onUnschedule={unscheduleTask} onDeleteEvent={deleteOrphanEvent} syncTick={syncTick} profile={profile} />}
-              {tab === "content" && <ContentModule data={ally} setData={setAlly} q={q} navRequest={navRequest} onContentSchedule={syncContentCalendar} registry={registry} />}
+              {["content", "brandContent", "musicContent"].includes(tab) && <ContentModule pipeline={tab} data={ally} setData={setAlly} q={q} navRequest={navRequest} onContentSchedule={syncContentCalendar} registry={registry} />}
               {tab === "lifeAdmin" && <LifeAdminModule data={ally} setData={setAlly} q={q} />}
               {tab === "deals" && <DealsModule data={ally} setData={setAlly} q={q} navRequest={navRequest} />}
               {tab === "mama" && <MamaModule data={mama} setData={setMama} ally={ally} setAlly={setAlly} q={q} navRequest={navRequest} navigateToTask={navigateToTask} completeTask={completeTask} />}
@@ -3639,14 +3690,9 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
             </div>
           </div>
 
-          {/* ===== bottom nav strip =====
-              Renders the ACTIVE PROFILE's tabs in order (see VIEW_PROFILES), not TAB_ORDER — the
-              personal profile's list still IS TAB_ORDER, so HOME lands centred there exactly as
-              before. In the work profile HOME is second of four and off-centre by design.
-              HOME gets a larger, accent-ringed button; the rest are equal. Buttons widen when
-              there are four or fewer tabs, so "ADMIN TASKS" fits without wrapping.
-              Badge counts sit top-right of each button exactly as they did on the old rail. */}
-          <nav style={{ flexShrink: 0, borderTop: `1px solid ${LINE}`, background: "rgba(10,10,12,0.82)", backdropFilter: "blur(18px)", WebkitBackdropFilter: "blur(18px)", padding: "8px 16px 10px", display: "flex", alignItems: "flex-end", justifyContent: "center", gap: 6 }}>
+          {/* Active profile navigation. HOME stays prominent; personal creative pipelines are
+              peers. The work profile retains its existing four-tab order. */}
+          <nav aria-label="Main navigation" className="main-nav" style={{ flexShrink: 0, borderTop: `1px solid ${LINE}`, background: "rgba(10,10,12,0.82)", backdropFilter: "blur(18px)", WebkitBackdropFilter: "blur(18px)", padding: "8px 12px max(10px, env(safe-area-inset-bottom))", display: "flex", alignItems: "flex-end", justifyContent: "center", gap: 6 }}>
             {profile.tabs.map((t) => {
               const on = tab === t;
               const info = MODULES[t];
@@ -3939,8 +3985,8 @@ function CalendarChip({ cal, registry, crmEmail, showRegistry = true }) {
   );
 }
 
-/* HOME keeps one task category visible at a time. This gives every category its own larger
-   chip board instead of squeezing four cards into one row. */
+/* Personal HOME opens on the full Life Admin reading surface, then creative priorities and the
+   existing scheduling grid. The work profile retains its MAMA dashboard. */
 function PersonalModule({ ally, mama, setAlly, setMama, go, q, navRequest, navigateToTask, completeTask, cal, onSchedule, onMove, onResize, onUnschedule, onDeleteEvent, syncTick, profile }) {
   const openCalendarTask = (id) => {
     const parts = String(id || "").split(":");
@@ -3952,7 +3998,10 @@ function PersonalModule({ ally, mama, setAlly, setMama, go, q, navRequest, navig
   };
   return (
     <section style={{ width: "100%", margin: 0, textAlign: "left" }}>
+      {profile && profile.id === "personal" && <LifeAdminModule data={ally} setData={setAlly} q={q} home />}
+      <div style={profile && profile.id === "personal" ? { marginTop: 56, paddingTop: 28, borderTop: `1px solid ${LINE}` } : undefined}>
       <PriorityDashboard ally={ally} mama={mama} go={go} setAlly={setAlly} setMama={setMama} navigateToTask={navigateToTask} completeTask={completeTask} schedule={currentSchedule(ally.schedule)} onlyPillar={profile ? profile.homePillar : null} profile={profile} />
+      </div>
       <div style={{ marginTop: 24 }}>
         {cal && <DayGrid cal={cal} onSchedule={onSchedule} onMove={onMove} onResize={onResize} onUnschedule={onUnschedule} onDeleteEvent={onDeleteEvent} onOpenTask={openCalendarTask} syncTick={syncTick} schedule={ally.schedule || {}} />}
       </div>
@@ -4002,7 +4051,7 @@ const onSetStatus = ({ id, pipe, from }, status) => {
 return (
 <section>
 <div style={{ marginBottom: 16 }}>
-<h1 className="page-h1" style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700 }}>{onlyPillar ? (onlyPillar === "lifeAdmin" ? "Life Admin" : onlyPillar === "brandContent" ? BRAND_DEALS_MOD.label : onlyPillar === "music" ? MUSIC_CONTENT_MOD.label : MODULES[onlyPillar].label) : "Priorities right now"}</h1>
+<h1 className="page-h1" style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700 }}>{onlyPillar ? (onlyPillar === "lifeAdmin" ? "Life Admin" : onlyPillar === "brandContent" ? BRAND_DEALS_MOD.label : onlyPillar === "music" ? MUSIC_CONTENT_MOD.label : MODULES[onlyPillar].label) : profile && profile.id === "personal" ? "Creative priorities" : "Priorities right now"}</h1>
 </div>
 
 {/* ALL FOUR PILLARS ON ONE ROW, deliberately a fixed 4-up rather than auto-fit.
@@ -4760,27 +4809,18 @@ function ScriptBox({ value, isHtml, open, onFocus, onChange, onToggle, big, plac
   );
 }
 
-function ContentModule({ data, setData, q, navRequest, onContentSchedule, registry }) {
-const [subtab, setSubtab] = useState("content");
+function ContentModule({ data, setData, q, navRequest, onContentSchedule, registry, pipeline = "content" }) {
 const [stageByPipeline, setStageByPipeline] = useState({ content: "Ideas", brandContent: "Ideas", musicContent: "Ideas" });
 const [calendarFocus, setCalendarFocus] = useState(null);
-/* a dashboard task pointing at the Music (or another) subtab needs this tab to actually land
-on that subtab, not just the default Board — same navRequest pattern Mama/Deals/LifeAdmin use. */
+/* Keep existing dashboard/calendar links opening the selected item's actual stage. Each
+   pipeline now has its own main tab, but still edits the same original data. */
 useEffect(() => {
-  if (!navRequest || navRequest.navTab !== "content" || !navRequest.navSub) return;
-  setSubtab(navRequest.navSub);
-  const pipelineKey = navRequest.navSub === "brandDeals" ? "brandContent" : navRequest.navSub;
-  const item = navRequest.navOpenId && ((data[pipelineKey] || {}).items || []).find((i) => i.id === navRequest.navOpenId);
-  if (item) setStageByPipeline((s) => ({ ...s, [pipelineKey]: item.status === "Posted" ? "Posted" : CONTENT_COLS.includes(item.status) ? item.status : "Ideas" }));
-}, [navRequest, data]);
-const tabs = [
-{ id: "content", label: "Board" },
-{ id: "brandDeals", label: "Brand Deals" },
-{ id: "musicContent", label: "Music" },
-/* "Content Calendar" removed 29 Jul 2026: HOME's 4-day grid is now the scheduling surface, so a
-   second month-grid calendar was a duplicate. ContentCalendar and the scheduled list it consumed
-   are gone with it; `scheduledFor` on an item is untouched and still drives the dashboard nag. */
-];
+  if (!navRequest || navRequest.navTab !== "content") return;
+  const target = navRequest.navSub === "brandDeals" ? "brandContent" : navRequest.navSub || "content";
+  if (target !== pipeline) return;
+  const item = navRequest.navOpenId && ((data[pipeline] || {}).items || []).find((i) => i.id === navRequest.navOpenId);
+  if (item) setStageByPipeline((s) => ({ ...s, [pipeline]: item.status === "Posted" ? "Posted" : CONTENT_COLS.includes(item.status) ? item.status : "Ideas" }));
+}, [navRequest, data, pipeline]);
 /* calendarItems/scheduled fed the deleted month-grid ContentCalendar and are gone with it.
    calendarFocus below survives: it is the full-screen item editor, still opened from elsewhere. */
 const openCalendarItem = (item) => setCalendarFocus({ pipelineKey: item.pipelineKey, id: item.id });
@@ -4791,22 +4831,19 @@ const setFocusedPostDate = (item, date) => {
 };
 return (
 <section style={{ width: "100%", margin: 0, textAlign: "left" }}>
-<nav className="flex gap-2 mb-6 flex-wrap w-full" style={{ justifyContent: "flex-start" }}>
-{tabs.map((tab) => <button key={tab.id} onClick={() => setSubtab(tab.id)} className="rounded-full px-4 py-2" style={{ background: subtab === tab.id ? C.dark : C.card, border: "1px solid " + (subtab === tab.id ? C.dark : LINE), color: subtab === tab.id ? C.canvas : C.ink, cursor: "pointer", fontSize: 14, fontWeight: subtab === tab.id ? 600 : 400, fontFamily: "inherit" }}>{tab.label}</button>)}
-</nav>
 <div className="flex items-center gap-2 mb-4 flex-wrap" style={{ fontSize: 11.5, color: registry.state === "synced" ? C.mint : registry.state === "error" ? C.rose : MUT }}>
   <span>{registry.state === "synced" ? "Skit registry synced" : registry.state === "syncing" ? "Saving skit registry" : registry.state === "connecting" ? "Connecting skit registry" : registry.active ? "Skit registry waiting for Google" : "Skit registry not connected"}</span>
   {registry.state !== "synced" && <button onClick={() => registry.connect(false)} disabled={!registry.ready} className="rounded-full px-2.5 py-1" style={{ cursor: registry.ready ? "pointer" : "wait", fontFamily: "inherit", fontSize: 10.5, background: C.lilacBg, border: `1px solid ${C.lilac}55`, color: C.lilac }}>{registry.active ? "Reconnect Sheet" : "Connect Sheet"}</button>}
 {registry.error && <span style={{ color: C.rose }}>{registry.error}</span>}
 </div>
-{["content", "brandDeals", "musicContent"].includes(subtab) && (() => {
-  const pipelineKey = subtab === "brandDeals" ? "brandContent" : subtab;
+{(() => {
+  const pipelineKey = pipeline;
   const stage = stageByPipeline[pipelineKey] || "Ideas";
   return <>
     <nav className="flex gap-2 mb-4 flex-wrap" style={{ justifyContent: "flex-start" }}>
       {CONTENT_STAGES.map((stageId) => <button key={stageId} onClick={() => setStageByPipeline((s) => ({ ...s, [pipelineKey]: stageId }))} className="rounded-full px-3 py-1.5" style={{ background: stage === stageId ? CONTENT_TINT[stageId] || C.dark : C.card, border: `1px solid ${stage === stageId ? CONTENT_TINT[stageId] || C.dark : LINE}`, color: stage === stageId ? "#fff" : C.ink, cursor: "pointer", fontSize: 12, fontWeight: stage === stageId ? 700 : 500, fontFamily: "inherit" }}>{stageId === "Ideas" ? "Idea" : stageId === "Ready to Post" ? "To post" : stageId === "Posted" ? "Posted" : stageId}</button>)}
     </nav>
-    <ContentPipeline data={data} setData={setData} q={q} pipelineKey={pipelineKey} heading={pipelineKey === "brandContent" ? "Brand Deals" : pipelineKey === "musicContent" ? "Music" : null} activeStage={stage} onContentSchedule={onContentSchedule} />
+    <ContentPipeline key={pipelineKey} data={data} setData={setData} q={q} pipelineKey={pipelineKey} heading={pipelineKey === "brandContent" ? "Brand Deals" : pipelineKey === "musicContent" ? "Music" : null} activeStage={stage} onContentSchedule={onContentSchedule} />
   </>;
 })()}
 {calendarFocus && (() => {
@@ -5712,10 +5749,9 @@ function ApartmentModule({ data, setData, unlocked, go, q }) {
 }
 
 /* ================= LIFE ADMIN ================= */
-/* Personal catch-all pillar: a flat kanban of your own life stuff (paperwork, errands, calls to
-   make), sharing the exact same due-date/priority engine as every other pillar (PriorityControls,
-   computeUrgency) so it feeds the main Priorities dashboard with zero special-casing. */
-function LifeAdminModule({ data, setData, q, boardKey = "lifeAdmin", boardTitle = "General tasks", subtitle = "Your own stuff: paperwork, errands, calls to make. Same due date and priority logic as everywhere else." }) {
+/* Life Admin uses the existing task records and priority controls. Its reading hierarchy changes
+   size with priority; waiting and N/A remain visible in their own quieter sections. */
+function LifeAdminModule({ data, setData, q, boardKey = "lifeAdmin", boardTitle = "General tasks", subtitle = "Paperwork, errands, calls. A little space for your own life.", home = false }) {
   const [title, setTitle] = useState(""); const [description, setDescription] = useState(""); const [due, setDue] = useState(""); const [priority, setPriority] = useState("Medium");
   const [openDesc, setOpenDesc] = useState({});
   const items = (data[boardKey] && data[boardKey].items) || [];
@@ -5745,65 +5781,72 @@ function LifeAdminModule({ data, setData, q, boardKey = "lifeAdmin", boardTitle 
       return effPriority === g.key;
     })
   }));
-const __groupHead = (label, count) => (<div style={{ fontSize: 12, fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", color: MUT, marginBottom: 10 }}>{label} <span style={{ opacity: 0.6 }}>{count}</span></div>);
-const renderCard = (t) => {
-const descOpen = openDesc[t.id] !== undefined ? openDesc[t.id] : true;
-const toggleDesc = () => { if (hasTextSelection()) return; setOpenDesc((o) => ({ ...o, [t.id]: !descOpen })); };
-const isDone = t.status === "Done";
-const isWaiting = !!t.chaseOn && t.chaseOn > _today;
-return (
-<div key={t.id} data-nav-id={t.id} onClick={toggleDesc} className="rounded-2xl p-3" style={{ cursor: "pointer", ...card, borderRadius: 14, borderLeft: `2px solid ${C.rose}`, opacity: isDone ? 0.55 : isWaiting ? 0.55 : 1, height: "fit-content" }}>
-<div className="flex items-start gap-2">
-<button onClick={(e) => { e.stopPropagation(); toggleDone(t.id); }} aria-label="Toggle done" style={{ marginTop: 2, width: 18, height: 18, borderRadius: 6, cursor: "pointer", flexShrink: 0, background: isDone ? C.mint : C.card, border: `1px solid ${isDone ? C.mint : LINE}`, display: "flex", alignItems: "center", justifyContent: "center" }}>{isDone && <Check size={11} color="#fff" strokeWidth={3} />}</button>
-<div className="flex-1 min-w-0" style={{ fontSize: 13.5, textDecoration: isDone ? "line-through" : "none" }}><InlineEdit value={t.title} onChange={(v) => update(t.id, { title: v })} bubbleClicks /></div>
-<button onClick={(e) => { e.stopPropagation(); remove(t.id); }} style={{ ...iconBtn, padding: 2 }} aria-label="Delete"><X size={12} /></button>
-</div>
-<div style={{ marginTop: 4, marginLeft: 26 }}><AutoTextarea value={t.description || ""} onChange={(v) => update(t.id, { description: v })} placeholder="Add a description…" open={descOpen} onToggle={toggleDesc} /></div>
-{!isDone && <div style={{ marginLeft: 26 }}><PriorityControls item={t} onChange={(p) => update(t.id, p)} /></div>}
-</div>
-);
-};
-
+  const groups = [...__priorityGroups, { key: "Waiting", label: "Waiting on reply", items: __waitingItems }];
+  const tintFor = (key) => key === "Waiting" ? C.lilac : PRIORITY_TINT[key] || PRIORITY_NA_TINT;
+  const activeSchedule = currentSchedule(data.schedule || {});
+  const renderTask = (t, group, index) => {
+    const descOpen = openDesc[t.id] !== undefined ? openDesc[t.id] : true;
+    const toggleDesc = () => { if (!hasTextSelection()) setOpenDesc((o) => ({ ...o, [t.id]: !descOpen })); };
+    const scheduled = activeSchedule[t.id];
+    return (
+      <article key={t.id} data-nav-id={t.id} className={`life-task life-task-${group.key.toLowerCase()}`} style={{ "--task-tint": tintFor(group.key) }}>
+        <div className="life-task-main">
+          <button onClick={() => toggleDone(t.id)} className="life-check" aria-label={`Complete ${t.title}`} title="Mark complete">
+            <span className="life-task-number">{String(index + 1).padStart(2, "0")}</span><Check size={18} className="life-check-icon" />
+          </button>
+          <div className="life-task-copy">
+            <div className="life-task-title"><InlineEdit value={t.title} onChange={(v) => update(t.id, { title: v })} bubbleClicks /></div>
+            <div className="life-task-description"><AutoTextarea value={t.description || ""} onChange={(v) => update(t.id, { description: v })} placeholder="Add a description…" open={descOpen} onToggle={toggleDesc} rows={1} /></div>
+            {scheduled && <div style={{ fontSize: 11, color: C.mint, margin: "6px 0" }}>Scheduled · {scheduled.label}</div>}
+            <PriorityControls item={t} onChange={(patch) => update(t.id, patch)} />
+          </div>
+          <div className="life-task-actions">
+            <button onClick={toggleDesc} aria-label={`${descOpen ? "Collapse" : "Expand"} description for ${t.title}`} aria-expanded={descOpen} style={iconBtn}>{descOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}</button>
+            {group.key !== "None" && group.key !== "Waiting" && <button draggable data-scroll-drag aria-label={`Schedule ${t.title}`} title="Drag onto the calendar to give it a time" onDragStart={(e) => { e.dataTransfer.setData(SCHED_MIME, JSON.stringify({ taskId: t.id, title: t.title, pillar: "lifeAdmin" })); e.dataTransfer.effectAllowed = "copyMove"; }} style={{ ...iconBtn, cursor: "grab", fontSize: 19 }}>⠿</button>}
+            <button onClick={() => remove(t.id)} style={iconBtn} aria-label={`Delete ${t.title}`}><X size={13} /></button>
+          </div>
+        </div>
+      </article>
+    );
+  };
+  const renderGroup = (group) => group.items.length > 0 && (
+    <section key={group.key} className={`life-group life-group-${group.key.toLowerCase()}`} aria-label={group.label} style={{ "--task-tint": tintFor(group.key) }}>
+      <div className="life-group-heading"><span className="life-group-dot" /><h2>{group.label}</h2><span className="life-group-count">{group.items.length}</span></div>
+      {group.items.map((task, index) => renderTask(task, group, index))}
+    </section>
+  );
   return (
-    <section>
-      <SectionHead title={boardTitle} sub={subtitle} />
-      <div className="rounded-2xl p-4 mb-6" style={{ ...card, borderRadius: 16 }}>
+    <section className="life-admin" aria-label="Life Admin">
+      <div className="life-intro">
+        <div>
+          <div className="life-eyebrow">{home ? "HOME / YOUR LIFE, FIRST" : "YOUR LIFE, FIRST"}</div>
+          <h1 className="life-heading">{home ? <>Life <span>Admin.</span></> : boardTitle}</h1>
+          <p className="life-subtitle">{subtitle}</p>
+          <div className="life-priority-key"><span style={{ color: C.rose }}>High</span><span style={{ color: C.amber }}>Medium</span><span style={{ color: C.sky }}>Low</span><span style={{ color: MUT }}>Size follows priority</span></div>
+        </div>
+        <div className="life-summary" aria-label={`${visible.length} open tasks${ql ? " matching your search" : ""}`}>
+          <Donut segments={groups.map((g) => ({ value: g.items.length, color: tintFor(g.key) }))} size={134} thick={7} centerTop={visible.length} centerSub={ql ? "matches" : "open tasks"} />
+          <div className="life-summary-counts">{groups.filter((g) => g.items.length > 0).map((g) => <span key={g.key}><i style={{ background: tintFor(g.key) }} />{g.items.length} {g.key === "None" ? "N/A" : g.key.toLowerCase()}</span>)}</div>
+        </div>
+      </div>
+      {visible.length > 0 ? (
+        <div className={`life-priorities${__priorityGroups[0].items.length ? "" : " life-no-high"}`}>
+          {renderGroup(__priorityGroups[0])}
+          <div className="life-secondary">{__priorityGroups.slice(1).map(renderGroup)}{renderGroup(groups[4])}</div>
+        </div>
+      ) : <Empty text={ql ? "No item matches your search." : "A little breathing room. Add anything you need to take care of below."} />}
+      <div className="life-capture">
+        <div className="life-eyebrow" style={{ marginBottom: 12 }}>GET IT OFF YOUR MIND</div>
         <div className="flex gap-2 flex-wrap mb-2 items-center">
-          <input value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} placeholder="What needs doing?" className="flex-1 rounded-lg px-3 py-2" style={{ ...inputStyle, minWidth: 200 }} />
+          <input value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} placeholder="What needs doing?" aria-label="New life admin task" className="flex-1 rounded-lg px-3 py-2" style={{ ...inputStyle, minWidth: 0, flexBasis: 200 }} />
           <PrioritySelector value={priority} onChange={setPriority} withNA />
         </div>
         <div className="flex gap-2 flex-wrap items-start">
-          <GrowingTextarea value={description} onChange={setDescription} placeholder="Description (optional) — the actual detail. Keeps the title short." rows={2} className="flex-1 rounded-lg px-3 py-2" style={{ ...inputStyle, minWidth: 200, lineHeight: 1.45 }} />
-          <button onClick={add} style={pillDark}><Plus size={14} style={{ display: "inline", marginRight: 4 }} />Add</button>
+          <GrowingTextarea value={description} onChange={setDescription} placeholder="Description (optional)" rows={2} className="flex-1 rounded-lg px-3 py-2" style={{ ...inputStyle, minWidth: 0, flexBasis: 200, lineHeight: 1.45 }} />
+          <button onClick={add} style={pillDark}><Plus size={14} style={{ display: "inline", marginRight: 4 }} />Add task</button>
         </div>
       </div>
-      <div style={{ borderTop: `1px solid ${LINE}`, margin: "-2px 0 20px" }} />
-      {/* flat card grid — no columns. Cards fill 3-wide on desktop and wrap onto new rows
-          indefinitely as they're added; a per-card checkbox marks done (done cards sink to the
-          bottom, dimmed) and "Clear done" sweeps them out. */}
-      {visible.length > 0 ? (
-<>
-{__priorityGroups.map((g) => g.items.length === 0 ? null : (
-<div key={g.key} style={{ marginBottom: 20 }}>
-{__groupHead(g.label, g.items.length)}
-<div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))" }}>
-{g.items.map(renderCard)}
-</div>
-</div>
-))}
-{__waitingItems.length > 0 && (
-<div style={{ marginBottom: 20 }}>
-{__groupHead("Waiting on reply", __waitingItems.length)}
-<div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))" }}>
-{__waitingItems.map(renderCard)}
-</div>
-</div>
-)}
-</>
-) : (
-<Empty text={ql ? "No item matches your search." : "Nothing here yet. Add your first bit of life admin above."} />
-)}
-{items.some((t) => t.status === "Done") && <button onClick={clearDone} className="mt-4" style={{ ...iconBtn, fontSize: 12 }}>Clear done</button>}
+      {items.some((t) => t.status === "Done") && <button onClick={clearDone} className="mt-4" style={{ ...iconBtn, fontSize: 12 }}>Clear done</button>}
     </section>
   );
 }
@@ -7127,7 +7170,7 @@ function InlineEditArea({ value, onChange, placeholder, dim, open, onToggle }) {
    pattern) — omit them and it manages its own state exactly as before. Either way, clicking into
    the textarea itself or the toggle link stops the click from bubbling up to a card-level handler,
    so typing/pasting/collapsing this box never also fires an unrelated card click-toggle. */
-function AutoTextarea({ value, onChange, placeholder, open, onToggle }) {
+function AutoTextarea({ value, onChange, placeholder, open, onToggle, rows = 2 }) {
   const [collapsedState, setCollapsedState] = useState(false);
   const controlled = open !== undefined;
   const collapsed = controlled ? !open : collapsedState;
@@ -7147,7 +7190,22 @@ function AutoTextarea({ value, onChange, placeholder, open, onToggle }) {
     el.style.height = "auto";
     el.style.height = el.scrollHeight + "px";
   };
-  useLayoutEffect(resize, [isFocused ? localVal : value, collapsed]);
+  useLayoutEffect(resize, [isFocused ? localVal : value, collapsed, rows]);
+  /* Compact Life Admin descriptions must reflow when the two-column reading surface stacks,
+     or when the font/styles finish loading. Only observe width to avoid a resize feedback loop. */
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (rows !== 1 || !el) return;
+    let width = el.getBoundingClientRect().width;
+    const observer = new ResizeObserver(() => {
+      const next = el.getBoundingClientRect().width;
+      if (next !== width) { width = next; resize(); }
+    });
+    observer.observe(el);
+    let active = true;
+    if (document.fonts) document.fonts.ready.then(() => { if (active) resize(); });
+    return () => { active = false; observer.disconnect(); };
+  }, [collapsed, rows]);
   const long = (isFocused ? localVal : value || "").length > 120 || (isFocused ? localVal : value || "").includes("\n");
   return (
     <div>
@@ -7157,7 +7215,7 @@ function AutoTextarea({ value, onChange, placeholder, open, onToggle }) {
         onBlur={() => { setIsFocused(false); if (localVal !== value) onChange(localVal); }}
         onChange={(e) => { setLocalVal(e.target.value); onChange(e.target.value); }}
         onInput={resize} placeholder={placeholder}
-        rows={2} className="w-full rounded-lg px-3 py-2"
+        rows={rows} className="w-full rounded-lg px-3 py-2"
         style={{ ...inputStyle, lineHeight: 1.45, resize: "vertical", overflow: collapsed ? "hidden" : "auto", maxHeight: collapsed ? 52 : "none", boxSizing: "border-box", whiteSpace: "pre-wrap", overflowWrap: "break-word" }} />
       {long && (
         <button onClick={(e) => { e.stopPropagation(); toggle(); }} className="flex items-center gap-1 mt-1" style={{ ...iconBtn, padding: 0, fontSize: 10, color: FAINT }}>
