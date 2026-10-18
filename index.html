@@ -20,6 +20,12 @@
 <script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore-compat.js"></script>
 <script src="skit-corpus.js"></script>
+<script src="vendor/marked.js"></script>
+<script src="vendor/dompurify.js"></script>
+<script src="vendor/turndown.js"></script>
+<script src="vendor/turndown-plugin-gfm.js"></script>
+<script src="task-text.js"></script>
+<script src="task-files.js"></script>
 <!-- Google Identity Services. Provides google.accounts.oauth2 for the Calendar access token.
      Deliberately separate from Firebase Auth: Firebase signs you IN (identity), GIS grants the
      app permission to touch your CALENDAR (authorisation). They are different concerns and
@@ -1423,6 +1429,7 @@ const googleTokenManager = {
   },
 
   resetForAccount() {
+    TaskFiles.reset();
     this.token = null;
     this.client = null;
     this.clientScope = "";
@@ -3476,6 +3483,33 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
         .script-editable:focus { border-color: ${C.accent} !important; }
         .script-editable:empty:before { content: attr(data-placeholder); color: ${FAINT}; }
         .script-editable * { background: transparent !important; color: inherit !important; }
+        .task-description { min-width: 0; max-width: 100%; font-size: 14px; color: ${C.ink2}; }
+        .task-rich-editor { outline: none; min-height: 28px; width: 100%; max-width: 100%; overflow-x: auto; overflow-wrap: anywhere; line-height: 1.6; cursor: text; }
+        .task-rich-editor:empty:before { content: attr(data-placeholder); color: ${MUT}; pointer-events: none; }
+        .task-rich-editor:focus { box-shadow: 0 1px 0 ${C.accentLine}; }
+        .task-rich-editor.is-collapsed { max-height: 52px; overflow: hidden; cursor: pointer; }
+        .task-rich-editor p { margin: 0 0 .7em; }
+        .task-rich-editor p:last-child { margin-bottom: 0; }
+        .task-rich-editor h1, .task-rich-editor h2, .task-rich-editor h3 { margin: .8em 0 .4em; font-weight: 600; line-height: 1.35; color: ${C.ink}; }
+        .task-rich-editor h1 { font-size: 21px; } .task-rich-editor h2 { font-size: 19px; } .task-rich-editor h3 { font-size: 17px; }
+        .task-rich-editor ul, .task-rich-editor ol { padding-left: 22px; margin: .5em 0; }
+        .task-rich-editor ul { list-style: disc; } .task-rich-editor ol { list-style: decimal; }
+        .task-rich-editor a { color: ${C.sky}; text-decoration: underline; }
+        .task-rich-editor pre { white-space: pre-wrap; padding: 10px; background: ${FILL}; border-radius: 6px; }
+        .task-rich-editor blockquote { padding-left: 12px; border-left: 2px solid ${LINE}; margin: .5em 0; }
+        .task-rich-editor table, .script-editable table { width: 100%; min-width: 520px; border-collapse: collapse; margin: 12px 0; font-size: 13px; white-space: normal; }
+        .task-rich-editor th, .task-rich-editor td, .script-editable th, .script-editable td { border: 1px solid rgba(255,255,255,.18); padding: 9px 11px; text-align: left; vertical-align: top; line-height: 1.5; }
+        .task-rich-editor th, .script-editable th { color: ${C.ink}; font-weight: 600; background: ${FILL}; }
+        .script-editable { overflow-x: auto !important; }
+        .task-format-toolbar { display: flex; gap: 2px; margin-bottom: 5px; }
+        .task-attachments { min-width: 0; margin: 8px 0; font-size: 12px; }
+        .task-attach-button { display: inline-flex; align-items: center; gap: 6px; border: 1px solid ${LINE}; border-radius: 7px; padding: 5px 8px; background: transparent; color: ${C.ink2}; font: inherit; cursor: pointer; }
+        .task-attach-button:disabled { opacity: .45; cursor: default; }
+        .task-file-list { list-style: none; padding: 0; margin: 0 0 6px; }
+        .task-file-list li { display: flex; align-items: center; gap: 8px; }
+        .task-file-list a { color: ${C.sky}; overflow-wrap: anywhere; }
+        .task-file-status { display: block; color: ${MUT}; margin-top: 4px; }
+        .task-file-error { color: ${C.rose}; margin-top: 5px; }
         button:focus-visible { outline: 2px solid ${C.accent}; outline-offset: 2px; }
         input[type="date"]::-webkit-calendar-picker-indicator { cursor: pointer; opacity: 0.5; filter: invert(1); }
         .scroll::-webkit-scrollbar { width: 9px; }
@@ -4658,7 +4692,9 @@ function scriptSanitizeNode(node, parentPx, out) {
   const sourcePx = explicitPx || headingPx || parentPx;
   const isHeading = !!SCRIPT_HEADING_EM[tag];
   let container;
-  if (isHeading || explicitPx) {
+  if (["TABLE", "THEAD", "TBODY", "TFOOT", "TR", "TH", "TD"].includes(tag)) {
+    container = document.createElement(tag.toLowerCase());
+  } else if (isHeading || explicitPx) {
     container = document.createElement("span");
     const scale = scriptNormalizeSize(sourcePx);
     let css = "font-size:" + scale.toFixed(2) + "em;";
@@ -4767,7 +4803,7 @@ function ScriptBox({ value, isHtml, open, onFocus, onChange, onToggle, big, plac
     e.preventDefault();
     const html = e.clipboardData.getData("text/html");
     const text = e.clipboardData.getData("text/plain");
-    const insert = html ? scriptSanitizeHtml(html) : scriptEscapeToHtml(text);
+    const insert = html ? scriptSanitizeHtml(html) : TaskText.render(text);
     document.execCommand("insertHTML", false, insert);
     commit();
   };
@@ -4914,7 +4950,7 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
     const links = trailing
       ? [...draftLinks, { id: uid(), url: trailing.startsWith("http") ? trailing : `https://${trailing}`, label: linkLabel.trim() || trailing.replace(/^https?:\/\//, "").slice(0, 30) }]
       : draftLinks;
-    patch({ items: [{ id: uid(), title: t, desc: description.trim(), links, status: "Ideas", created: todayISO(), due: null, scheduledFor: null, ...capturePriorityFields(priority, null) }, ...content.items] });
+    patch({ items: [{ id: uid(), title: t, desc: TaskText.render(description.trim()), descHtml: true, links, status: "Ideas", created: todayISO(), due: null, scheduledFor: null, ...capturePriorityFields(priority, null) }, ...content.items] });
     setTitle(""); setDescription(""); setDraftLinks([]); setLinkLabel(""); setLinkUrl(""); setPriority("Medium");
   };
   const move = (id, dir) => setData((d) => {
@@ -5051,7 +5087,7 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
           <button onClick={addDraftLink} disabled={!linkUrl.trim()} style={{ ...pillGhost, padding: "8px 14px", opacity: linkUrl.trim() ? 1 : 0.4, cursor: linkUrl.trim() ? "pointer" : "not-allowed" }} title="Add this link and clear the fields for the next one"><Plus size={14} /></button>
         </div>
         <div className="flex gap-2 flex-wrap items-start">
-          <GrowingTextarea value={description} onChange={setDescription} placeholder="Description (optional) — the actual detail. Keeps the title short." rows={2} className="flex-1 rounded-lg px-3 py-2" style={{ ...inputStyle, minWidth: 200, fontSize: 13.5, lineHeight: 1.45 }} />
+          <RichDescription value={description} onChange={setDescription} placeholder="Description (optional) — the actual detail. Keeps the title short." rows={2} className="flex-1 rounded-lg px-3 py-2" style={{ ...inputStyle, minWidth: 200, fontSize: 13.5, lineHeight: 1.45 }} />
           <button onClick={add} style={{ ...pillDark, fontSize: 13, padding: "8px 16px" }}><Plus size={13} style={{ display: "inline", marginRight: 4 }} />{pipelineKey === "brandContent" ? "Add lead" : "Add idea"}</button>
         </div>
       </div>}
@@ -5100,6 +5136,7 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
                   <div key={i.id} data-nav-id={i.id} onClick={toggleDesc} className="rounded-lg" style={{ cursor: "pointer", background: "rgba(255,255,255,0.035)", border: `1px solid ${LINE}`, borderLeft: `2px solid ${CONTENT_TINT[col]}`, borderRadius: 10, padding: "11px 13px" }}>
                     <InlineEdit value={i.title} onChange={(v) => updateItem(i.id, { title: v })} strong bubbleClicks />{livePost(i) && <span title={"Posts on " + i.scheduledFor} style={{ marginLeft: 6, fontSize: 12 }}>📅</span>}<button onClick={(e) => { e.stopPropagation(); setExpandedId(i.id); }} style={{ ...iconBtn, padding: 2, marginLeft: 6 }} aria-label="Expand description" title="Expand description to full screen">⤢</button>
                     <ScriptBox value={i.desc || ""} isHtml={!!i.descHtml} open={descOpen} onFocus={() => openIfNot(i.id)} onChange={(v) => updateItem(i.id, { desc: v, descHtml: true })} onToggle={toggleDesc} />
+                    <TaskAttachments taskId={i.id} attachments={i.attachments} onAdd={(file) => setData((d) => ({ ...d, [pipelineKey]: { ...d[pipelineKey], items: d[pipelineKey].items.map((item) => item.id === i.id ? { ...item, attachments: [...(item.attachments || []), file] } : item) } }))} onRemove={(id) => setData((d) => ({ ...d, [pipelineKey]: { ...d[pipelineKey], items: d[pipelineKey].items.map((item) => item.id === i.id ? { ...item, attachments: (item.attachments || []).filter((file) => file.id !== id) } : item) } }))} />
                     {links.length > 0 && (
                       <div onClick={(e) => e.stopPropagation()} className="flex gap-1.5 flex-wrap mt-1.5">
                         {links.map((l) => (
@@ -5795,7 +5832,8 @@ function LifeAdminModule({ data, setData, q, boardKey = "lifeAdmin", boardTitle 
           </button>
           <div className="life-task-copy">
             <div className="life-task-title"><InlineEdit value={t.title} onChange={(v) => update(t.id, { title: v })} bubbleClicks /></div>
-            <div className="life-task-description"><AutoTextarea value={t.description || ""} onChange={(v) => update(t.id, { description: v })} placeholder="Add a description…" open={descOpen} onToggle={toggleDesc} rows={1} /></div>
+            <div className="life-task-description"><RichDescription value={t.description || ""} onChange={(v) => update(t.id, { description: v })} placeholder="Add a description…" open={descOpen} onToggle={toggleDesc} /></div>
+            <TaskAttachments taskId={t.id} attachments={t.attachments} onAdd={(file) => setData((d) => ({ ...d, [boardKey]: { ...d[boardKey], items: d[boardKey].items.map((item) => item.id === t.id ? { ...item, attachments: [...(item.attachments || []), file] } : item) } }))} onRemove={(id) => setData((d) => ({ ...d, [boardKey]: { ...d[boardKey], items: d[boardKey].items.map((item) => item.id === t.id ? { ...item, attachments: (item.attachments || []).filter((file) => file.id !== id) } : item) } }))} />
             {scheduled && <div style={{ fontSize: 11, color: C.mint, margin: "6px 0" }}>Scheduled · {scheduled.label}</div>}
             <PriorityControls item={t} onChange={(patch) => update(t.id, patch)} />
           </div>
@@ -5841,7 +5879,7 @@ function LifeAdminModule({ data, setData, q, boardKey = "lifeAdmin", boardTitle 
           <PrioritySelector value={priority} onChange={setPriority} withNA />
         </div>
         <div className="flex gap-2 flex-wrap items-start">
-          <GrowingTextarea value={description} onChange={setDescription} placeholder="Description (optional)" rows={2} className="flex-1 rounded-lg px-3 py-2" style={{ ...inputStyle, minWidth: 0, flexBasis: 200, lineHeight: 1.45 }} />
+          <RichDescription value={description} onChange={setDescription} placeholder="Description (optional)" className="flex-1 rounded-lg px-3 py-2" style={{ ...inputStyle, minWidth: 0, flexBasis: 200, lineHeight: 1.45 }} />
           <button onClick={add} style={pillDark}><Plus size={14} style={{ display: "inline", marginRight: 4 }} />Add task</button>
         </div>
       </div>
@@ -5923,7 +5961,7 @@ function MiniTaskList({ tasks, onChange, withLink, composerAtBottom, categories 
         <PrioritySelector value={priority} onChange={setPriority} withNA />
       </div>
       <div className="flex gap-1.5 items-start">
-        <GrowingTextarea value={description} onChange={setDescription} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); add(); } }} placeholder="Description (optional)…" rows={1} className="flex-1 rounded-lg px-2 py-1.5" style={{ ...inputStyle, fontSize: 11.5, lineHeight: 1.4 }} />
+        <RichDescription value={description} onChange={setDescription} placeholder="Description (optional)…" className="flex-1 rounded-lg px-2 py-1.5" style={{ ...inputStyle, fontSize: 11.5, lineHeight: 1.4 }} />
         <button onClick={add} style={{ ...pillDark, fontSize: 11, padding: "5px 10px" }}><Plus size={11} style={{ display: "inline", marginRight: 3 }} />Add</button>
       </div>
     </>
@@ -6010,7 +6048,8 @@ function MiniTaskRow({ t, onUpdate, onRemove, withLink, categories }) {
         <div className="flex-1 min-w-0" style={{ textDecoration: t.done ? "line-through" : "none" }}><InlineEdit value={t.title} onChange={(v) => onUpdate({ title: v })} bubbleClicks /></div>
         <button onClick={(e) => { e.stopPropagation(); onRemove(); }} style={{ ...iconBtn, padding: 2 }} aria-label="Delete"><X size={11} /></button>
       </div>
-      <div style={{ fontSize: 11, color: MUT, marginTop: 2, marginLeft: 26 }}><InlineEditArea value={t.description || ""} onChange={(v) => onUpdate({ description: v })} placeholder="Add a description…" open={descOpen} onToggle={() => setDescOpen((v) => !v)} /></div>
+      <div style={{ fontSize: 11, color: MUT, marginTop: 2, marginLeft: 26 }}><RichDescription value={t.description || ""} onChange={(v) => onUpdate({ description: v })} placeholder="Add a description…" open={descOpen} onToggle={() => setDescOpen((v) => !v)} /></div>
+      <TaskAttachments taskId={t.id} attachments={t.attachments} onAdd={(file) => onUpdate({ attachments: [...(t.attachments || []), file] })} onRemove={(id) => onUpdate({ attachments: (t.attachments || []).filter((file) => file.id !== id) })} />
 
       {links.length > 0 && (
         <div onClick={(e) => e.stopPropagation()} className="flex gap-1.5 flex-wrap mt-1.5" style={{ marginLeft: 26 }}>
@@ -6485,11 +6524,10 @@ function AITaskProjects({ data, setData, mama, setMama, q }) {
           </button>
         </div>
         <div className="flex gap-2 flex-wrap items-start">
-          <GrowingTextarea
+          <RichDescription
             value={description}
             onChange={setDescription}
             placeholder="Description (optional) — what to actually do. Keeps the title short."
-            rows={2}
             className="flex-1 rounded-lg px-3 py-2"
             style={{ ...inputStyle, minWidth: 200, lineHeight: 1.45 }}
           />
@@ -6926,7 +6964,7 @@ function AdminTasks({ data, setData, ally, setAlly }) {
           <button onClick={addDraftLink} disabled={!linkUrl.trim()} style={{ ...pillGhost, padding: "8px 14px", opacity: linkUrl.trim() ? 1 : 0.4, cursor: linkUrl.trim() ? "pointer" : "not-allowed" }} title="Add this link and clear the fields for the next one"><Plus size={14} /></button>
         </div>
         <div className="flex gap-2 flex-wrap items-start">
-          <GrowingTextarea value={description} onChange={setDescription} placeholder="Description (optional) — what to actually do. Keeps the title short." rows={2} className="flex-1 rounded-lg px-3 py-2" style={{ ...inputStyle, minWidth: 200, lineHeight: 1.45 }} />
+          <RichDescription value={description} onChange={setDescription} placeholder="Description (optional) — what to actually do. Keeps the title short." className="flex-1 rounded-lg px-3 py-2" style={{ ...inputStyle, minWidth: 200, lineHeight: 1.45 }} />
           <button onClick={add} style={pillDark}><Plus size={14} style={{ display: "inline", marginRight: 4 }} />Capture</button>
         </div>
       </div>
@@ -6989,7 +7027,8 @@ function TaskCard({ t, onUpdate, onRemove, moveOptions, onMove }) {
         <button onClick={(e) => { e.stopPropagation(); toggleDone(); }} aria-label="Toggle done" title={done ? "Mark not done" : "Mark done"} style={{ width: 18, height: 18, borderRadius: 6, cursor: "pointer", flexShrink: 0, background: done ? C.mint : C.card, border: `1px solid ${done ? C.mint : LINE}`, display: "flex", alignItems: "center", justifyContent: "center" }}>{done && <Check size={11} color="#fff" strokeWidth={3} />}</button>
         <div className="flex-1 min-w-0" style={{ fontSize: 13.5, textDecoration: done ? "line-through" : "none", opacity: done ? 0.55 : 1 }}><InlineEdit value={t.title} onChange={(v) => onUpdate({ title: v })} bubbleClicks /></div>
       </div>
-      <div style={{ fontSize: 11.5, color: MUT, marginTop: 2 }}><InlineEditArea value={t.description || ""} onChange={(v) => onUpdate({ description: v })} placeholder="Add a description…" open={descOpen} onToggle={() => setDescOpen((v) => !v)} /></div>
+      <div style={{ fontSize: 11.5, color: MUT, marginTop: 2 }}><RichDescription value={t.description || ""} onChange={(v) => onUpdate({ description: v })} placeholder="Add a description…" open={descOpen} onToggle={() => setDescOpen((v) => !v)} /></div>
+      <TaskAttachments taskId={t.id} attachments={t.attachments} onAdd={(file) => onUpdate({ attachments: [...(t.attachments || []), file] })} onRemove={(id) => onUpdate({ attachments: (t.attachments || []).filter((file) => file.id !== id) })} />
       <div className="flex items-center gap-2 mt-1" style={{ fontSize: 11, color: MUT }}>
         <span className="ml-auto flex items-center gap-1.5">
           {onMove && moveOptions && moveOptions.length > 0 && (
@@ -7031,6 +7070,100 @@ function TaskCard({ t, onUpdate, onRemove, moveOptions, onMove }) {
         <button onClick={addLink} style={{ ...iconBtn, fontSize: 10.5, background: FILL, border: `1px solid ${LINE}`, borderRadius: 6, padding: "3px 9px" }} title="Add link">+</button>
       </div>
       {!done && <PriorityControls item={t} onChange={onUpdate} />}
+    </div>
+  );
+}
+
+/* Rich task text is stored as Markdown, not executable HTML or a separate unsynced copy. */
+function RichDescription({ value, onChange, placeholder = "Add a description…", open, onToggle, style, className = "", label = "Task description" }) {
+  const ref = useRef(null);
+  const seeded = useRef(null);
+  const [focused, setFocused] = useState(false);
+  const collapsed = open === false;
+  useEffect(() => {
+    if (!ref.current || document.activeElement === ref.current) return;
+    if (seeded.current !== value) { ref.current.innerHTML = TaskText.render(value); seeded.current = value; }
+  }, [value]);
+  const commit = () => {
+    if (!ref.current) return "";
+    const markdown = TaskText.fromHtml(ref.current.innerHTML);
+    seeded.current = markdown;
+    if (markdown !== value) onChange(markdown);
+    return markdown;
+  };
+  const format = (command) => { ref.current.focus(); document.execCommand(command); commit(); };
+  const paste = (event) => {
+    event.preventDefault(); event.stopPropagation();
+    const markdown = TaskText.fromClipboard(event.clipboardData.getData("text/html"), event.clipboardData.getData("text/plain"));
+    document.execCommand("insertHTML", false, TaskText.render(markdown));
+    commit();
+  };
+  return (
+    <div className={`task-description ${className}`} style={style} onClick={(e) => e.stopPropagation()} onDragStart={(e) => e.stopPropagation()}>
+      {focused && !collapsed && <div className="task-format-toolbar" aria-label="Description formatting">
+        {[["bold", "Bold", "B"], ["italic", "Italic", "I"], ["insertUnorderedList", "Bullet list", "• List"], ["insertOrderedList", "Numbered list", "1. List"]].map(([command, name, text]) => <button key={command} type="button" aria-label={name} onMouseDown={(e) => e.preventDefault()} onClick={() => format(command)} style={{ ...iconBtn, padding: "3px 7px", fontSize: 12, color: C.ink2 }}>{text}</button>)}
+      </div>}
+      <div ref={ref} role="textbox" aria-multiline="true" aria-label={label} aria-readonly={collapsed} contentEditable={!collapsed} suppressContentEditableWarning
+        className={`task-rich-editor${collapsed ? " is-collapsed" : ""}`} data-placeholder={placeholder}
+        onFocus={() => setFocused(true)} onInput={commit} onPaste={paste}
+        onBlur={() => { const markdown = commit(); if (ref.current) ref.current.innerHTML = TaskText.render(markdown); setFocused(false); }}
+        onClick={() => { if (collapsed && onToggle) onToggle(); }} />
+    </div>
+  );
+}
+
+function TaskAttachments({ taskId, attachments = [], onAdd, onRemove, userEmail = (fbAuth && fbAuth.currentUser && fbAuth.currentUser.email) || "" }) {
+  const input = useRef(null);
+  const controller = useRef(null);
+  const mounted = useRef(true);
+  const current = useRef({ onAdd, userEmail });
+  current.current = { onAdd, userEmail };
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+  const [, redraw] = useState(0);
+  useEffect(() => TaskFiles.subscribe(() => redraw((n) => n + 1)), []);
+  useEffect(() => { mounted.current = true; setBusy(""); return () => { mounted.current = false; controller.current?.abort(); }; }, [userEmail]);
+  const connected = !!TaskFiles.token(userEmail);
+  const connect = async () => {
+    setBusy("Connecting Drive…"); setError("");
+    try { await TaskFiles.connect(userEmail, GOOGLE_CLIENT_ID); }
+    catch (e) { if (mounted.current) setError(e.message); }
+    finally { if (mounted.current) setBusy(""); }
+  };
+  const choose = () => {
+    setError("");
+    if (!TaskFiles.token(userEmail)) { connect(); return; }
+    input.current.click();
+  };
+  const upload = async (event) => {
+    const files = Array.from(event.target.files || []); event.target.value = "";
+    const activeEmail = userEmail;
+    controller.current = new AbortController();
+    for (const file of files) {
+      if (!mounted.current || current.current.userEmail !== activeEmail) break;
+      setBusy(`Uploading ${file.name}…`); setError("");
+      try {
+        const saved = await TaskFiles.upload(file, taskId, activeEmail, controller.current.signal);
+        if (mounted.current && current.current.userEmail === activeEmail) current.current.onAdd(saved);
+      } catch (e) {
+        if (mounted.current && e.name !== "AbortError") setError(`${file.name}: ${e.message}`);
+        break;
+      }
+    }
+    if (mounted.current) setBusy("");
+  };
+  return (
+    <div className="task-attachments" onClick={(e) => e.stopPropagation()} onDragStart={(e) => e.stopPropagation()}>
+      {attachments.length > 0 && <ul className="task-file-list">{attachments.map((file) => <li key={file.id}>
+        {/^[\w-]+$/.test(file.id || "") ? <a href={`https://drive.google.com/file/d/${file.id}/view`} target="_blank" rel="noopener noreferrer">{file.name || "Attachment"}</a> : <span>{file.name || "Attachment"}</span>}
+        <button type="button" style={iconBtn} aria-label={`Remove attachment ${file.name}`} title="Remove from this task; keep the file in Drive" onClick={() => onRemove(file.id)}><X size={12} /></button>
+      </li>)}</ul>}
+      <input ref={input} type="file" multiple onChange={upload} style={{ display: "none" }} aria-label="Choose task attachments" />
+      <button type="button" onClick={choose} disabled={!!busy || !userEmail} className="task-attach-button" title="Files are saved privately in your Google Drive. Up to 25 MB per file.">
+        <Upload size={13} />{busy || (connected ? "Attach file" : "Connect Drive to attach files")}
+      </button>
+      {busy && <span role="status" className="task-file-status">{busy}</span>}
+      {error && <div role="alert" className="task-file-error">{error}</div>}
     </div>
   );
 }
