@@ -3535,7 +3535,6 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
         .life-eyebrow { font-size: 10px; font-weight: 600; letter-spacing: .17em; color: ${MUT}; }
         .life-heading { font-size: clamp(42px, 5vw, 68px); font-weight: 600; letter-spacing: -.035em; line-height: 1.1; margin: 15px 0 12px; }
         .life-heading span { color: ${C.accent}; }
-        .life-subtitle { color: ${C.ink2}; font-size: 15px; line-height: 1.5; margin: 0; }
         .life-priority-key { display: flex; flex-wrap: wrap; gap: 16px; font-size: 10px; margin-top: 20px; }
         .life-summary { display: flex; align-items: center; gap: 22px; flex-shrink: 0; }
         .life-summary-counts { display: flex; flex-direction: column; gap: 8px; font-size: 11px; color: ${MUT}; }
@@ -3574,7 +3573,6 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
           .life-summary svg { width: 94px; height: 94px; }
           .life-summary-counts { display: none; }
           .life-heading { font-size: 42px; }
-          .life-subtitle { font-size: 14px; }
           .life-priority-key { gap: 10px; font-size: 9px; }
           .life-priorities, .life-no-high .life-secondary { display: block; }
           .life-task-high .life-task-title { font-size: 24px; }
@@ -5787,7 +5785,7 @@ function ApartmentModule({ data, setData, unlocked, go, q }) {
 /* ================= LIFE ADMIN ================= */
 /* Life Admin uses the existing task records and priority controls. Its reading hierarchy changes
    size with priority; waiting and N/A remain visible in their own quieter sections. */
-function LifeAdminModule({ data, setData, q, boardKey = "lifeAdmin", boardTitle = "General tasks", subtitle = "Paperwork, errands, calls. A little space for your own life.", home = false }) {
+function LifeAdminModule({ data, setData, q, boardKey = "lifeAdmin", boardTitle = "General tasks", home = false }) {
   const [title, setTitle] = useState(""); const [description, setDescription] = useState(""); const [due, setDue] = useState(""); const [priority, setPriority] = useState("Medium");
   const [openDesc, setOpenDesc] = useState({});
   const items = (data[boardKey] && data[boardKey].items) || [];
@@ -5858,8 +5856,7 @@ function LifeAdminModule({ data, setData, q, boardKey = "lifeAdmin", boardTitle 
         <div>
           <div className="life-eyebrow">{home ? "HOME / YOUR LIFE, FIRST" : "YOUR LIFE, FIRST"}</div>
           <h1 className="life-heading">{home ? <>Life <span>Admin.</span></> : boardTitle}</h1>
-          <p className="life-subtitle">{subtitle}</p>
-          <div className="life-priority-key"><span style={{ color: C.rose }}>High</span><span style={{ color: C.amber }}>Medium</span><span style={{ color: C.sky }}>Low</span><span style={{ color: MUT }}>Size follows priority</span></div>
+          <div className="life-priority-key"><span style={{ color: C.rose }}>High</span><span style={{ color: C.amber }}>Medium</span><span style={{ color: C.sky }}>Low</span></div>
         </div>
         <div className="life-summary" aria-label={`${visible.length} open tasks${ql ? " matching your search" : ""}`}>
           <Donut segments={groups.map((g) => ({ value: g.items.length, color: tintFor(g.key) }))} size={134} thick={7} centerTop={visible.length} centerSub={ql ? "matches" : "open tasks"} />
