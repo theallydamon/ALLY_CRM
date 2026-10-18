@@ -24,9 +24,31 @@
     });
     return converter.turndown(root).trim();
   }
+  function normalizeTables(value) {
+    const lines = String(value || "").replace(/\r\n?/g, "\n").split("\n");
+    const output = [];
+    let fenced = false;
+    for (let i = 0; i < lines.length; i++) {
+      if (/^\s*(```|~~~)/.test(lines[i])) fenced = !fenced;
+      const columns = lines[i].split("\t");
+      if (!fenced && columns.length > 1 && columns.every((cell) => cell.trim())) {
+        let end = i + 1;
+        while (end < lines.length && lines[end].split("\t").length === columns.length) end++;
+        // Header plus at least two rows distinguishes a pasted table from a single tabbed line.
+        if (end - i >= 3) {
+          const row = (line) => "| " + line.split("\t").map((cell) => cell.trim().replace(/\|/g, "\\|")).join(" | ") + " |";
+          output.push("", row(lines[i]), "| " + columns.map(() => "---").join(" | ") + " |");
+          for (let j = i + 1; j < end; j++) output.push(row(lines[j]));
+          output.push(""); i = end - 1; continue;
+        }
+      }
+      output.push(lines[i]);
+    }
+    return output.join("\n");
+  }
   function render(value) {
     const root = document.createElement("div");
-    root.innerHTML = clean(marked.parse(String(value || ""), { gfm: true, breaks: true, async: false }));
+    root.innerHTML = clean(marked.parse(normalizeTables(value), { gfm: true, breaks: true, async: false }));
     root.querySelectorAll("a").forEach((a) => { a.target = "_blank"; a.rel = "noopener noreferrer"; });
     return root.innerHTML;
   }
