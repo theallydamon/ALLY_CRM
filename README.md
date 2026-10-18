@@ -10,6 +10,8 @@ Single-page React app with no build step. Markup, styles and the entire app live
 
 Everything else loads from CDNs at runtime: React 18 and ReactDOM 18 (unpkg), Babel standalone, Tailwind CSS (cdn.tailwindcss.com), and the Firebase compat SDKs for app, auth and firestore (gstatic).
 
+Personal Home opens directly on Life Admin, with task text and completion circles sized by priority. Waiting and N/A tasks remain visible below the active priorities. Creative priorities and the calendar follow the Life Admin list. Content, Brand Deals and Music Content each have a main navigation tab, backed by their original `content`, `brandContent` and `musicContent` records. The work profile keeps its existing MAMA Home and navigation.
+
 ## Run locally
 
 Nothing to install and nothing to build — just serve the folder over HTTP:
