@@ -29,7 +29,7 @@
      context/04-REDESIGN.md. -->
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
-html,body,#root{height:100%;margin:0;background:#0B0B0D;font-family:"Bricolage Grotesque",sans-serif;}
+html,body,#root{height:100%;margin:0;background:#0B0B0D;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;}
 /* dashboard task navigation: brief flash on whatever element scrollAndHighlight() scrolls to,
    so a click on a Priorities/Mama dashboard task chip reads clearly as "here it is" once the
    page lands on the source item. Pure CSS animation on a transient class toggled from JS —
@@ -1115,7 +1115,7 @@ function Ring({ pct, tint, size = 66, thick = 8, label, sub }) {
       <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(28,28,34,0.08)" strokeWidth={thick} />
       <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={tint} strokeWidth={thick} strokeLinecap="round"
         strokeDasharray={c} strokeDashoffset={c * (1 - Math.min(1, pct))} transform={`rotate(-90 ${size / 2} ${size / 2})`} style={{ transition: "stroke-dashoffset 0.6s ease" }} />
-      {label !== undefined && <text x={size / 2} y={sub ? size / 2 - size * 0.09 : size / 2} textAnchor="middle" dominantBaseline="central" fill={C.ink} style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontSize: size * 0.24, fontWeight: 700 }}>{label}</text>}
+      {label !== undefined && <text x={size / 2} y={sub ? size / 2 - size * 0.09 : size / 2} textAnchor="middle" dominantBaseline="central" fill={C.ink} style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif", fontSize: size * 0.24, fontWeight: 700 }}>{label}</text>}
       {sub && <text x={size / 2} y={size / 2 + size * 0.17} textAnchor="middle" dominantBaseline="central" fill={MUT} style={{ fontSize: size * 0.11, letterSpacing: "0.06em" }}>{sub}</text>}
     </svg>
   );
@@ -1134,7 +1134,7 @@ function Donut({ segments, size = 150, thick = 20, centerTop, centerSub }) {
           strokeDasharray={`${dash} ${c - dash}`} strokeDashoffset={-off} transform={`rotate(-90 ${size / 2} ${size / 2})`} style={{ transition: "stroke-dasharray 0.5s ease" }} />;
         off += dash; return el;
       })}
-      {centerTop !== undefined && <text x={size / 2} y={centerSub ? size / 2 - size * 0.07 : size / 2} textAnchor="middle" dominantBaseline="central" fill={C.ink} style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontSize: size * 0.2, fontWeight: 700 }}>{centerTop}</text>}
+      {centerTop !== undefined && <text x={size / 2} y={centerSub ? size / 2 - size * 0.07 : size / 2} textAnchor="middle" dominantBaseline="central" fill={C.ink} style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif", fontSize: size * 0.2, fontWeight: 700 }}>{centerTop}</text>}
       {centerSub && <text x={size / 2} y={size / 2 + size * 0.15} textAnchor="middle" dominantBaseline="central" fill={MUT} style={{ fontSize: size * 0.075, letterSpacing: "0.08em", textTransform: "uppercase" }}>{centerSub}</text>}
     </svg>
   );
@@ -1146,7 +1146,7 @@ function Bars({ data, height = 130 }) {
     <div className="flex items-end justify-between gap-2" style={{ height }}>
       {data.map((d, i) => (
         <div key={i} className="flex flex-col items-center gap-1.5" style={{ flex: 1, height: "100%", justifyContent: "flex-end" }}>
-          <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontSize: 13, fontWeight: 700, color: d.value ? C.ink : FAINT }}>{d.value}</span>
+          <span style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif", fontSize: 13, fontWeight: 700, color: d.value ? C.ink : FAINT }}>{d.value}</span>
           <div style={{ width: "100%", maxWidth: 34, height: `${(d.value / max) * (height - 44)}px`, minHeight: 4, borderRadius: 8, background: d.color, transition: "height 0.5s ease" }} />
           <span style={{ fontSize: 10.5, color: MUT, textAlign: "center", lineHeight: 1.1 }}>{d.label}</span>
         </div>
@@ -3403,21 +3403,21 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
   };
 
   if (!ally || !mama) {
-    return <div style={{ background: C.canvas, minHeight: "100vh" }} className="flex items-center justify-center"><div style={{ color: MUT, fontFamily: "'Bricolage Grotesque', sans-serif" }}>Opening ALLY CRM…</div></div>;
+    return <div style={{ background: C.canvas, minHeight: "100vh" }} className="flex items-center justify-center"><div style={{ color: MUT, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" }}>Opening ALLY CRM…</div></div>;
   }
 
   /* auth gate: if cloud sync is available (fbAuth loaded), don't render the app — or any locally
      cached data — until we actually know the sign-in state. Signed out (or still checking) shows a
      dedicated screen instead of ever flashing whatever's sitting in this browser's localStorage. */
   if (fbAuth && !authReady) {
-    return <div style={{ background: C.canvas, minHeight: "100vh" }} className="flex items-center justify-center"><div style={{ color: MUT, fontFamily: "'Bricolage Grotesque', sans-serif" }}>Checking sign-in…</div></div>;
+    return <div style={{ background: C.canvas, minHeight: "100vh" }} className="flex items-center justify-center"><div style={{ color: MUT, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" }}>Checking sign-in…</div></div>;
   }
   if (fbAuth && authReady && !user) {
     return (
       <div style={{ background: C.canvas, minHeight: "100vh" }} className="flex items-center justify-center">
         <div className="flex flex-col items-center" style={{ ...card, borderRadius: 20, padding: "40px 36px", width: 340, textAlign: "center" }}>
           <div style={{ width: 148, height: 148, borderRadius: 28, overflow: "hidden", marginBottom: 20 }}><img src={AVATAR_IMG} alt="Ally Damon" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} /></div>
-          <div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 800, fontStyle: "italic", fontSize: 26, letterSpacing: "0.04em", color: "#E6090F", textTransform: "uppercase", marginBottom: 6 }}>ALLY CRM</div>
+          <div style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif", fontWeight: 800, fontStyle: "italic", fontSize: 26, letterSpacing: "0.04em", color: "#E6090F", textTransform: "uppercase", marginBottom: 6 }}>ALLY CRM</div>
           <div style={{ fontSize: 12.5, color: MUT, marginBottom: 24 }}>Sign in with Google to continue</div>
           <button onClick={signInGoogle} className="flex items-center justify-center gap-2 w-full" style={{ ...pillDark, padding: "11px 16px", fontSize: 14 }}>
             <CloudIcon size={15} /> Sign in with Google
@@ -3467,7 +3467,6 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
   return (
     <div style={{ background: C.canvas, height: "100vh", overflow: "hidden", color: C.ink }}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700&family=Outfit:wght@300;400;500;600&display=swap');
         * { box-sizing: border-box; }
         html, body { background: ${C.canvas}; }
         ::placeholder { color: ${FAINT}; }
@@ -3500,9 +3499,9 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
         /* Life Admin is an open reading surface. Type, space and circle size encode priority. */
         .life-intro { display: flex; justify-content: space-between; align-items: center; gap: 32px; padding: 14px 0 32px; }
         .life-eyebrow { font-size: 10px; font-weight: 600; letter-spacing: .17em; color: ${MUT}; }
-        .life-heading { font-size: clamp(42px, 5vw, 68px); font-weight: 500; letter-spacing: -.055em; line-height: 1.05; margin: 15px 0 12px; }
+        .life-heading { font-size: clamp(42px, 5vw, 68px); font-weight: 600; letter-spacing: -.035em; line-height: 1.1; margin: 15px 0 12px; }
         .life-heading span { color: ${C.accent}; }
-        .life-subtitle { color: ${MUT}; font-size: 14px; line-height: 1.5; margin: 0; }
+        .life-subtitle { color: ${C.ink2}; font-size: 15px; line-height: 1.5; margin: 0; }
         .life-priority-key { display: flex; flex-wrap: wrap; gap: 16px; font-size: 10px; margin-top: 20px; }
         .life-summary { display: flex; align-items: center; gap: 22px; flex-shrink: 0; }
         .life-summary-counts { display: flex; flex-direction: column; gap: 8px; font-size: 11px; color: ${MUT}; }
@@ -3513,16 +3512,16 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
         .life-no-high .life-secondary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 40px; }
         .life-group { min-width: 0; margin-bottom: 28px; }
         .life-group-heading { display: flex; align-items: center; gap: 9px; padding-bottom: 15px; border-bottom: 1px solid ${LINE}; }
-        .life-group-heading h2 { font-size: 11px; font-weight: 500; letter-spacing: .09em; text-transform: uppercase; margin: 0; color: var(--task-tint); }
+        .life-group-heading h2 { font-size: 12px; font-weight: 500; letter-spacing: .09em; text-transform: uppercase; margin: 0; color: var(--task-tint); }
         .life-group-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--task-tint); }
         .life-group-count { margin-left: auto; color: ${FAINT}; font-size: 12px; }
         .life-task { border-bottom: 1px solid ${LINE}; padding: 18px 0; }
         .life-task-main { display: flex; align-items: flex-start; gap: 12px; }
         .life-task-copy { flex: 1; min-width: 0; }
-        .life-task-title { font-size: 18px; font-weight: 500; line-height: 1.35; letter-spacing: -.02em; }
+        .life-task-title { font-size: 20px; font-weight: 600; line-height: 1.45; letter-spacing: normal; }
         .life-task-title span, .life-task-title input { font-size: inherit !important; font-weight: inherit !important; font-family: inherit !important; }
         .life-task-description { margin: 7px 0 9px; }
-        .life-task-description textarea { line-height: 1.55 !important; color: ${MUT} !important; background: transparent !important; border: 1px solid transparent !important; padding: 2px 0 !important; resize: none !important; font-size: 12px !important; }
+        .life-task-description textarea { line-height: 1.6 !important; color: ${C.ink2} !important; background: transparent !important; border: 1px solid transparent !important; padding: 2px 0 !important; resize: none !important; font-size: 14px !important; }
         .life-task-description textarea:focus { border-bottom-color: ${C.accentLine} !important; }
         .life-task-actions { display: flex; flex-direction: column; gap: 2px; flex-shrink: 0; }
         .life-check { width: 32px; height: 32px; margin-top: 1px; padding: 0; border: 1px solid color-mix(in srgb, var(--task-tint) 45%, transparent); background: color-mix(in srgb, var(--task-tint) 8%, transparent); color: var(--task-tint); border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; cursor: pointer; font-family: inherit; font-size: 10px; }
@@ -3530,9 +3529,9 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
         .life-check:hover .life-task-number, .life-check:focus-visible .life-task-number { display: none; }
         .life-check:hover .life-check-icon, .life-check:focus-visible .life-check-icon { display: inline !important; }
         .life-task-high { padding: 24px 0; }
-        .life-task-high .life-task-title { font-size: 27px; letter-spacing: -.035em; }
+        .life-task-high .life-task-title { font-size: 28px; letter-spacing: normal; }
         .life-task-high .life-check { width: 44px; height: 44px; font-size: 12px; }
-        .life-task-low .life-task-title, .life-task-none .life-task-title, .life-task-waiting .life-task-title { font-size: 14px; }
+        .life-task-low .life-task-title, .life-task-none .life-task-title, .life-task-waiting .life-task-title { font-size: 16px; }
         .life-task-low .life-check, .life-task-none .life-check, .life-task-waiting .life-check { width: 25px; height: 25px; font-size: 9px; }
         .life-capture { padding: 24px 0 0; border-top: 1px solid ${LINE}; margin-top: 12px; }
         @media (max-width: 760px) {
@@ -3541,7 +3540,7 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
           .life-summary svg { width: 94px; height: 94px; }
           .life-summary-counts { display: none; }
           .life-heading { font-size: 42px; }
-          .life-subtitle { font-size: 12px; }
+          .life-subtitle { font-size: 14px; }
           .life-priority-key { gap: 10px; font-size: 9px; }
           .life-priorities, .life-no-high .life-secondary { display: block; }
           .life-task-high .life-task-title { font-size: 24px; }
@@ -3610,7 +3609,7 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
         }
       `}</style>
 
-      <div className="flex" style={{ height: "100%", fontFamily: "'Bricolage Grotesque', sans-serif", color: C.ink }}>
+      <div className="flex" style={{ height: "100%", fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif", color: C.ink }}>
 
         {/* ===== main column — full width now that the sidebar is gone. The bottom strip is a
             sibling of the scroll area, not an overlay, so page content can never sit under it. ===== */}
@@ -3623,7 +3622,7 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
                 card jumps you into a pillar, and browser-level back should hook into that later. */}
             <div style={{ width: 6, height: 30, borderRadius: 3, background: mod.accent, flexShrink: 0 }} />
             <div style={{ minWidth: 0 }}>
-              <div className="page-title" style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 21, lineHeight: 1.1, letterSpacing: "-0.01em" }}>{mod.label}</div>
+              <div className="page-title" style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif", fontWeight: 700, fontSize: 21, lineHeight: 1.1, letterSpacing: "-0.01em" }}>{mod.label}</div>
               <div className="page-subtitle" style={{ fontSize: 10.5, color: MUT }}><span style={{ color: profile.id === "work" ? C.amber : C.lilac, fontWeight: 700, letterSpacing: "0.08em" }}>{modeLabel}</span> · {new Date().toLocaleDateString("en-ZA", { weekday: "long", day: "numeric", month: "long" })}</div>
             </div>
             <div className="flex-1" />
@@ -4051,7 +4050,7 @@ const onSetStatus = ({ id, pipe, from }, status) => {
 return (
 <section>
 <div style={{ marginBottom: 16 }}>
-<h1 className="page-h1" style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700 }}>{onlyPillar ? (onlyPillar === "lifeAdmin" ? "Life Admin" : onlyPillar === "brandContent" ? BRAND_DEALS_MOD.label : onlyPillar === "music" ? MUSIC_CONTENT_MOD.label : MODULES[onlyPillar].label) : profile && profile.id === "personal" ? "Creative priorities" : "Priorities right now"}</h1>
+<h1 className="page-h1" style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif", fontWeight: 700 }}>{onlyPillar ? (onlyPillar === "lifeAdmin" ? "Life Admin" : onlyPillar === "brandContent" ? BRAND_DEALS_MOD.label : onlyPillar === "music" ? MUSIC_CONTENT_MOD.label : MODULES[onlyPillar].label) : profile && profile.id === "personal" ? "Creative priorities" : "Priorities right now"}</h1>
 </div>
 
 {/* ALL FOUR PILLARS ON ONE ROW, deliberately a fixed 4-up rather than auto-fit.
@@ -4267,9 +4266,9 @@ return (
 <div onClick={() => onNavigate && onNavigate({ navTab: "content", navSub })} className="rounded-2xl p-4 pillar-card" style={{ ...card, borderRadius: 16, borderLeft: "4px solid " + mod.accent, cursor: "pointer" }}>
 <div className="flex items-center justify-between mb-3">
 <div className="flex items-center gap-2 min-w-0">
-<span style={{ width: 28, height: 28, borderRadius: 99, background: mod.accent, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 14, flexShrink: 0 }}>{rank}</span>
+<span style={{ width: 28, height: 28, borderRadius: 99, background: mod.accent, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif", fontWeight: 700, fontSize: 14, flexShrink: 0 }}>{rank}</span>
 {(() => { const G = NAV_ICONS[mod.icon]; return G ? <G size={17} color={MUT} strokeWidth={1.9} style={{ flexShrink: 0 }} /> : null; })()}
-<span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 16, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{mod.label}</span>
+<span style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif", fontWeight: 700, fontSize: 16, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{mod.label}</span>
 </div>
 <ArrowUpRight size={16} color={MUT} />
 </div>
@@ -4286,7 +4285,7 @@ return (
 <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
 {pipelineCols.map((c) => (
 <div key={c} className="rounded-lg py-2 text-center" style={{ background: C.soft, border: "1px solid " + LINE }}>
-<div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 19, color: CONTENT_TINT[c] }}>{counts[c]}</div>
+<div style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif", fontWeight: 700, fontSize: 19, color: CONTENT_TINT[c] }}>{counts[c]}</div>
 <div style={{ fontSize: 9.5, letterSpacing: "0.04em", textTransform: "uppercase", color: MUT, marginTop: 2 }}>{c}</div>
 </div>
 ))}
@@ -4349,9 +4348,9 @@ function PriorityPillarCard({ pillarKey, tasks, go, rank, onDropPriority, pct, o
     <div onClick={() => go(pillarKey)} className="rounded-2xl p-4 pillar-card" style={{ ...card, borderRadius: 16, borderLeft: `4px solid ${mod.accent}`, cursor: "pointer" }}>
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2 min-w-0">
-          <span style={{ width: 28, height: 28, borderRadius: 99, background: mod.accent, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 14, flexShrink: 0 }}>{rank}</span>
+          <span style={{ width: 28, height: 28, borderRadius: 99, background: mod.accent, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif", fontWeight: 700, fontSize: 14, flexShrink: 0 }}>{rank}</span>
           {(() => { const G = NAV_ICONS[mod.icon]; return G ? <G size={17} color={MUT} strokeWidth={1.9} style={{ flexShrink: 0 }} /> : null; })()}
-          <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 16, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{mod.label}</span>
+          <span style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif", fontWeight: 700, fontSize: 16, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{mod.label}</span>
         </div>
         <ArrowUpRight size={16} color={MUT} />
       </div>
@@ -4772,8 +4771,8 @@ function ScriptBox({ value, isHtml, open, onFocus, onChange, onToggle, big, plac
     document.execCommand("insertHTML", false, insert);
     commit();
   };
-  const miniBtn = { background: "rgba(255,255,255,0.06)", border: `1px solid ${LINE}`, color: C.ink, width: 22, height: 22, borderRadius: 6, cursor: "pointer", fontSize: 11, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Bricolage Grotesque', sans-serif" };
-  const miniSelect = { background: "rgba(255,255,255,0.06)", border: `1px solid ${LINE}`, color: C.ink, borderRadius: 6, fontSize: 10.5, fontFamily: "'Bricolage Grotesque', sans-serif", padding: "2px 4px" };
+  const miniBtn = { background: "rgba(255,255,255,0.06)", border: `1px solid ${LINE}`, color: C.ink, width: 22, height: 22, borderRadius: 6, cursor: "pointer", fontSize: 11, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" };
+  const miniSelect = { background: "rgba(255,255,255,0.06)", border: `1px solid ${LINE}`, color: C.ink, borderRadius: 6, fontSize: 10.5, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif", padding: "2px 4px" };
 
   return (
     <div className="mt-1.5">
@@ -5060,7 +5059,7 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
       {activeStage === "Ready to Post" && scheduled.length > 0 && (
         <div className="rounded-2xl mb-4" style={{ ...card, borderRadius: 12, padding: 16 }}>
           <div className="flex items-center gap-2 mb-2.5">
-            <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 12.5, letterSpacing: "0.05em", textTransform: "uppercase", color: C.sky }}>Upcoming content</span>
+            <span style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif", fontWeight: 700, fontSize: 12.5, letterSpacing: "0.05em", textTransform: "uppercase", color: C.sky }}>Upcoming content</span>
           </div>
           <div className="flex flex-col gap-2">
             {scheduled.map((i) => (
@@ -5081,7 +5080,7 @@ function ContentPipeline({ data, setData, q, pipelineKey, heading, focusId = nul
           return (
             <div key={col} style={{ background: C.canvas, padding: 16, display: "flex", flexDirection: "column", gap: 9, transition: "background 120ms ease" }}>
               <div className="flex items-center justify-between px-0.5" style={{ paddingBottom: 9, borderBottom: `1px solid ${LINE}`, marginBottom: 2 }}>
-                <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 12.5, letterSpacing: "0.05em", textTransform: "uppercase", color: CONTENT_TINT[col] }}>{col}</span>
+                <span style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif", fontWeight: 700, fontSize: 12.5, letterSpacing: "0.05em", textTransform: "uppercase", color: CONTENT_TINT[col] }}>{col}</span>
                 <span className="flex items-center gap-1"><span style={{ fontSize: 12.5, color: MUT }}>{cItems.length}</span><button onClick={() => setColumnCards(true)} style={{ ...iconBtn, padding: "2px 4px", fontSize: 10 }} title="Expand all cards">Expand all</button><button onClick={() => setColumnCards(false)} style={{ ...iconBtn, padding: "2px 4px", fontSize: 10 }} title="Collapse all cards">Collapse all</button></span>
               </div>
               {(() => {
@@ -5202,7 +5201,7 @@ function RingDark({ value, max, label, tint, size = 100 }) {
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img" aria-label={`${label} since post`} style={{ position: "relative" }}>
         <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(255,255,255,0.12)" strokeWidth="9" />
         <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={tint} strokeWidth="9" strokeLinecap="round" strokeDasharray={c} strokeDashoffset={c * (1 - pct)} transform={`rotate(-90 ${size / 2} ${size / 2})`} style={{ transition: "stroke-dashoffset 0.6s ease" }} />
-        <text x={size / 2} y={size / 2} textAnchor="middle" dominantBaseline="central" fill="#fff" style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontSize: size * 0.26, fontWeight: 700 }}>{label}</text>
+        <text x={size / 2} y={size / 2} textAnchor="middle" dominantBaseline="central" fill="#fff" style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif", fontSize: size * 0.26, fontWeight: 700 }}>{label}</text>
       </svg>
       <span style={{ fontSize: 9, letterSpacing: "0.06em", color: "rgba(255,255,255,0.55)", whiteSpace: "nowrap" }}>SINCE POST</span>
     </div>
@@ -5245,7 +5244,7 @@ function SongModule({ data, setData }) {
           <div key={s.id} className="flex gap-4" style={{ opacity: isLocked ? 0.7 : 1 }}>
             <div className="flex flex-col items-center" style={{ width: 36, flexShrink: 0 }}>
               <button onClick={() => toggleStage(i)} aria-label={isDone ? "Mark not done" : "Mark done"} title={isLocked ? "Out of order — click to mark done anyway and skip ahead" : isDone ? "Mark not done" : "Mark done"}
-                style={{ width: 34, height: 34, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", background: isDone ? C.mint : isCurrent ? `${tint}22` : C.card, border: `1px solid ${isDone ? C.mint : isCurrent ? tint : LINE}`, fontFamily: "'Bricolage Grotesque', sans-serif", fontSize: 13, fontWeight: 600, color: isDone ? "#fff" : isCurrent ? tint : MUT }}>
+                style={{ width: 34, height: 34, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", background: isDone ? C.mint : isCurrent ? `${tint}22` : C.card, border: `1px solid ${isDone ? C.mint : isCurrent ? tint : LINE}`, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif", fontSize: 13, fontWeight: 600, color: isDone ? "#fff" : isCurrent ? tint : MUT }}>
                 {isDone ? <Check size={16} strokeWidth={3} /> : isLocked ? <Lock size={14} /> : i + 1}
               </button>
               {i < song.stages.length - 1 && <div style={{ width: 2, flex: 1, minHeight: 22, background: isDone ? `${C.mint}66` : LINE }} />}
@@ -5327,7 +5326,7 @@ function UnlocksModule({ data, setData }) {
             <div key={pl.id} className="rounded-2xl p-4" style={{ ...card, borderRadius: 18, borderTop: `2px solid ${pl.accent}` }}>
               <div className="flex items-center gap-2 mb-1">
                 <span style={{ fontSize: 20 }}>{pl.emoji}</span>
-                <div className="flex-1"><span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 600, fontSize: 16 }}>{pl.name}</span></div>
+                <div className="flex-1"><span style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif", fontWeight: 600, fontSize: 16 }}>{pl.name}</span></div>
                 <span style={{ fontSize: 11, color: MUT }}>{live}/{pl.benefits.length} live</span>
               </div>
               <p style={{ fontSize: 12, color: MUT, margin: "0 0 12px", lineHeight: 1.45 }}>{pl.role}</p>
@@ -5380,7 +5379,7 @@ function UnlocksModule({ data, setData }) {
             <div key={ch.id} className="rounded-2xl p-4" style={{ ...card, borderRadius: 18 }}>
               <div className="flex items-center gap-3 mb-3">
                 <Ring pct={ch.nodes.length ? done / ch.nodes.length : 0} tint={tint} size={50} thick={6} label={`${done}`} />
-                <div className="flex-1"><span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 600, fontSize: 15 }}>{ch.name}</span><div style={{ fontSize: 12, color: MUT }}>{done}/{ch.nodes.length} done</div></div>
+                <div className="flex-1"><span style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif", fontWeight: 600, fontSize: 15 }}>{ch.name}</span><div style={{ fontSize: 12, color: MUT }}>{done}/{ch.nodes.length} done</div></div>
               </div>
               <div className="flex flex-col">
                 {ch.nodes.map((n, i) => (
@@ -5642,7 +5641,7 @@ function FurnishingModule({ data, setData, q }) {
           if (query && !items.length) return null;
           return <div key={room.key} className="rounded-2xl" style={{ ...card, borderRadius: 18, overflow: "hidden", borderLeft: `4px solid ${room.tint}` }}>
             <button onClick={() => setOpenRooms((current) => ({ ...current, [room.key]: !current[room.key] }))} className="w-full text-left px-5 py-4 flex items-center justify-between gap-3" style={{ cursor: "pointer", fontFamily: "inherit", background: "transparent", border: 0, color: C.ink }}>
-              <div><div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontSize: 17, fontWeight: 700 }}>{room.label}</div><div style={{ fontSize: 12, color: MUT, marginTop: 3 }}>{items.filter((item) => item.status === "Decided").length} decided · {items.filter((item) => item.status === "Shortlisted").length} shortlisted · {items.length} items</div></div>
+              <div><div style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif", fontSize: 17, fontWeight: 700 }}>{room.label}</div><div style={{ fontSize: 12, color: MUT, marginTop: 3 }}>{items.filter((item) => item.status === "Decided").length} decided · {items.filter((item) => item.status === "Shortlisted").length} shortlisted · {items.length} items</div></div>
               {open ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
             </button>
             {open && <div className="px-5 pb-5 flex flex-col gap-3">
@@ -5693,7 +5692,7 @@ function ApartmentModule({ data, setData, unlocked, go, q }) {
         <SectionHead title="8 Kingsbury · furnishing" sub="Locked until you move in. It opens automatically when the Move-in step is done." />
         <div className="rounded-2xl p-8 text-center" style={{ ...card, borderRadius: 20, maxWidth: 560, margin: "0 auto" }}>
           <div style={{ fontSize: 40, marginBottom: 8 }}>🛋️🔒</div>
-          <h3 style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 600, fontSize: 19, margin: "0 0 6px" }}>Furnishing opens after move-in</h3>
+          <h3 style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif", fontWeight: 600, fontSize: 19, margin: "0 0 6px" }}>Furnishing opens after move-in</h3>
           <p style={{ fontSize: 13.5, color: MUT, margin: "0 auto 16px", maxWidth: 380, lineHeight: 1.5 }}>The {fmtR(budgetTotal)} plan and all {items.length} items are ready. This unlocks the moment you tick Move in on the Apartment chain.</p>
           <div className="rounded-xl p-4 text-left" style={{ ...cardSoft, borderRadius: 14, maxWidth: 420, margin: "0 auto 16px" }}>
             <div className="flex items-center justify-between mb-2"><span style={{ fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: MUT }}>Apartment chain</span><span style={{ fontSize: 12, color: C.yellow }}>{done}/{nodes.length}</span></div>
@@ -5726,7 +5725,7 @@ function ApartmentModule({ data, setData, unlocked, go, q }) {
       <div className="rounded-2xl p-7 mb-7 flex items-center gap-7 flex-wrap" style={{ ...card, borderRadius: 20 }}>
         <Ring pct={budgetTotal ? spent / budgetTotal : 0} tint={over ? C.rose : C.mint} size={100} thick={12} label={`${Math.round((budgetTotal ? spent / budgetTotal : 0) * 100)}%`} />
         <div className="flex-1" style={{ minWidth: 240 }}>
-          <div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontSize: 32, fontWeight: 700, color: over ? C.rose : C.ink }}>{fmtR(spent)} <span style={{ fontSize: 15, color: MUT, fontWeight: 400 }}>of {fmtR(budgetTotal)} plan</span></div>
+          <div style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif", fontSize: 32, fontWeight: 700, color: over ? C.rose : C.ink }}>{fmtR(spent)} <span style={{ fontSize: 15, color: MUT, fontWeight: 400 }}>of {fmtR(budgetTotal)} plan</span></div>
           <div style={{ fontSize: 14.5, color: C.mint, marginBottom: 8 }}>{boughtCount}/{items.length} items bought</div>
           <Bar pct={budgetTotal ? spent / budgetTotal : 0} tint={over ? C.rose : C.mint} />
           <div style={{ fontSize: 12.5, color: FAINT, marginTop: 10 }}>Tiers: budget ~R26k · medium R38-45k · high R55-65k</div>
@@ -6410,7 +6409,7 @@ function AITaskProjects({ data, setData, mama, setMama, q }) {
             const n = counts[c];
             return (
               <div key={c} className="rounded-xl px-3 py-2.5" style={{ background: n ? `${tint}14` : FILL, border: `1px solid ${n ? tint : LINE}`, borderRadius: 14 }}>
-                <div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 28, lineHeight: 1, color: n ? tint : FAINT }}>{n}</div>
+                <div style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif", fontWeight: 700, fontSize: 28, lineHeight: 1, color: n ? tint : FAINT }}>{n}</div>
                 <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: MUT, marginTop: 5 }}>{ADMIN_COL_LABEL[c]}</div>
               </div>
             );
@@ -6659,7 +6658,7 @@ function MamaTaskDashboard({ data, setData, setSub, navigateToTask, completeTask
   return (
     <section>
       <div style={{ marginBottom: 20 }}>
-        <h1 style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: "clamp(24px,4vw,32px)", margin: 0, letterSpacing: "-0.02em" }}>Mama task dashboard 🎯</h1>
+        <h1 style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif", fontWeight: 700, fontSize: "clamp(24px,4vw,32px)", margin: 0, letterSpacing: "-0.02em" }}>Mama task dashboard 🎯</h1>
       </div>
       <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))" }}>
         {ranked.map((b) => (
@@ -6689,9 +6688,9 @@ function MamaTaskRing({ label, emoji, accent, tasks, rank, pct, onNavigate, onDr
     <div onClick={onNavigate} className="rounded-2xl p-5" style={{ ...card, borderRadius: 18, borderLeft: `4px solid ${accent}`, cursor: "pointer" }}>
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2 min-w-0">
-          <span style={{ width: 28, height: 28, borderRadius: 99, background: accent, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 14, flexShrink: 0 }}>{rank}</span>
+          <span style={{ width: 28, height: 28, borderRadius: 99, background: accent, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif", fontWeight: 700, fontSize: 14, flexShrink: 0 }}>{rank}</span>
           <span style={{ fontSize: 17, flexShrink: 0 }}>{emoji}</span>
-          <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 16, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</span>
+          <span style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif", fontWeight: 700, fontSize: 16, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</span>
         </div>
         <ArrowUpRight size={16} color={MUT} />
       </div>
@@ -6776,7 +6775,7 @@ function CreatorDetailPage({ c, onUpdate, onRemove }) {
   return (
     <div className="flex flex-col gap-4">
       <div className="rounded-2xl p-4 flex items-start gap-3" style={{ ...card, borderRadius: 18, borderTop: `2px solid ${aura}` }}>
-        <div style={{ width: 48, height: 48, borderRadius: 16, flexShrink: 0, background: aura, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 600, fontSize: 17, color: "#fff" }}>{c.name.split(" ").map((w) => w[0]).slice(0, 2).join("")}</div>
+        <div style={{ width: 48, height: 48, borderRadius: 16, flexShrink: 0, background: aura, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif", fontWeight: 600, fontSize: 17, color: "#fff" }}>{c.name.split(" ").map((w) => w[0]).slice(0, 2).join("")}</div>
         <div className="flex-1 min-w-0">
           <InlineEdit value={c.name} onChange={(v) => onUpdate({ name: v })} strong />
           <InlineEdit value={c.niche} onChange={(v) => onUpdate({ niche: v })} placeholder="Niche / platform" dim />
@@ -6898,7 +6897,7 @@ function AdminTasks({ data, setData, ally, setAlly }) {
             const n = counts[c];
             return (
               <div key={c} className="rounded-xl px-3 py-2.5" style={{ background: n ? `${tint}14` : FILL, border: `1px solid ${n ? tint : LINE}`, borderRadius: 14 }}>
-                <div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 28, lineHeight: 1, color: n ? tint : FAINT }}>{n}</div>
+                <div style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif", fontWeight: 700, fontSize: 28, lineHeight: 1, color: n ? tint : FAINT }}>{n}</div>
                 <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: MUT, marginTop: 5 }}>{ADMIN_COL_LABEL[c]}</div>
               </div>
             );
@@ -6938,7 +6937,7 @@ function AdminTasks({ data, setData, ally, setAlly }) {
           const tint = ADMIN_COL_TINT[col];
           return (
             <div key={col} className="rounded-2xl p-3" onDragOver={(e) => { if (!Array.from(e.dataTransfer.types).includes(ADMIN_TASK_MIME)) return; e.preventDefault(); e.dataTransfer.dropEffect = "move"; }} onDrop={(e) => { e.preventDefault(); const id = e.dataTransfer.getData(ADMIN_TASK_MIME); if (id) moveToColumn(id, col); }} style={{ ...cardSoft, borderRadius: 16 }}>
-              <div className="flex items-center justify-between mb-3 px-1"><span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 600, fontSize: 12, letterSpacing: "0.04em", textTransform: "uppercase", color: tint }}>{ADMIN_COL_LABEL[col]}</span><span style={{ fontSize: 12, color: MUT }}>{items.length}</span></div>
+              <div className="flex items-center justify-between mb-3 px-1"><span style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif", fontWeight: 600, fontSize: 12, letterSpacing: "0.04em", textTransform: "uppercase", color: tint }}>{ADMIN_COL_LABEL[col]}</span><span style={{ fontSize: 12, color: MUT }}>{items.length}</span></div>
               <div className="flex flex-col gap-2">
                 {items.map((t) => <TaskCard key={t.id} t={t} onUpdate={(p) => update(t.id, p)} onRemove={() => remove(t.id)} moveOptions={moveOptions} onMove={moveTask} />)}
                 {items.length === 0 && <div className="rounded-xl p-3 text-center" style={{ border: `1px dashed ${LINE}`, fontSize: 12, color: FAINT, borderRadius: 12 }}>Empty</div>}
@@ -7037,17 +7036,17 @@ function TaskCard({ t, onUpdate, onRemove, moveOptions, onMove }) {
 }
 
 /* ================= shared ================= */
-const inputStyle = { background: "rgba(255,255,255,0.05)", border: `1px solid ${LINE}`, color: C.ink, fontSize: 13.5, fontFamily: "'Bricolage Grotesque', sans-serif" };
-const darkInput = { background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.14)", color: "#fff", fontSize: 13.5, fontFamily: "'Bricolage Grotesque', sans-serif" };
-const iconBtn = { background: "transparent", border: "none", color: MUT, cursor: "pointer", padding: 4, borderRadius: 6, fontFamily: "'Bricolage Grotesque', sans-serif" };
-const pillDark = { background: "#F2F2F4", color: "#0B0B0D", border: "none", fontWeight: 600, fontSize: 13, borderRadius: 99, padding: "8px 16px", cursor: "pointer", fontFamily: "'Bricolage Grotesque', sans-serif" };
-const pillGhost = { background: "transparent", color: C.ink, border: `1px solid ${LINE}`, fontWeight: 500, fontSize: 13, borderRadius: 99, padding: "8px 16px", cursor: "pointer", fontFamily: "'Bricolage Grotesque', sans-serif" };
-const pillAccent = (tint) => ({ background: tint, color: onTint(tint), border: "none", fontWeight: 600, fontSize: 13, borderRadius: 10, padding: "8px 16px", cursor: "pointer", fontFamily: "'Bricolage Grotesque', sans-serif" });
+const inputStyle = { background: "rgba(255,255,255,0.05)", border: `1px solid ${LINE}`, color: C.ink, fontSize: 13.5, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" };
+const darkInput = { background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.14)", color: "#fff", fontSize: 13.5, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" };
+const iconBtn = { background: "transparent", border: "none", color: MUT, cursor: "pointer", padding: 4, borderRadius: 6, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" };
+const pillDark = { background: "#F2F2F4", color: "#0B0B0D", border: "none", fontWeight: 600, fontSize: 13, borderRadius: 99, padding: "8px 16px", cursor: "pointer", fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" };
+const pillGhost = { background: "transparent", color: C.ink, border: `1px solid ${LINE}`, fontWeight: 500, fontSize: 13, borderRadius: 99, padding: "8px 16px", cursor: "pointer", fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" };
+const pillAccent = (tint) => ({ background: tint, color: onTint(tint), border: "none", fontWeight: 600, fontSize: 13, borderRadius: 10, padding: "8px 16px", cursor: "pointer", fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" });
 
 function SectionHead({ title, sub, action }) {
   return (
     <div className="flex items-end justify-between gap-3 mb-4 flex-wrap">
-      <div><h2 style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: 27, margin: 0, letterSpacing: "-0.01em" }}>{title}</h2></div>
+      <div><h2 style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif", fontWeight: 700, fontSize: 27, margin: 0, letterSpacing: "-0.01em" }}>{title}</h2></div>
       {action}
     </div>
   );
@@ -7073,7 +7072,7 @@ function InlineEdit({ value, onChange, placeholder, strong, dim, bubbleClicks })
   useEffect(() => { if (editing && ref.current) { ref.current.focus(); ref.current.select(); } }, [editing]);
   const commit = () => { setEditing(false); if (draft !== (value || "")) onChange(draft); };
   const cancel = () => { setDraft(value || ""); setEditing(false); };
-  const sharedFont = { color: dim ? MUT : C.ink, fontSize: strong ? 15 : 13, fontWeight: strong ? 600 : 400, fontFamily: "'Bricolage Grotesque', sans-serif" };
+  const sharedFont = { color: dim ? MUT : C.ink, fontSize: strong ? 15 : 13, fontWeight: strong ? 600 : 400, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" };
   if (editing) {
     return (
       <input ref={ref} value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={commit}
@@ -7134,7 +7133,7 @@ function InlineEditArea({ value, onChange, placeholder, dim, open, onToggle }) {
   useLayoutEffect(() => { if (editing) resize(); }, [draft, editing]);
   const commit = () => { setEditing(false); if (draft !== (value || "")) onChange(draft); };
   const cancel = () => { setDraft(value || ""); setEditing(false); };
-  const sharedFont = { color: dim ? MUT : C.ink, fontSize: 13, fontWeight: 400, fontFamily: "'Bricolage Grotesque', sans-serif" };
+  const sharedFont = { color: dim ? MUT : C.ink, fontSize: 13, fontWeight: 400, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" };
   const long = (value || "").length > 120 || (value || "").includes("\n");
   if (editing) {
     return (
@@ -7266,7 +7265,7 @@ class ErrorBoundary extends React.Component {
   render() {
     if (this.state.hasError) {
       return (
-        <div className="p-8 text-center" style={{ color: "#fff", fontFamily: "'Bricolage Grotesque', sans-serif" }}>
+        <div className="p-8 text-center" style={{ color: "#fff", fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" }}>
           <h2 style={{ fontSize: 24, fontWeight: 700, marginBottom: 12 }}>Something went wrong.</h2>
           <p style={{ color: "rgba(242,242,244,0.6)", fontSize: 14, marginBottom: 20 }}>{this.state.error ? String(this.state.error) : ""}</p>
           <button onClick={() => window.location.reload()} style={{ background: "#F2F2F4", color: "#0B0B0D", border: "none", borderRadius: 99, padding: "8px 20px", fontWeight: 600, cursor: "pointer" }}>Reload Page</button>
