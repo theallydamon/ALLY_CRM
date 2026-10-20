@@ -20,7 +20,9 @@ existing connection. File uploads remain direct from the browser to Drive.
 2. Save the new value only as encrypted Worker secret `DRIVE_CLIENT_SECRET` on
    `ally-crm-connector`. Do not paste it into chat, a PR, source or command arguments.
    Preserve `CONNECTION_KEY` and `FIREBASE_SERVER_API_KEY`.
-3. Complete the OAuth app's required branding configuration and move its audience
+3. Publish the public `about.html`, `privacy.html` and `terms.html` pages. Set the
+   OAuth homepage to the About page and its privacy and terms links to those
+   public pages. Complete the OAuth app's branding and move its audience
    from Testing to Production. Google expires refresh grants after seven days in
    Testing when Drive scope is requested. Backend CRM access remains restricted
    to the existing approved accounts.
