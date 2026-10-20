@@ -2836,7 +2836,11 @@ function AllyCRM() {
 
   useEffect(() => {
     if (!fbAuth) { setAuthReady(true); return; }
-    const unsub = fbAuth.onAuthStateChanged((u) => { setUser(u); setAuthReady(true); });
+    const unsub = fbAuth.onAuthStateChanged((u) => {
+      TaskFiles.reset();
+      setUser(u); setAuthReady(true);
+      if (u?.email) TaskFiles.restore(u.email).catch(() => {});
+    });
     /* Safari web apps do not preserve a popup opener reliably. Their login uses a full-page
        redirect and lands back here, so collect that result before rendering the sign-in screen. */
     fbAuth.getRedirectResult().catch((e) => {
@@ -7120,7 +7124,8 @@ function TaskAttachments({ taskId, attachments = [], onAdd, onRemove, userEmail 
   const [, redraw] = useState(0);
   useEffect(() => TaskFiles.subscribe(() => redraw((n) => n + 1)), []);
   useEffect(() => { mounted.current = true; setBusy(""); return () => { mounted.current = false; controller.current?.abort(); }; }, [userEmail]);
-  const connected = !!TaskFiles.token(userEmail);
+  const connected = TaskFiles.connected(userEmail);
+  const restoringDrive = TaskFiles.isRestoring(userEmail);
   const connect = async () => {
     setBusy("Connecting Drive…"); setError("");
     try { await TaskFiles.connect(userEmail, GOOGLE_CLIENT_ID); }
@@ -7129,7 +7134,12 @@ function TaskAttachments({ taskId, attachments = [], onAdd, onRemove, userEmail 
   };
   const choose = () => {
     setError("");
-    if (!TaskFiles.token(userEmail)) { connect(); return; }
+    if (TaskFiles.needsRetry(userEmail)) {
+      setBusy("Connecting Drive…");
+      TaskFiles.restore(userEmail).catch(e => { if (mounted.current) setError(e.message); }).finally(() => { if (mounted.current) setBusy(""); });
+      return;
+    }
+    if (!connected) { connect(); return; }
     input.current.click();
   };
   const upload = async (event) => {
@@ -7156,8 +7166,8 @@ function TaskAttachments({ taskId, attachments = [], onAdd, onRemove, userEmail 
         <button type="button" style={iconBtn} aria-label={`Remove attachment ${file.name}`} title="Remove from this task; keep the file in Drive" onClick={() => onRemove(file.id)}><X size={12} /></button>
       </li>)}</ul>}
       <input ref={input} type="file" multiple onChange={upload} style={{ display: "none" }} aria-label="Choose task attachments" />
-      <button type="button" onClick={choose} disabled={!!busy || !userEmail} className="task-attach-button" title="Files are saved privately in your Google Drive. Up to 25 MB per file.">
-        <Upload size={13} />{busy || (connected ? "Attach file" : "Connect Drive to attach files")}
+      <button type="button" onClick={choose} disabled={!!busy || restoringDrive || !userEmail} className="task-attach-button" title="Files are saved privately in your Google Drive. Up to 25 MB per file.">
+        <Upload size={13} />{busy || (restoringDrive ? "Connecting Drive…" : connected ? "Attach file" : TaskFiles.needsRetry(userEmail) ? "Retry Drive" : "Connect Drive to attach files")}
       </button>
       {busy && <span role="status" className="task-file-status">{busy}</span>}
       {error && <div role="alert" className="task-file-error">{error}</div>}

@@ -4,27 +4,66 @@ const vm=require('node:vm');
 const fs=require('node:fs');
 const source=fs.readFileSync(require('node:path').join(__dirname,'../task-files.js'),'utf8');
 function setup(overrides={}){
- let options, requested, calls=[];
- const oauth={
-  initTokenClient(opts){options=opts;return {requestAccessToken(input){requested=input;queueMicrotask(()=>opts.callback({access_token:'test-token',expires_in:3600,scope:'https://www.googleapis.com/auth/drive.file openid email'}))}}},
-  hasGrantedAllScopes(response,scope){return response.scope.split(' ').includes(scope)}
- };
- const sandbox={window:{google:{accounts:{oauth2:oauth}}},google:{accounts:{oauth2:oauth}},Set,Date,Promise,Error,Number,String,URL,encodeURIComponent,AbortController,
-  fetch:async(url,options)=>{calls.push({url,options});return overrides.fetch ? overrides.fetch(url,options) : url.includes('userinfo') ? {ok:true,json:async()=>({email:'owner@example.com',email_verified:true})} : {ok:true,json:async()=>({files:[]})}}
+ let options, requested=0, calls=[];
+ const oauth={initCodeClient(opts){options=opts;return {requestCode(){requested++;queueMicrotask(()=>opts.callback({code:'test-code'}))}}}};
+ const sandbox={window:{google:{accounts:{oauth2:oauth}},firebase:{auth:()=>({currentUser:{email:overrides.email||'owner@example.com',getIdToken:async()=> 'firebase-id'}})}},google:{accounts:{oauth2:oauth}},Set,Date:overrides.Date||Date,Promise,Error,Number,String,URL,encodeURIComponent,AbortController,
+  fetch:async(url,options)=>{
+   calls.push({url,options});
+   if(url.includes('workers.dev/drive')) {
+    assert.equal(options.headers.Authorization,'Bearer firebase-id');
+    assert.equal(options.headers['X-Requested-With'],'AllyCRM');
+    return overrides.server ? overrides.server(url,options) : {ok:true,json:async()=>({connected:true,access_token:'test-token',expires_in:3600})};
+   }
+   return overrides.fetch ? overrides.fetch(url,options) : {ok:true,json:async()=>({files:[]})};
+  }
  };
  vm.runInNewContext(source,sandbox);
  return {api:sandbox.window.TaskFiles,calls,oauth,get options(){return options},get requested(){return requested}};
 }
-test('Drive consent is on demand, scoped to files created/selected for this app, and account-bound',async()=>{
+test('first approval uses the offline code flow and account-bound CRM authentication',async()=>{
  const ctx=setup();assert.equal(ctx.calls.length,0);assert.equal(ctx.api.token('owner@example.com'),null);
  await ctx.api.connect('owner@example.com','client');
  assert(ctx.options.scope.includes('drive.file'));assert(!ctx.options.scope.split(' ').includes('https://www.googleapis.com/auth/drive'));
- assert.equal(ctx.requested.login_hint,'owner@example.com');assert.equal(ctx.api.token('owner@example.com'),'test-token');assert.equal(ctx.api.token('other@example.com'),null);
+ assert.equal(ctx.options.hint,'owner@example.com');assert.equal(ctx.requested,1);
+ assert.equal(JSON.parse(ctx.calls[0].options.body).code,'test-code');
+ assert.equal(ctx.api.token('owner@example.com'),'test-token');assert.equal(ctx.api.token('other@example.com'),null);
  ctx.api.reset();assert.equal(ctx.api.token('owner@example.com'),null);
 });
-test('wrong-account grants and denied scope never create an upload session',async()=>{
- const ctx=setup();await assert.rejects(ctx.api.connect('wrong@example.com','client'),/same Google account/);assert.equal(ctx.api.token('wrong@example.com'),null);
- const denied=setup();denied.oauth.hasGrantedAllScopes=()=>false;await assert.rejects(denied.api.connect('owner@example.com','client'),/not granted/);
+test('reopening restores Drive without a Google popup or browser token storage',async()=>{
+ const first=setup();await first.api.connect('owner@example.com','client');
+ const reopened=setup();await reopened.api.restore('owner@example.com');
+ assert.equal(reopened.requested,0);assert.equal(reopened.api.connected('owner@example.com'),true);
+ assert.equal(reopened.api.token('owner@example.com'),'test-token');
+ assert(reopened.calls[0].url.endsWith('/drive/token'));
+});
+test('expired access renews automatically and concurrent requests share renewal',async()=>{
+ let now=Date.now();class Clock extends Date { static now(){return now} }
+ const ctx=setup({Date:Clock});await ctx.api.connect('owner@example.com','client');now+=3600000;
+ assert.equal(ctx.api.token('owner@example.com'),null);assert.equal(ctx.api.connected('owner@example.com'),true);
+ await Promise.all([ctx.api.ensure('owner@example.com'),ctx.api.ensure('owner@example.com')]);
+ assert.equal(ctx.calls.filter(c=>c.url.endsWith('/token')).length,1);assert.equal(ctx.requested,1);
+});
+test('account changes discard in-flight restoration and rejected grants stay disconnected',async()=>{
+ let finish;const ctx=setup({server:()=>new Promise(r=>finish=r)});
+ const pending=ctx.api.restore('owner@example.com');await new Promise(r=>setImmediate(r));ctx.api.reset();
+ finish({ok:true,json:async()=>({connected:true,access_token:'old-account-token',expires_in:3600})});await pending;
+ assert.equal(ctx.api.connected('owner@example.com'),false);assert.equal(ctx.api.token('owner@example.com'),null);
+ const denied=setup({server:async()=>({ok:false,json:async()=>({error:'Drive permission was not granted.'})})});
+ await assert.rejects(denied.api.connect('owner@example.com','client'),/not granted/);
+ await assert.rejects(denied.api.connect('wrong@example.com','client'),/Sign in/);
+ assert.equal(denied.api.connected('owner@example.com'),false);
+});
+test('temporary restore failures offer retry without requesting another approval',async()=>{
+ let offline=true;
+ const ctx=setup({server:async()=>{
+  if(offline)throw new Error('Network unavailable');
+  return {ok:true,json:async()=>({connected:true,access_token:'restored-token',expires_in:3600})};
+ }});
+ await assert.rejects(ctx.api.restore('owner@example.com'),/Network/);
+ assert.equal(ctx.api.needsRetry('owner@example.com'),true);
+ offline=false;await ctx.api.restore('owner@example.com');
+ assert.equal(ctx.api.needsRetry('owner@example.com'),false);assert.equal(ctx.requested,0);
+ assert.equal(ctx.api.token('owner@example.com'),'restored-token');
 });
 test('upload uses a private app folder and only returns confirmed file metadata',async()=>{
  const ctx=setup({fetch:async(url,opts)=>{
