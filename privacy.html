@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Privacy | ALLY CRM</title>
+  <style>
+    body { max-width: 680px; margin: 72px auto; padding: 0 24px; background: #0b0b0d; color: #f2f2f4; font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; }
+    h1 { font-size: 34px; line-height: 1.2; } h2 { font-size: 21px; margin-top: 36px; } a { color: #e8a6ab; } nav { display: flex; gap: 20px; flex-wrap: wrap; margin-top: 40px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>ALLY CRM privacy</h1>
+    <p>ALLY CRM is a private workspace managed by Ally Damon. Contact <a href="mailto:theallydamon@gmail.com">theallydamon@gmail.com</a> with privacy questions or data requests.</p>
+
+    <h2>What the app accesses</h2>
+    <p>Google sign-in supplies your account identity. If you choose to connect them, the CRM reads and updates Calendar events, reads and updates the skit registry in Sheets, and creates task attachments in your Google Drive. Drive access is limited to files this app creates or you select for it. The CRM stores attachment names, file IDs, sizes and links with tasks. Attached file contents remain in the uploader's Drive.</p>
+
+    <h2>How data is stored and used</h2>
+    <p>CRM records are stored in Google's Firebase service and shown to approved CRM collaborators. Calendar and Sheets access tokens are cached in the browser until they expire. For attachments, a Google refresh credential is encrypted and stored in Cloudflare so the CRM can reconnect Drive after you return. Short-lived Drive access tokens are kept in browser memory. Google and Cloudflare process data needed to provide these features. If you ask a connected assistant to access your CRM, it receives the records you request.</p>
+    <p>Google user data is used to run these CRM features. It is not sold or used for advertising.</p>
+
+    <h2>Control and deletion</h2>
+    <p>You can revoke Google access in <a href="https://myaccount.google.com/permissions">Google Account permissions</a>. Removing an attachment from a task removes its CRM link but leaves the file in your Drive; delete the file in Drive if you no longer want it. Contact the address above to request removal of CRM records or a stored Drive connection.</p>
+    <nav aria-label="Information"><a href="about.html">About</a><a href="terms.html">Terms</a><a href="./">Open CRM</a></nav>
+  </main>
+</body>
+</html>
