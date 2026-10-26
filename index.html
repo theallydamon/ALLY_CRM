@@ -26,6 +26,8 @@
 <script src="vendor/turndown-plugin-gfm.js"></script>
 <script src="task-text.js"></script>
 <script src="task-files.js"></script>
+<script src="functions/brand-finance.js"></script>
+<link rel="stylesheet" href="brand-deals.css" />
 <!-- Google Identity Services. Provides google.accounts.oauth2 for the Calendar access token.
      Deliberately separate from Firebase Auth: Firebase signs you IN (identity), GIS grants the
      app permission to touch your CALENDAR (authorisation). They are different concerns and
@@ -1017,7 +1019,7 @@ pushContentTasks(ally.musicContent.items, "music", computeContentUrgency(ally.mu
 /* each active deal surfaces its CURRENT stage as the hub task: a Reel shows the current
      production stage ("Write script (Brand)", "Film + edit (Brand)"...) with that stage's own
      deadline; a Story shows "Post story (Brand)" with its single deadline. Done deals drop out. */
-  ally.deals.deals.filter((d) => (d.type || "Active") === "Active" && (d.stage || "script") !== "done" && !d.paused).forEach((d) => {
+  ally.deals.deals.filter((d) => (d.type || "Active") === "Active" && (d.stage || "script") !== "done" && !d.paused && !d.archived).forEach((d) => {
     if ((d.piece || "Reel") === "Story") {
       out.push({
         id: d.id, pillar: "deals", title: `Post story (${d.brand})`, due: d.storyDue || null,
@@ -2446,6 +2448,7 @@ function AllyCRM() {
   const resolveNavTab = (navTab, navSub) => {
     if (profile.id === "personal") {
       if (navTab === "lifeAdmin") return "overview";
+      if (navTab === "deals") return "brandContent";
       if (navTab === "content") return navSub === "brandDeals" ? "brandContent" : navSub === "musicContent" ? "musicContent" : "content";
     }
     if (profile.id !== "work" || navTab !== "mama") return navTab;
@@ -3712,9 +3715,9 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
                 </div>
               )}
               {tab === "overview" && <PersonalModule ally={ally} mama={mama} go={goFromHome} setAlly={setAlly} setMama={setMama} q={q} navRequest={navRequest} navigateToTask={navigateToTask} completeTask={completeTask} cal={cal} onSchedule={scheduleTask} onMove={moveScheduled} onResize={resizeScheduled} onUnschedule={unscheduleTask} onDeleteEvent={deleteOrphanEvent} syncTick={syncTick} profile={profile} />}
-              {["content", "brandContent", "musicContent"].includes(tab) && <ContentModule pipeline={tab} data={ally} setData={setAlly} q={q} navRequest={navRequest} onContentSchedule={syncContentCalendar} registry={registry} />}
+              {["content", "musicContent"].includes(tab) && <ContentModule pipeline={tab} data={ally} setData={setAlly} q={q} navRequest={navRequest} onContentSchedule={syncContentCalendar} registry={registry} />}
               {tab === "lifeAdmin" && <LifeAdminModule data={ally} setData={setAlly} q={q} />}
-              {tab === "deals" && <DealsModule data={ally} setData={setAlly} q={q} navRequest={navRequest} />}
+              {["brandContent", "deals"].includes(tab) && <DealsModule data={ally} setData={setAlly} q={q} navRequest={navRequest} onContentSchedule={syncContentCalendar} registry={registry} />}
               {tab === "mama" && <MamaModule data={mama} setData={setMama} ally={ally} setAlly={setAlly} q={q} navRequest={navRequest} navigateToTask={navigateToTask} completeTask={completeTask} />}
               {/* The same three components MamaModule renders as subtabs, reachable directly so the
                   work profile can put them in the bottom strip. Same props, same data, no copies —
@@ -6196,86 +6199,133 @@ function ClientCard({ c, updateClient, removeClient }) {
   );
 }
 
-function DealsModule({ data, setData, q, navRequest }) {
-  const [openId, setOpenId] = useState(null);
-  const [sub, setSub] = useState("brandDeals");
-  const deals = data.deals.deals, clients = data.deals.clients;
-  /* a dashboard task pointing at a deal (navOpenId) always lands on the single Brand Deals tab
-  now, then opens its card same as before. */
-  useEffect(() => {
-    if (navRequest && navRequest.navTab === "deals" && navRequest.navOpenId) {
-      setOpenId(navRequest.navOpenId);
-      setSub("brandDeals");
-    }
-  }, [navRequest]);
-  const ql = (q || "").toLowerCase();
-  const patch = (p) => setData((d) => ({ ...d, deals: { ...d.deals, ...p } }));
-  const update = (id, p) => patch({ deals: deals.map((x) => (x.id === id ? { ...x, ...p } : x)) });
-  const remove = (id) => patch({ deals: deals.filter((x) => x.id !== id) });
-  const add = () => { const x = { id: uid(), brand: "New brand", piece: "Reel", stage: "script", stageDue: {}, storyDue: "", script: "", caption: "", tasks: [], notes: "", priority: "Medium", lastProgress: null, created: todayISO(), type: "Prospect" }; patch({ deals: [x, ...deals] }); setOpenId(x.id); setSub("brandDeals"); };
-  const updateClient = (id, p) => patch({ clients: clients.map((c) => (c.id === id ? { ...c, ...p } : c)) });
-  const addClient = () => { patch({ clients: [{ id: uid(), name: "New client", service: "", status: "Lead", notes: "", tasks: [] }, ...clients] }); setSub("socialClients"); };
-  const removeClient = (id) => patch({ clients: clients.filter((c) => c.id !== id) });
-
-  const matchDeal = (x) => !ql || x.brand.toLowerCase().includes(ql);
-  const matchClient = (c) => !ql || c.name.toLowerCase().includes(ql);
-
-  const allDeals = deals.filter(matchDeal)
-    .sort((a, b) => { const ap = (a.stage || "script") === "done", bp = (b.stage || "script") === "done"; if (ap !== bp) return ap ? 1 : -1; const ad = dealHeadlineDue(a), bd = dealHeadlineDue(b); if (ad && bd) return ad.localeCompare(bd); return ad ? -1 : bd ? 1 : 0; });
-  const allClients = clients.filter(matchClient);
-  const activeReels = deals.filter((d) => (d.type || "Active") === "Active" && (d.piece || "Reel") === "Reel");
-
-  /* distribution of active Reels across the production line (Stories have no stages) */
-  const stageBars = REEL_STAGES.map((s, i) => ({ label: s.label.split(" ")[0], value: activeReels.filter((d) => (d.stage || "script") === s.key).length, color: AURAS[i % AURAS.length] }));
-
-  const subs = [
-    { id: "brandDeals", emoji: "🤝", label: "Brand Deals", count: allDeals.length },
-    { id: "socialClients", emoji: "🧑‍💼", label: "Social Media Clients", count: allClients.length },
-  ];
-
-  return (
-    <section>
-      <SectionHead title="Brand deals & clients" sub="Brand deals and social media clients, each in their own tab. Every deal, client, and task here still feeds the Priorities dashboard." />
-      <nav className="flex gap-2 mb-6 flex-wrap">
-        {subs.map(({ id, emoji, label, count }) => {
-          const on = sub === id;
-          return (
-            <button key={id} onClick={() => setSub(id)} className="flex items-center gap-2 rounded-full px-4 py-2" style={{ background: on ? C.dark : C.card, border: `1px solid ${on ? C.dark : LINE}`, color: on ? C.canvas : C.ink, cursor: "pointer", fontSize: 14, fontWeight: on ? 600 : 400, fontFamily: "inherit" }}>
-              <span>{emoji}</span><span>{label}</span><span style={{ fontSize: 11, background: on ? "rgba(11,11,13,0.15)" : FILL2, color: on ? C.canvas : MUT, borderRadius: 99, padding: "1px 7px" }}>{count}</span>
-            </button>
-          );
-        })}
-      </nav>
-
-      {sub === "brandDeals" && (
-        <>
-          <div className="flex justify-end mb-3"><AddBtn onClick={add} label="Add deal" /></div>
-          {activeReels.length > 0 && (
-            <div className="rounded-2xl p-4 mb-5" style={{ ...card, borderRadius: 18 }}>
-              <div style={{ fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase", color: MUT, marginBottom: 6 }}>Where active deals sit 📊</div>
-              <Bars data={stageBars} height={120} />
-            </div>
-          )}
-          <div className="flex flex-col gap-3">
-            {allDeals.map((x) => (
-              <DealCard key={x.id} x={x} open={openId === x.id} onToggleOpen={() => setOpenId(openId === x.id ? null : x.id)} update={update} remove={remove} isProspect={(x.type || "Active") === "Prospect"} />
-            ))}
-            {allDeals.length === 0 && <Empty text={ql ? "No deal matches your search." : "No deals yet. Add one the moment a brand reaches out."} />}
-          </div>
-        </>
-      )}
-
-      {sub === "socialClients" && (
-        <>
-          <div className="flex justify-end mb-3"><AddBtn onClick={addClient} label="Add client" /></div>
-          <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
-            {allClients.map((c) => <ClientCard key={c.id} c={c} updateClient={updateClient} removeClient={removeClient} />)}
-          </div>
-          {allClients.length === 0 && <Empty text={ql ? "No client matches your search." : "No clients yet. Add one to get started."} />}
-        </>
-      )}
-    </section>
-  );
+const BF = window.BrandFinance;
+const BRAND_LANES = [ ['proposed','Proposed','#98a8d9'], ['negotiating','Negotiating','#d3b37c'], ['contracted','Contracted','#ac9be9'], ['invoiced','Invoiced','#7dbbd1'], ['paid','Paid','#86c7a8'], ['declined','Declined','#a1a1aa'] ];
+async function brandRequest(path, body={}) {
+  const user = fbAuth && fbAuth.currentUser;
+  if (!user) throw new Error('Sign in to manage workflows.');
+  const response = await fetch('https://ally-crm-connector.theallydamon.workers.dev/brand/'+path,{ method:'POST',headers:{'content-type':'application/json','authorization':'Bearer '+await user.getIdToken(),'x-requested-with':'AllyCRM'},body:JSON.stringify(body) });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || 'Workflow is unavailable.');
+  return result;
+}
+function BrandPill({stage}) {
+  const lane=BRAND_LANES.find(l=>l[0]===stage)||['','Needs review','#a1a1aa'];
+  return <span className="brand-pill" style={{color:lane[2],background:lane[2]+'16',borderColor:lane[2]+'32'}}>{lane[1]}</span>;
+}
+function BrandField({label,value,onChange,type='text',wide=false}) {
+  return <label className={wide?'brand-field brand-wide':'brand-field'}><span>{label}</span>{type==='textarea'?<textarea rows={3} value={value||''} onChange={e=>onChange(e.target.value)}/>:<input type={type} value={value==null?'':value} step={type==='number'?'0.01':undefined} min={type==='number'?'0':undefined} onChange={e=>onChange(type==='number'?(e.target.value===''?null:Number(e.target.value)):e.target.value)}/>}</label>;
+}
+function BrandEditor({deal,onSave,onClose,onArchive,update,remove}) {
+  const [draft,setDraft]=useState(()=>({...deal,commercial:JSON.parse(JSON.stringify(BF.terms(deal)))}));
+  const [error,setError]=useState('');
+  const c=draft.commercial;
+  const term=(key,value)=>setDraft(d=>({...d,commercial:{...d.commercial,[key]:value}}));
+  const invoice=(id,patch)=>term('invoices',(c.invoices||[]).map(i=>i.id===id?{...i,...patch}:i));
+  const save=()=>{try { const commercial=BF.validate(c); if(!draft.brand?.trim()) throw Error('Add the brand name.'); if(draft.sourceUrl && !/^https:\/\//.test(draft.sourceUrl)) throw Error('Source links must use HTTPS.'); onSave({...draft,brand:draft.brand.trim(),commercial}); } catch(e){setError(e.message);} };
+  const dialog=useRef(null);
+  useEffect(()=>{ const previous=document.activeElement; const overflow=document.body.style.overflow; document.body.style.overflow='hidden'; const el=dialog.current; el?.focus(); const key=e=>{if(e.key==='Escape'){e.preventDefault();onClose();} if(e.key==='Tab' && el){const all=Array.from(el.querySelectorAll('button,input,select,textarea,a[href]')).filter(x=>!x.disabled); const first=all[0],last=all.at(-1);if(e.shiftKey && (document.activeElement===first || document.activeElement===el)){e.preventDefault();last?.focus();}else if(!e.shiftKey && document.activeElement===last){e.preventDefault();first?.focus();}}};document.addEventListener('keydown',key);return()=>{document.removeEventListener('keydown',key);document.body.style.overflow=overflow;previous?.focus();};},[]);
+  return <div className="brand-overlay"><section ref={dialog} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Edit brand deal" className="brand-editor">
+    <div className="brand-editor-head"><div><div className="brand-eyebrow">DEAL DETAILS</div><h2>{deal.brand || 'New brand deal'}</h2></div><button onClick={onClose} className="brand-quiet" aria-label="Close deal">✕</button></div>
+    <div className="brand-form-grid">
+      <BrandField label="Brand" value={draft.brand} onChange={v=>setDraft(d=>({...d,brand:v}))}/>
+      <BrandField label="Campaign" value={c.campaign} onChange={v=>term('campaign',v)}/>
+      <label className="brand-field"><span>Commercial stage</span><select aria-label="Commercial stage" value={c.stage} onChange={e=>term('stage',e.target.value)}>{BF.STAGES.map(s=><option key={s} value={s}>{s[0].toUpperCase()+s.slice(1)}</option>)}</select></label>
+      <label className="brand-field"><span>Currency</span><select aria-label="Currency" value={c.currency} onChange={e=>term('currency',e.target.value)}>{[...new Set(['ZAR','USD','GBP','EUR',c.currency||'ZAR'])].map(s=><option key={s}>{s}</option>)}</select></label>
+      <BrandField label="Total agreed fee · before deductions" type="number" value={c.fee} onChange={v=>term('fee',v)}/>
+      <BrandField label="Agency deduction · amount" type="number" value={c.agencyFee} onChange={v=>term('agencyFee',v)}/>
+      <BrandField label="Tax / VAT amount · if stated" type="number" value={c.tax} onChange={v=>term('tax',v)}/>
+      <BrandField label="Agency" value={c.agency} onChange={v=>term('agency',v)}/>
+      <BrandField label="Contact / verified email" value={c.contact} onChange={v=>term('contact',v)} wide/>
+      <BrandField label="Deliverables" type="textarea" value={c.deliverables} onChange={v=>term('deliverables',v)} wide/>
+      <BrandField label="Usage rights & exclusivity" type="textarea" value={c.rights} onChange={v=>term('rights',v)} wide/>
+      <BrandField label="Payment terms & trigger" type="textarea" value={c.paymentTerms} onChange={v=>term('paymentTerms',v)} wide/>
+      <BrandField label="Agreed terms source / contract reference" type="textarea" value={c.evidence} onChange={v=>term('evidence',v)} wide/>
+      <BrandField label="Source link" value={draft.sourceUrl} onChange={v=>setDraft(d=>({...d,sourceUrl:v}))} wide/>
+      <label className="brand-check brand-wide"><input type="checkbox" checked={!!c.reviewed} onChange={e=>term('reviewed',e.target.checked)}/>I have reviewed and confirmed the agreed commercial terms</label>
+    </div>
+    <div className="brand-editor-section"><div className="brand-row"><h3>Invoices & payments</h3><button className="brand-quiet" onClick={()=>term('invoices',[...(c.invoices||[]),{id:uid(),number:'',amount:null,issuedDate:null,dueDate:null,dueConfirmed:false,evidence:'',paidAmount:null,paidDate:null,void:false}])}>+ Add invoice / instalment</button></div>
+      <p className="brand-hint">Record each invoice or instalment separately. Payment advice is not bank settlement.</p>
+      {!(c.invoices||[]).length && <div className="brand-empty-small">No invoices recorded</div>}
+      {(c.invoices||[]).map((i,n)=><div key={i.id} className="brand-invoice"><div className="brand-row"><strong>Invoice {n+1}</strong><label className="brand-check"><input type="checkbox" checked={!!i.void} onChange={e=>invoice(i.id,{void:e.target.checked})}/>Void</label></div><div className="brand-form-grid">
+        <BrandField label="Invoice number" value={i.number} onChange={v=>invoice(i.id,{number:v})}/>
+        <BrandField label="Amount receivable" type="number" value={i.amount} onChange={v=>invoice(i.id,{amount:v})}/>
+        <BrandField label="Issued on" type="date" value={i.issuedDate} onChange={v=>invoice(i.id,{issuedDate:v})}/>
+        <BrandField label="Payment due" type="date" value={i.dueDate} onChange={v=>invoice(i.id,{dueDate:v,dueConfirmed:false})}/>
+        <BrandField label="Bank-settled amount · cumulative" type="number" value={i.paidAmount} onChange={v=>invoice(i.id,{paidAmount:v})}/>
+        <BrandField label="Bank receipt date" type="date" value={i.paidDate} onChange={v=>invoice(i.id,{paidDate:v})}/>
+        <BrandField label="Due date source & bank receipt evidence" type="textarea" value={i.evidence} onChange={v=>invoice(i.id,{evidence:v})} wide/>
+        <label className="brand-check brand-wide"><input type="checkbox" checked={!!i.dueConfirmed} onChange={e=>invoice(i.id,{dueConfirmed:e.target.checked})}/>Due date confirmed from agreed terms</label>
+      </div></div>)}
+    </div>
+    {error && <p role="alert" className="brand-error">{error}</p>}
+    <div className="brand-editor-actions"><button className="brand-quiet" onClick={()=>onArchive(deal.id)}>{deal.archived?'Restore deal':'Archive deal'}</button><button className="brand-button" onClick={save}>Save deal</button></div>
+    {deal.id && !deal._new && <details className="brand-editor-section"><summary>Production, tasks & notes</summary><div style={{marginTop:16}}><DealCard x={deal} open={true} onToggleOpen={()=>{}} update={update} remove={remove} isProspect={(deal.type||'Active')==='Prospect'}/></div></details>}
+  </section></div>;
+}
+function BrandWorkflows({deals,onReview}) {
+  const [status,setStatus]=useState(null),[candidates,setCandidates]=useState([]),[error,setError]=useState(''),[busy,setBusy]=useState(false);
+  const refresh=async()=>{const s=await brandRequest('status');setStatus(s);if(s.connected){const p=await brandRequest('candidates');setCandidates(p.candidates);}else{setCandidates([]);}};
+  useEffect(()=>{refresh().catch(e=>setError(e.message));},[]);
+  const action=async(fn)=>{setBusy(true);setError('');try{await fn();await refresh();}catch(e){setError(e.message);}finally{setBusy(false);}};
+  const connect=()=>{setError(''); if(!window.google?.accounts?.oauth2){setError('Google sign-in is loading. Try again.');return;} const user=fbAuth.currentUser;const client=google.accounts.oauth2.initCodeClient({client_id:'139362174943-bg2h6vu4tgt6is8tu0ca415nea741fn3.apps.googleusercontent.com',scope:'openid email https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/calendar.events',ux_mode:'popup',login_hint:'theallydamon@gmail.com',include_granted_scopes:false,callback:r=>{if(r.error){setError('Google access was not granted.');return;}action(()=>brandRequest('connect',{code:r.code,refreshToken:user.refreshToken}));},error_callback:()=>setError('Google connection closed. Try again.')});client.requestCode();};
+  return <div>
+    <div className="brand-workflow-hero"><div><div className="brand-eyebrow">CONNECTED WORKFLOWS</div><h2>Less chasing. More creating.</h2><p>Review opportunities, keep payment dates in your calendar, and receive payment reminders at theallydamon@gmail.com.</p></div><span className="brand-pill">{status?.connected?'Connected':'Setup needed'}</span></div>
+    <div className="brand-workflow-grid">
+      {[['scan','Gmail opportunities','Finds likely brand correspondence from the past 90 days. Every result waits for your review.'],['calendar','Payment calendar','Private Payment due events for confirmed outstanding invoices. Paid or void invoices are removed on sync.'],['reminders','Payment emails','A daily email from 07:00 SAST when payments are due in 3 days, due today, or overdue. Only to you.']].map(([key,title,description])=><article className="brand-workflow-card" key={key}><div className="brand-row"><h3>{title}</h3><input aria-label={title} type="checkbox" disabled={busy||!status?.connected} checked={!!status?.settings?.[key]} onChange={e=>action(()=>brandRequest('settings',{settings:{[key]:e.target.checked}}))}/></div><p>{description}</p></article>)}
+    </div>
+    <div className="brand-row" style={{margin:'20px 0',justifyContent:'flex-start',flexWrap:'wrap'}}><button className="brand-button" onClick={connect} disabled={busy}>{status?.connected?'Reconnect Google':'Connect Google workflows'}</button>{status?.connected && <><button className="brand-quiet" disabled={busy} onClick={()=>action(()=>brandRequest('run'))}>{busy?'Working…':'Sync now'}</button><button className="brand-quiet" disabled={busy} onClick={()=>action(()=>brandRequest('disconnect'))}>Disconnect</button></>}</div>
+    {error && <p role="alert" className="brand-error">{error}</p>}
+    {status?.lastError && <p className="brand-error">{status.lastError}</p>}
+    <p className="brand-hint">{status?.lastRun?'Last run: '+new Date(status.lastRun).toLocaleString('en-ZA',{timeZone:'Africa/Johannesburg'}):'No background run verified yet.'} Disabling Calendar pauses sync and leaves existing events in place.</p>
+    <div className="brand-row" style={{marginTop:32}}><h3>Opportunity review</h3><span className="brand-muted">{candidates.length} waiting</span></div>
+    {candidates.length===0 && <div className="brand-empty-small">No opportunities waiting for review</div>}
+    {candidates.map(x=><article key={x.id} className="brand-candidate"><div className="brand-row"><div><strong>{x.subject}</strong><p className="brand-muted">{x.from}</p></div><a href={x.sourceUrl} target="_blank" rel="noreferrer">Open thread ↗</a></div>{x.amountMentions?.length>0 && <p className="brand-hint">Amounts mentioned, unconfirmed: {x.amountMentions.join(' · ')}</p>}{x.attachmentReviewRequired && <p className="brand-hint">Review attachments in Gmail before confirming terms.</p>}<details><summary>Read source evidence{x.truncated?' · truncated':''}</summary><pre className="brand-evidence">{x.evidence}</pre></details><div className="brand-row" style={{justifyContent:'flex-start',marginTop:14}}><button className="brand-button" onClick={()=>onReview(x)}>Review & record</button><button className="brand-quiet" disabled={busy} onClick={()=>action(()=>brandRequest('dismiss',{id:x.id,messageId:x.messageId,state:'dismissed'}))}>Dismiss</button></div></article>)}
+    <details style={{marginTop:30}}><summary>Delivery & sync history</summary>{(status?.jobs||[]).map(j=><div key={j.id} className="brand-job"><span>{j.kind==='email'?'Payment email':'Calendar event'}</span><strong className={j.state==='uncertain'?'brand-error':''}>{j.state==='uncertain'?'Delivery uncertain · check Sent before retrying':j.state}</strong><span>{new Date(j.updated).toLocaleString('en-ZA',{timeZone:'Africa/Johannesburg'})}</span></div>)}</details>
+  </div>;
+}
+function DealsModule({ data, setData, q, navRequest, onContentSchedule, registry }) {
+  const [sub,setSub]=useState('database'),[editor,setEditor]=useState(null),[filter,setFilter]=useState('all'),[currency,setCurrency]=useState('ZAR'),[review,setReview]=useState(null),[reviewTarget,setReviewTarget]=useState('new');
+  const deals=data.deals.deals||[], clients=data.deals.clients||[];
+  const alive=deals.filter(d=>!d.archived);
+  const day=todayISO();
+  const totals=BF.dashboard(alive,day),currencies=[...new Set(['ZAR',...Object.keys(totals)])], t=totals[currency]||{};
+  const patchDeals=fn=>setData(d=>({...d,deals:{...d.deals,deals:fn(d.deals.deals||[])}}));
+  const update=(id,p)=>patchDeals(rows=>rows.map(d=>d.id===id?{...d,...p}:d));
+  const archive=id=>{update(id,{archived:!deals.find(d=>d.id===id)?.archived});setEditor(null);};
+  const add=()=>setEditor({id:uid(),brand:'',piece:'Reel',type:'Prospect',stage:'script',tasks:[],notes:'',script:'',caption:'',stageDue:{},created:day,_new:true,commercial:{stage:'proposed',currency,reviewed:false,invoices:[]}});
+  useEffect(()=>{if(navRequest?.navTab==='deals' && navRequest.navOpenId){const d=deals.find(x=>x.id===navRequest.navOpenId);if(d){setEditor(d);setSub('database');}}else if(navRequest?.navTab==='content' && navRequest.navSub==='brandDeals'){setSub('creative');}},[navRequest]);
+  const save=draft=>{
+    const existing=deals.find(d=>d.id===draft.id);
+    if(existing && JSON.stringify(existing.commercial)!==JSON.stringify(Object.prototype.hasOwnProperty.call(editor,'_baseCommercial')?editor._baseCommercial:editor.commercial)) throw Error('Terms changed in another session. Close and reopen the deal.');
+    const {_new,_baseCommercial,...saved}=draft;
+    if (!existing && deals.some(d=>!d.archived && d.brand?.trim().toLowerCase()===saved.brand.toLowerCase() && (BF.terms(d).campaign||'').toLowerCase()===(saved.commercial.campaign||'').toLowerCase())) throw Error('A deal with this brand and campaign already exists. Open it or give this campaign a distinct name.');
+    const sourceKey=saved.sourceKey||'chat:campaign:'+saved.brand.toLowerCase().replace(/[^a-z0-9]+/g,'-')+':'+saved.id+':deal';
+    if(deals.some(d=>d.id!==saved.id && d.sourceKey===sourceKey)) throw Error('This source already belongs to a deal. Open that deal instead.');
+    patchDeals(rows=>existing?rows.map(d=>d.id===saved.id?{...d,brand:saved.brand,sourceUrl:saved.sourceUrl||'',sourceKey,commercial:saved.commercial,...(saved.commercial.stage==='contracted'?{type:'Active'}:{})}:d):[{...saved,sourceKey,...(saved.commercial.stage==='contracted'?{type:'Active'}:{})},...rows]);
+    setEditor(null);
+  };
+  const rows=deals.filter(d=>(filter==='archived'?d.archived:!d.archived) && (!q || [d.brand,BF.terms(d).campaign,BF.terms(d).contact].join(' ').toLowerCase().includes(q.toLowerCase())) && (['all','archived'].includes(filter)||BF.lane(d)===filter));
+  const invoices=alive.flatMap(d=>(BF.terms(d).invoices||[]).filter(BF.issued).map(i=>({d,i}))).filter(({d})=>BF.terms(d).stage==='contracted');
+  const needs=alive.filter(d=>!d.commercial || !BF.terms(d).reviewed || BF.terms(d).fee==null || (BF.terms(d).invoices||[]).some(i=>BF.issued(i)&&BF.balance(i)>0&&!i.dueConfirmed));
+  const reviewOpen=x=>{setReview(x);setReviewTarget(deals.find(d=>d.sourceUrl===x.sourceUrl || d.sourceKey?.startsWith('gmail:'+x.threadId+':'))?.id||'new');};
+  const reviewStart=()=>{const current=deals.find(d=>d.id===reviewTarget);if(current) setEditor({...current,_baseCommercial:current.commercial,sourceUrl:current.sourceUrl||review.sourceUrl,commercial:{...BF.terms(current),evidence:BF.terms(current).evidence||review.sourceUrl}});else setEditor({id:'gmail-'+review.threadId,brand:'',piece:'Reel',type:'Prospect',stage:'script',tasks:[],notes:'',script:'',caption:'',stageDue:{},created:day,_new:true,sourceKey:'gmail:'+review.threadId+':campaign:primary:deal',sourceUrl:review.sourceUrl,commercial:{stage:'proposed',currency:'ZAR',campaign:review.subject,evidence:review.sourceUrl,reviewed:false,invoices:[]}});setReview(null);};
+  return <section className="brand-space">
+    <div className="brand-page-head"><div><div className="brand-eyebrow">YOUR BUSINESS, IN VIEW</div><h1>Brand deals<span>.</span></h1></div><button className="brand-button" onClick={add}>+ New deal</button></div>
+    <div className="brand-metrics">{[['Agreed fees',t.contracted],['Invoiced',t.invoiced],['Received',t.paid],['Outstanding',t.outstanding],['Overdue',t.overdue]].map(([label,value])=><div key={label} className={'brand-metric '+(label==='Overdue'&&value?'brand-metric-alert':'')}><span>{label}</span><strong>{BF.money(value||0,currency)}</strong></div>)}</div>
+    <div className="brand-row" style={{marginBottom:24}}><span className="brand-hint">{alive.length} deals · {needs.length} need review · {t.missingDates||0} invoices need due dates</span><select aria-label="Dashboard currency" className="brand-currency" value={currency} onChange={e=>setCurrency(e.target.value)}>{currencies.map(c=><option key={c}>{c}</option>)}</select></div>
+    <nav className="brand-tabs" aria-label="Brand deal views">{[['database','Database'],['pipeline','Pipeline'],['payments','Payments'],['insights','Financials'],['creative','Content & delivery'],['workflows','Workflows'],['clients','Social clients']].map(([key,label])=><button key={key} className={sub===key?'active':''} onClick={()=>setSub(key)}>{label}</button>)}</nav>
+    {['database','pipeline'].includes(sub) && <div className="brand-row" style={{margin:'20px 0'}}><select className="brand-currency" aria-label="Filter deals" value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">All deals</option>{BRAND_LANES.map(l=><option key={l[0]} value={l[0]}>{l[1]}</option>)}<option value="archived">Archived</option></select><span className="brand-muted">{rows.length} records</span></div>}
+    {sub==='database' && <div className="brand-table-wrap"><table className="brand-table brand-database"><thead><tr>{['Brand / campaign','Stage','Fee','Outstanding','Next payment',''].map((x,n)=><th key={n}>{x}</th>)}</tr></thead><tbody>{rows.map(d=>{const c=BF.terms(d),inv=(c.invoices||[]).filter(i=>BF.issued(i)&&BF.balance(i)>0),due=inv.filter(i=>i.dueConfirmed&&i.dueDate).sort((a,b)=>a.dueDate.localeCompare(b.dueDate))[0];return <tr key={d.id} data-nav-id={d.id}><td><button className="brand-name" onClick={()=>setEditor(d)}><span className="brand-avatar">{d.brand.slice(0,2).toUpperCase()}</span><span><strong>{d.brand}</strong><small>{c.campaign||d.piece||'Campaign'}{!d.commercial?' · Review terms':''}</small></span></button></td><td><BrandPill stage={BF.lane(d)}/></td><td>{BF.money(c.fee,c.currency)}</td><td>{c.stage==='contracted'?BF.money(inv.reduce((n,i)=>n+BF.balance(i),0),c.currency):'—'}</td><td className={due?.dueDate<day?'brand-error':''}>{due?.dueDate || (inv.length?'Needs due date':'—')}</td><td><button className="brand-quiet" onClick={()=>setEditor(d)} aria-label={'Open '+d.brand}>↗</button></td></tr>;})}</tbody></table>{!rows.length && <div className="brand-empty-small">No deals in this view. Add a deal or change your filters.</div>}</div>}
+    {sub==='pipeline' && <div className="brand-pipeline">{BRAND_LANES.map(([key,label,color])=><div key={key} className="brand-lane"><div className="brand-row"><h3><span style={{color}}>●</span> {label}</h3><span className="brand-muted">{rows.filter(d=>BF.lane(d)===key).length}</span></div>{rows.filter(d=>BF.lane(d)===key).map(d=><button key={d.id} className="brand-deal-tile" onClick={()=>setEditor(d)}><span className="brand-avatar">{d.brand.slice(0,2).toUpperCase()}</span><strong>{d.brand}</strong><small>{BF.terms(d).campaign||d.piece}</small><span>{BF.money(BF.terms(d).fee,BF.terms(d).currency)}</span></button>)}</div>)}</div>}
+    {sub==='payments' && <div className="brand-table-wrap"><table className="brand-table"><thead><tr>{['Brand','Invoice','Due','Invoice amount','Received','Remaining'].map(x=><th key={x}>{x}</th>)}</tr></thead><tbody>{invoices.sort((a,b)=>(a.i.dueDate||'9999').localeCompare(b.i.dueDate||'9999')).map(({d,i})=><tr key={d.id+i.id}><td><button className="brand-name" onClick={()=>setEditor(d)}>{d.brand}</button></td><td>{i.number}</td><td className={i.dueConfirmed&&i.dueDate<day&&BF.balance(i)>0?'brand-error':''}>{i.dueConfirmed?i.dueDate:'Needs confirmation'}</td><td>{BF.money(i.amount,BF.terms(d).currency)}</td><td>{BF.money(i.paidAmount||0,BF.terms(d).currency)}</td><td>{BF.money(BF.balance(i),BF.terms(d).currency)}</td></tr>)}</tbody></table>{!invoices.length && <div className="brand-empty-small">Confirmed invoices will appear here</div>}</div>}
+    {sub==='insights' && <div className="brand-insights"><div className="brand-insight-card"><h3>Revenue at a glance</h3>{[['Proposed fees',t.proposed],['Agreed fees',t.contracted],['Invoiced',t.invoiced],['Received in bank',t.paid],['Still outstanding',t.outstanding]].map(([label,v])=><div key={label} className="brand-chart-row"><div className="brand-row"><span>{label}</span><strong>{BF.money(v||0,currency)}</strong></div><div className="brand-chart-track"><span style={{width:(100*(v||0)/Math.max(t.proposed||0,t.contracted||0,t.invoiced||0,1))+'%'}}/></div></div>)}<p className="brand-hint">{t.unknownFees||0} deals have no fee recorded. Currencies are shown separately. Agreed fees are gross; invoice amounts track what is receivable.</p></div><div className="brand-insight-card"><h3>Needs attention</h3>{needs.map(d=><button key={d.id} className="brand-attention" onClick={()=>setEditor(d)}><strong>{d.brand}</strong><span>{!BF.terms(d).reviewed?'Review commercial terms':BF.terms(d).fee==null?'Add confirmed fee':'Confirm invoice due date'} ↗</span></button>)}{!needs.length && <p className="brand-muted">Everything is up to date.</p>}</div></div>}
+    {sub==='creative' && <div style={{marginTop:24}}><ContentModule pipeline="brandContent" data={data} setData={setData} q={q} navRequest={navRequest} onContentSchedule={onContentSchedule} registry={registry}/></div>}
+    {sub==='workflows' && <BrandWorkflows deals={deals} onReview={reviewOpen}/>}
+    {sub==='clients' && <><div style={{margin:'20px 0'}}><AddBtn label="Add client" onClick={()=>setData(d=>({...d,deals:{...d.deals,clients:[{id:uid(),name:'New client',notes:'',tasks:[]},...(d.deals.clients||[])]}}))}/></div><div className="grid gap-3" style={{gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))'}}>{clients.filter(c=>!q||c.name.toLowerCase().includes(q.toLowerCase())).map(c=><ClientCard key={c.id} c={c} updateClient={(id,p)=>setData(d=>({...d,deals:{...d.deals,clients:d.deals.clients.map(x=>x.id===id?{...x,...p}:x)}}))} removeClient={id=>setData(d=>({...d,deals:{...d.deals,clients:d.deals.clients.filter(x=>x.id!==id)}}))}/>)}</div></>}
+    {review && <div className="brand-overlay"><div role="dialog" aria-modal="true" aria-label="Review opportunity" className="brand-review-dialog"><h2>Record this opportunity</h2><p>{review.subject}</p><label className="brand-field"><span>Choose the campaign to avoid duplicates</span><select value={reviewTarget} onChange={e=>setReviewTarget(e.target.value)}><option value="new">New campaign</option>{deals.map(d=><option key={d.id} value={d.id}>{d.brand} · {BF.terms(d).campaign||d.id}</option>)}</select></label><p className="brand-hint">Read the full Gmail thread and attachments. Enter only the terms you can verify.</p><div className="brand-row"><button className="brand-quiet" onClick={()=>setReview(null)}>Cancel</button><button className="brand-button" onClick={reviewStart}>Continue review</button></div></div></div>}
+    {editor && <BrandEditor key={editor.id} deal={{...editor,...(deals.find(d=>d.id===editor.id)||{}),commercial:editor.commercial,sourceUrl:editor.sourceUrl}} onSave={save} onClose={()=>setEditor(null)} onArchive={archive} update={update} remove={archive}/>}
+  </section>;
 }
 
 /* ================= AI TASK PROJECTS ================= */
