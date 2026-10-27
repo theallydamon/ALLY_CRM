@@ -6,6 +6,7 @@ export const OWNER = 'theallydamon@gmail.com';
 export const SCOPES = ['openid','email','https://www.googleapis.com/auth/gmail.readonly','https://www.googleapis.com/auth/gmail.send','https://www.googleapis.com/auth/calendar.events'];
 const CLIENT = '139362174943-bg2h6vu4tgt6is8tu0ca415nea741fn3.apps.googleusercontent.com';
 const ORIGIN = 'https://www.theallydamon.com';
+const APP_URL = ORIGIN + '/ALLY_CRM/index.html#brand-deals';
 const FOREVER = 8640000000000000;
 const KEY = 'brand-workflows:owner';
 const GMAIL = 'https://gmail.googleapis.com/gmail/v1/users/me';
@@ -87,7 +88,7 @@ export async function scanInbox(env,store,ctx,fetcher) {
 }
 export function eventPlan(deal,invoice) {
   const id='b'+sha256('ally-crm:'+deal.id+':'+invoice.id);
-  return {id,summary:'Payment due · '+deal.brand+' · '+invoice.number,description:[finance.money(finance.balance(invoice),finance.terms(deal).currency)+' outstanding',finance.terms(deal).campaign,invoice.evidence,'ALLY CRM: '+ORIGIN+'/#deals'].join('\n'),start:{date:invoice.dueDate},end:{date:finance.nextDay(invoice.dueDate)},visibility:'private',transparency:'transparent',reminders:{useDefault:false,overrides:[{method:'popup',minutes:540}]},extendedProperties:{private:{allyCRM:id}},attendees:[]};
+  return {id,summary:'Payment due · '+deal.brand+' · '+invoice.number,description:[finance.money(finance.balance(invoice),finance.terms(deal).currency)+' outstanding',finance.terms(deal).campaign,invoice.evidence,'ALLY CRM: '+APP_URL].join('\n'),start:{date:invoice.dueDate},end:{date:finance.nextDay(invoice.dueDate)},visibility:'private',transparency:'transparent',reminders:{useDefault:false,overrides:[{method:'popup',minutes:540}]},extendedProperties:{private:{allyCRM:id}},attendees:[]};
 }
 async function saveJob(db,id,kind,state,payload) {
   await db.prepare('INSERT INTO brand_jobs(id,kind,state,payload,updated) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET state=excluded.state,payload=excluded.payload,updated=excluded.updated').bind(id,kind,state,JSON.stringify(payload),Date.now()).run();
@@ -139,7 +140,7 @@ export function digest(deals,day) {
 }
 export function ownEmail(lines,day,id) {
   // No recipient, subject, MIME, or header is derived from an email, invoice, or request.
-  const text='Your brand payments for '+day+'\n\n'+lines.join('\n')+'\n\nReview records and bank settlement in ALLY CRM: '+ORIGIN+'\nNo client has been emailed.';
+  const text='Your brand payments for '+day+'\n\n'+lines.join('\n')+'\n\nReview records and bank settlement in ALLY CRM: '+APP_URL+'\nNo client has been emailed.';
   return Buffer.from(['From: '+OWNER,'To: '+OWNER,'Subject: ALLY CRM payment reminders - '+day,'Message-ID: <'+id+'@theallydamon.com>','MIME-Version: 1.0','Content-Type: text/plain; charset=UTF-8','Content-Transfer-Encoding: base64','',Buffer.from(text).toString('base64')].join('\r\n')).toString('base64url');
 }
 export async function sendReminders(env,store,ctx,deals,fetcher,now=Date.now()) {
@@ -173,7 +174,7 @@ export async function sendReminders(env,store,ctx,deals,fetcher,now=Date.now()) 
     throw e;
   }
 }
-export async function runWorkflows(env,fetcher=(...args)=>fetch(...args),now=Date.now()) {
+export async function runWorkflows(env,fetcher=(...args)=>fetch(...args),now=Date.now(),trigger='manual') {
   const store=new Store(env.AUTH_DB), original=await store.get(KEY);
   if(!original || !Object.values(original.settings||{}).some(Boolean)) return;
   // Cross-cron and manual-run lease. No concurrent scans, refresh rotation, or digests.
@@ -187,11 +188,11 @@ export async function runWorkflows(env,fetcher=(...args)=>fetch(...args),now=Dat
     const live=await ctx.workspace.read(), deals=live.data.ally.deals?.deals||[];
     if(ctx.connection.settings.calendar) try { const current=await ctx.workspace.read(); await syncCalendar(env,store,ctx,current.data.ally.deals?.deals||[],fetcher); } catch { failures.push('Calendar sync'); }
     if(ctx.connection.settings.reminders) try { await sendReminders(env,store,ctx,deals,fetcher,now); } catch { failures.push('Payment email'); }
-    await updateConnection(env,ctx.connection,{lastRun:now,lastError:failures.length?failures.join(', ')+' failed. Check access and retry.':null});
+    await updateConnection(env,ctx.connection,{lastRun:now,...(trigger==='scheduled'?{lastScheduledRun:now}:{}),lastError:failures.length?failures.join(', ')+' failed. Check access and retry.':null});
     return {ok:!failures.length};
   } catch {
     const current=await store.get(KEY);
-    if(current) await updateConnection(env,current,{lastRun:now,lastError:safeError});
+    if(current) await updateConnection(env,current,{lastRun:now,...(trigger==='scheduled'?{lastScheduledRun:now}:{}),lastError:safeError});
     throw Error(safeError);
   } finally {
     await env.AUTH_DB.prepare("DELETE FROM brand_jobs WHERE id='workflow-lock' AND updated=?").bind(now).run();
@@ -214,7 +215,7 @@ export async function handleBrand(request,env,fetcher) {
     if(path==='/brand/status') {
       const jobs=await env.AUTH_DB.prepare("SELECT id,kind,state,payload,updated FROM brand_jobs WHERE kind!='lock' ORDER BY updated DESC LIMIT 30").all();
       const count=await env.AUTH_DB.prepare("SELECT COUNT(*) AS count FROM brand_candidates WHERE state='review'").first();
-      return json({connected:!!previous,settings:previous?.settings||DEFAULTS,lastRun:previous?.lastRun||null,lastError:previous?.lastError||null,reviewCount:count.count,jobs:jobs.results||[],recipient:OWNER});
+      return json({connected:!!previous,settings:previous?.settings||DEFAULTS,lastRun:previous?.lastRun||null,lastScheduledRun:previous?.lastScheduledRun||null,lastError:previous?.lastError||null,reviewCount:count.count,jobs:jobs.results||[],recipient:OWNER});
     }
     if(path==='/brand/connect') {
       if(typeof input.code!=='string' || !input.code || input.code.length>4096) return json({error:'Invalid authorization code.'},400);

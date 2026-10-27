@@ -131,7 +131,7 @@ async function connectedHarness() {
     throw Error('Unexpected fixture URL '+url);
   };
   const call=(path,body={})=>handleBrand(new Request('https://example.com/brand/'+path,{method:'POST',headers:{origin:'https://www.theallydamon.com','content-type':'application/json','x-requested-with':'AllyCRM',authorization:'Bearer '+jwt},body:JSON.stringify(body)}),env,fetcher);
-  return {env,fetcher,call,run:()=>runWorkflows(env,fetcher,now),unseal,counts:()=>({sends,events,refreshes}),wrongAccount:()=>{email='client@example.com';},denyScopes:()=>{scopes=[];}};
+  return {env,fetcher,call,run:(trigger='manual')=>runWorkflows(env,fetcher,now,trigger),unseal,counts:()=>({sends,events,refreshes}),wrongAccount:()=>{email='client@example.com';},denyScopes:()=>{scopes=[];}};
 }
 test('owner consent encrypts both refresh credentials, defaults off, and runs all workflows after explicit switches',async()=>{
   const h=await connectedHarness();
@@ -155,4 +155,18 @@ test('calendar work is bounded and later runs complete remaining invoices',async
   let writes=0;const fetcher=async(url,init={})=>{if(init.method==='POST'){writes++;return ok(JSON.parse(init.body));}return new Response('{}',{status:404});};
   await syncCalendar(f.env,f.store,f.ctx,[d],fetcher);assert.equal(writes,3);
   await syncCalendar(f.env,f.store,f.ctx,[d],fetcher);assert.equal(writes,5);
+});
+
+test('scheduled execution reports its own timestamp and reminder links open the real CRM path',async()=>{
+  const h=await connectedHarness();
+  await h.call('connect',{code:'fixture',refreshToken:'fixture'});
+  await h.call('settings',{settings:{calendar:true,reminders:true}});
+  await h.run('scheduled');
+  const status=await (await h.call('status')).json();
+  assert.equal(status.lastScheduledRun,now);
+  const event=eventPlan(deal(),invoice());
+  assert.match(event.description,/https:\/\/www.theallydamon.com\/ALLY_CRM\/index.html#brand-deals/);
+  const raw=Buffer.from(ownEmail(['Fixture'],'2026-10-27','test'),'base64url').toString();
+  const body=Buffer.from(raw.split('\r\n\r\n')[1],'base64').toString();
+  assert.match(body,/https:\/\/www.theallydamon.com\/ALLY_CRM\/index.html#brand-deals/);
 });
