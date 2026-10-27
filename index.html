@@ -2374,7 +2374,7 @@ const AUTH_ERRORS = {
 function AllyCRM() {
   const [ally, setAlly] = useState(null);
   const [mama, setMama] = useState(null);
-  const [tab, setTab] = useState("overview");
+  const [tab, setTab] = useState(() => window.location.hash === "#brand-deals" ? "brandContent" : "overview");
   const [history, setHistory] = useState([]);
   const [q, setQ] = useState("");
   const [saveState, setSaveState] = useState("idle");
@@ -6277,7 +6277,7 @@ function BrandWorkflows({deals,onReview}) {
     <div className="brand-row" style={{margin:'20px 0',justifyContent:'flex-start',flexWrap:'wrap'}}><button className="brand-button" onClick={connect} disabled={busy}>{status?.connected?'Reconnect Google':'Connect Google workflows'}</button>{status?.connected && <><button className="brand-quiet" disabled={busy} onClick={()=>action(()=>brandRequest('run'))}>{busy?'Working…':'Sync now'}</button><button className="brand-quiet" disabled={busy} onClick={()=>action(()=>brandRequest('disconnect'))}>Disconnect</button></>}</div>
     {error && <p role="alert" className="brand-error">{error}</p>}
     {status?.lastError && <p className="brand-error">{status.lastError}</p>}
-    <p className="brand-hint">{status?.lastRun?'Last run: '+new Date(status.lastRun).toLocaleString('en-ZA',{timeZone:'Africa/Johannesburg'}):'No background run verified yet.'} Disabling Calendar pauses sync and leaves existing events in place.</p>
+    <p className="brand-hint">{status?.lastRun?'Last run: '+new Date(status.lastRun).toLocaleString('en-ZA',{timeZone:'Africa/Johannesburg'}):'No background run verified yet.'} {status?.lastScheduledRun?'Last scheduled check: '+new Date(status.lastScheduledRun).toLocaleString('en-ZA',{timeZone:'Africa/Johannesburg'})+'. ':''}Disabling Calendar pauses sync and leaves existing events in place.</p>
     <div className="brand-row" style={{marginTop:32}}><h3>Opportunity review</h3><span className="brand-muted">{candidates.length} waiting</span></div>
     {candidates.length===0 && <div className="brand-empty-small">No opportunities waiting for review</div>}
     {candidates.map(x=><article key={x.id} className="brand-candidate"><div className="brand-row"><div><strong>{x.subject}</strong><p className="brand-muted">{x.from}</p></div><a href={x.sourceUrl} target="_blank" rel="noreferrer">Open thread ↗</a></div>{x.amountMentions?.length>0 && <p className="brand-hint">Amounts mentioned, unconfirmed: {x.amountMentions.join(' · ')}</p>}{x.attachmentReviewRequired && <p className="brand-hint">Review attachments in Gmail before confirming terms.</p>}<details><summary>Read source evidence{x.truncated?' · truncated':''}</summary><pre className="brand-evidence">{x.evidence}</pre></details><div className="brand-row" style={{justifyContent:'flex-start',marginTop:14}}><button className="brand-button" onClick={()=>onReview(x)}>Review & record</button><button className="brand-quiet" disabled={busy} onClick={()=>action(()=>brandRequest('dismiss',{id:x.id,messageId:x.messageId,state:'dismissed'}))}>Dismiss</button></div></article>)}

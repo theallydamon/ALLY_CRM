@@ -151,7 +151,7 @@ export function createHandler(fetcher = (input, init) => fetch(input, init)) {
 export default {
   fetch: createHandler(),
   async scheduled(_event,env) {
-    try { await runWorkflows(env); } catch { console.error(JSON.stringify({event:"brand_workflow_failed"})); }
+    try { await runWorkflows(env,undefined,Date.now(),'scheduled'); } catch { console.error(JSON.stringify({event:"brand_workflow_failed"})); }
     await env.AUTH_DB.batch([
       env.AUTH_DB.prepare('DELETE FROM auth_state WHERE key IN (SELECT key FROM auth_state WHERE expires <= ? LIMIT 1000)').bind(Date.now()),
       env.AUTH_DB.prepare('DELETE FROM rate_limits WHERE key IN (SELECT key FROM rate_limits WHERE expires <= ? LIMIT 1000)').bind(Date.now())

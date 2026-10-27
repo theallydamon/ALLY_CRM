@@ -17,6 +17,6 @@
     "database_id": "00000000-0000-0000-0000-000000000000",
     "migrations_dir": "migrations"
   }],
-  "observability": { "enabled": true, "head_sampling_rate": 0.1, "traces": { "enabled": true, "head_sampling_rate": 0.1 } },
+  "observability": { "enabled": true, "head_sampling_rate": 0.1, "traces": { "enabled": true, "head_sampling_rate": 0.1 }, "logs": { "enabled": true, "head_sampling_rate": 0.1 } },
   "triggers": { "crons": ["13 3 * * *", "17 * * * *"] }
 }
