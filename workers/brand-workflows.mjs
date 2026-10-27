@@ -76,8 +76,23 @@ export async function scanInbox(env,store,ctx,fetcher) {
   const state=await store.get('brand-scan-cursor');
   const page=await api(fetcher,ctx.access,GMAIL+'/threads?maxResults=3&q='+encodeURIComponent(query)+(state?.page?'&pageToken='+encodeURIComponent(state.page):''));
   for(const item of page.threads||[]) {
-    const value=candidate(await api(fetcher,ctx.access,GMAIL+'/threads/'+encodeURIComponent(item.id)+'?format=full'));
+    const threadUrl=GMAIL+'/threads/'+encodeURIComponent(item.id);
+    let thread, incomplete=false;
+    try { thread=await api(fetcher,ctx.access,threadUrl+'?format=full'); }
+    catch(e) {
+      if(e.message!=='Backend response exceeds safe size limit.') throw e;
+      // Keep large threads reviewable without repeatedly blocking this scan page.
+      thread=await api(fetcher,ctx.access,threadUrl+'?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date');
+      incomplete=true;
+    }
+    const value=candidate(thread);
     if(!value) continue;
+    if(incomplete) {
+      value.truncated=true;
+      value.attachmentReviewRequired=true;
+      value.evidence='This thread exceeds the automatic reading limit. Open Gmail and review the full conversation and attachments before recording any terms.\n\n'+value.evidence;
+      value.amountMentions=[];
+    }
     await stillEnabled(store,'scan');
     const old=await env.AUTH_DB.prepare('SELECT payload FROM brand_candidates WHERE id=?').bind(value.threadId).first();
     if(old && JSON.parse(old.payload).messageId===value.messageId) continue;

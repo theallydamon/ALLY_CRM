@@ -111,6 +111,20 @@ test('workflow endpoints reject other origins, no setup, missing bearer and inva
   assert.equal((await handleBrand(request('https://www.theallydamon.com',{'x-requested-with':'AllyCRM'}),{AUTH_DB:db(),CONNECTION_KEY:'fixture',DRIVE_CLIENT_SECRET:'fixture'},()=>{})).status,401);
 });
 
+test('oversized Gmail threads remain manual review items and do not stall scan pagination',async()=>{
+  const f=await fixture();let metadataCalls=0;
+  const fetcher=async url=>{
+    if(url.includes('/threads?')) return ok({threads:[{id:'large'}],nextPageToken:'next-page'});
+    if(url.includes('format=full')) return ok({padding:'x'.repeat(2*1024*1024)});
+    assert.match(url,/format=metadata/);metadataCalls++;
+    return ok({id:'large',messages:[{id:'latest',snippet:'Unconfirmed R5000',payload:{headers:[{name:'Subject',value:'Brand campaign'}]}}]});
+  };
+  await scanInbox(f.env,f.store,f.ctx,fetcher);
+  const value=JSON.parse(f.env.AUTH_DB.sql.prepare('SELECT payload FROM brand_candidates').get().payload);
+  assert.equal(metadataCalls,1);assert.equal(value.reviewed,false);assert.equal(value.truncated,true);assert.equal(value.attachmentReviewRequired,true);assert.deepEqual(value.amountMentions,[]);assert.match(value.evidence,/exceeds the automatic reading limit/);
+  assert.equal((await f.store.get('brand-scan-cursor')).page,'next-page');
+});
+
 async function connectedHarness() {
   const {encode}=await import('./firebase.mjs');
   const {unseal}=await import('./store.mjs');
