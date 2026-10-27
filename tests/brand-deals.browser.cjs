@@ -42,7 +42,12 @@ fs.mkdirSync(artifacts,{recursive:true});
  await page.getByLabel('Commercial stage').selectOption('contracted');
  await page.getByRole('button',{name:'Save deal',exact:true}).click();
  await page.getByRole('alert').filter({hasText:'Confirm the agreed terms'}).waitFor();
- await page.getByRole('button',{name:'Close deal',exact:true}).click();
+ await page.getByLabel('Commercial stage').selectOption('proposed');
+ await page.getByRole('button',{name:'Save deal',exact:true}).click();
+ const created=await page.evaluate(()=>window.__previewData.deals.deals.find(d=>d.brand==='New brand'));
+ const {encode}=await import('../workers/firebase.mjs');
+ encode(created); // Firestore rejects any undefined field, including optional sourceUrl.
+ if(created.sourceUrl!=='' || created.commercial.fee!==null)throw Error('Blank optional fields did not remain valid for Firestore.');
  await page.setViewportSize({width:390,height:844});
  await page.screenshot({path:artifacts+'/brand-mobile.png',fullPage:true});
  await page.getByRole('button',{name:'Open Legacy record',exact:true}).click();
