@@ -1,4 +1,5 @@
 import auth from '../functions/crm-auth.js';
+import { handleBrand, runWorkflows } from './brand-workflows.mjs';
 import { handleDrive } from './drive.mjs';
 import { Store, ALLOWED_EMAILS, sha256, randomToken, secretEqual, seal } from './store.mjs';
 import { verifyIdentity, exchangeFirebase, sessionToken, Workspace, boundedJson } from './firebase.mjs';
@@ -41,6 +42,7 @@ export function createHandler(fetcher = (input, init) => fetch(input, init)) {
     try {
       const url = new URL(request.url); path = url.pathname.replace(/\/$/, '') || '/';
       const base = origin(env), resource = base + '/mcp', method = request.method;
+      if (path.startsWith('/brand/')) return handleBrand(request, env, fetcher);
       if (path.startsWith('/drive/')) return handleDrive(request, env, fetcher);
       if (method === 'GET' && path === '/health') return json({ ok: true, service: 'ALLY CRM Workers connector', version: '3.0.0', configured: Boolean(env.AUTH_DB && env.CONNECTION_KEY && env.FIREBASE_SERVER_API_KEY), serverAuthConfigured: Boolean(env.FIREBASE_SERVER_API_KEY), crmVerified: false });
       if (method === 'GET' && ['/.well-known/oauth-protected-resource','/.well-known/oauth-protected-resource/mcp'].includes(path)) return json({ resource, authorization_servers: [base], scopes_supported: SCOPES });
@@ -149,6 +151,7 @@ export function createHandler(fetcher = (input, init) => fetch(input, init)) {
 export default {
   fetch: createHandler(),
   async scheduled(_event,env) {
+    try { await runWorkflows(env); } catch { console.error(JSON.stringify({event:"brand_workflow_failed"})); }
     await env.AUTH_DB.batch([
       env.AUTH_DB.prepare('DELETE FROM auth_state WHERE key IN (SELECT key FROM auth_state WHERE expires <= ? LIMIT 1000)').bind(Date.now()),
       env.AUTH_DB.prepare('DELETE FROM rate_limits WHERE key IN (SELECT key FROM rate_limits WHERE expires <= ? LIMIT 1000)').bind(Date.now())

@@ -44,3 +44,7 @@ The Google Sheet integration mirrors regular Content skits into production-stage
 ## Working on it
 
 Branch off `main`, commit, and open a pull request. Because the app is one very large file, prefer small targeted edits — reformatting or whitespace churn makes diffs unreadable.
+
+## Brand Deals workspace
+
+The Deals module includes a commercial database, agreement pipeline, invoice/partial-payment tracking, currency-separated financials, and review-first Gmail/Calendar/self-email workflows. Existing records remain in the same collection. Background workflows require separate Google consent and Worker activation; see [BRAND_DEALS_SETUP.md](BRAND_DEALS_SETUP.md) for the implementation, limitations, setup order and live verification checklist.

@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test worker.test.mjs drive.test.mjs",
+    "test": "node --test worker.test.mjs drive.test.mjs brand-workflows.test.mjs",
     "build": "wrangler deploy --dry-run",
     "deploy": "node deploy.mjs",
     "types": "wrangler types",

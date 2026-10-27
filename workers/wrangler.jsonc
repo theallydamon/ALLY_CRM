@@ -18,5 +18,5 @@
     "migrations_dir": "migrations"
   }],
   "observability": { "enabled": true, "head_sampling_rate": 0.1, "traces": { "enabled": true, "head_sampling_rate": 0.1 } },
-  "triggers": { "crons": ["13 3 * * *"] }
+  "triggers": { "crons": ["13 3 * * *", "17 * * * *"] }
 }
