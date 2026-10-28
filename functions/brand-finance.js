@@ -26,11 +26,19 @@
   function bool(value) { if (value == null) return false; if (typeof value !== 'boolean') throw Error('Use true or false.'); return value; }
   function validate(raw) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw Error('Commercial terms must be an object.');
-    const allowed = ['stage','campaign','currency','fee','agencyFee','tax','paymentTerms','deliverables','rights','contact','agency','evidence','reviewed','invoices'];
+    const allowed = ['stage','campaign','currency','fee','agencyFee','tax','paymentTerms','deliverables','rights','contact','agency','evidence','reviewed','invoices','paymentStatus','paymentEvidence','billingStatus','billingEvidence'];
     if (Object.keys(raw).some(k=>!allowed.includes(k))) throw Error('Unknown commercial field.');
     const out = { stage: raw.stage || 'proposed', currency: str(raw.currency || 'ZAR',3), fee: amount(raw.fee), agencyFee: amount(raw.agencyFee), tax: amount(raw.tax), reviewed: bool(raw.reviewed) };
     if (!STAGES.includes(out.stage) || !/^[A-Z]{3}$/.test(out.currency)) throw Error('Invalid commercial stage or currency.');
     for (const k of ['campaign','paymentTerms','deliverables','rights','contact','agency','evidence']) out[k] = str(raw[k]);
+    out.paymentStatus = raw.paymentStatus || 'unknown';
+    out.paymentEvidence = str(raw.paymentEvidence);
+    out.billingStatus = raw.billingStatus || 'unknown';
+    out.billingEvidence = str(raw.billingEvidence);
+    if (!['unknown','outstanding','paid','barter'].includes(out.paymentStatus) || !['unknown','not_invoiced','invoiced'].includes(out.billingStatus)) throw Error('Invalid payment or invoice status.');
+    if (out.paymentStatus !== 'unknown' && (!out.paymentEvidence || out.stage !== 'contracted' || !out.reviewed)) throw Error('Confirm the booking and payment status source first.');
+    if (out.paymentStatus === 'barter' && out.fee !== 0) throw Error('A product exchange must have an explicit zero cash fee.');
+    if (out.billingStatus === 'invoiced' && (!out.billingEvidence || out.stage !== 'contracted' || !out.reviewed)) throw Error('Add the source confirming that the invoice was sent.');
     if (out.stage === 'contracted' && (!out.reviewed || !out.evidence)) throw Error('Confirm the agreed terms and add their source before marking contracted.');
     if (raw.invoices != null && !Array.isArray(raw.invoices)) throw Error('Invoices must be a list.');
     if ((raw.invoices || []).length > 50) throw Error('Use at most 50 invoice instalments per deal.');
@@ -53,31 +61,57 @@
   const cents = n => Math.round((n || 0) * 100);
   const balance = i => (cents(i.amount) - cents(i.paidAmount)) / 100;
   const issued = i => !i.void && i.amount != null && !!i.issuedDate && !!i.number;
+  const confirmedPayment = d => { const c=terms(d); return c.stage==='contracted' && c.reviewed && !!c.paymentEvidence ? c.paymentStatus : 'unknown'; };
+  const settled = d => ['paid','barter'].includes(confirmedPayment(d));
+  const billingConfirmed = d => { const c=terms(d); return c.stage==='contracted' && c.reviewed && c.billingStatus==='invoiced' && !!c.billingEvidence; };
+  const receivableFee = d => { const c=terms(d); return c.fee==null ? null : Math.max(0,cents(c.fee)-cents(c.agencyFee))/100; };
+  function invoicedFees(d) {
+    const c=terms(d), total=(c.invoices||[]).filter(issued).reduce((n,i)=>n+cents(i.amount),0)/100;
+    return billingConfirmed(d) && c.fee!=null ? c.fee : c.fee==null ? total : Math.min(c.fee,total);
+  }
+  function outstanding(d) {
+    const c=terms(d);
+    if (d.archived || c.stage!=='contracted' || !c.reviewed || settled(d)) return 0;
+    const invoices=(c.invoices||[]).filter(issued), remaining=invoices.reduce((n,i)=>n+cents(balance(i)),0);
+    // An owner's unpaid-fee confirmation need not manufacture an invoice or a due date.
+    const expected=confirmedPayment(d)==='outstanding' && receivableFee(d)!=null ? cents(receivableFee(d))-invoices.reduce((n,i)=>n+cents(i.paidAmount),0) : 0;
+    return Math.max(0,remaining,expected)/100;
+  }
   function lane(d) {
     const c = terms(d), invoices = (c.invoices || []).filter(issued);
     if (c.stage !== 'contracted') return c.stage;
-    if (invoices.length && c.fee != null && invoices.reduce((n,i)=>n+cents(i.paidAmount),0) >= cents(c.fee) && invoices.every(i=>balance(i)===0)) return 'paid';
-    return invoices.length ? 'invoiced' : 'contracted';
+    if (confirmedPayment(d)==='barter') return 'barter';
+    if (confirmedPayment(d)==='paid' || invoices.length && c.fee != null && invoices.reduce((n,i)=>n+cents(i.paidAmount),0) >= cents(receivableFee(d)) && invoices.every(i=>balance(i)===0)) return 'paid';
+    return billingConfirmed(d) || invoices.length ? 'invoiced' : confirmedPayment(d)==='outstanding' ? 'awaiting_invoice' : 'contracted';
   }
   function dashboard(deals, day) {
     const totals = {};
     for (const d of deals) {
+      if (d.archived) continue;
       const c = terms(d), currency = c.currency || 'ZAR';
-      const t = totals[currency] ||= { proposed:0, contracted:0, invoiced:0, paid:0, outstanding:0, overdue:0, unknownFees:0, missingDates:0 };
+      const t = totals[currency] ||= { proposed:0, contracted:0, invoiced:0, invoicedFees:0, paid:0, paidFees:0, outstanding:0, awaitingInvoice:0, overdue:0, unknownFees:0, missingDates:0, paidAmountsMissing:0, invoiceAmountsMissing:0 };
       if (c.stage === 'declined') continue;
       if (c.fee == null) t.unknownFees++;
       else t[c.stage === 'contracted' ? 'contracted' : 'proposed'] += cents(c.fee);
       if (c.stage !== 'contracted' || !c.reviewed) continue;
-      for (const i of (c.invoices || []).filter(issued)) {
-        t.invoiced += cents(i.amount); t.paid += cents(i.paidAmount); t.outstanding += cents(balance(i));
-        if (balance(i) > 0 && (!i.dueConfirmed || !i.dueDate)) t.missingDates++;
-        if (balance(i) > 0 && i.dueConfirmed && i.dueDate < day) t.overdue += cents(balance(i));
+      const invoices=(c.invoices||[]).filter(issued), isSettled=settled(d);
+      t.invoicedFees+=cents(invoicedFees(d));
+      if(lane(d)==='paid') t.paidFees+=cents(c.fee);
+      if(confirmedPayment(d)==='paid' && !invoices.some(i=>i.paidAmount>0)) t.paidAmountsMissing++;
+      const remaining=outstanding(d);
+      t.outstanding+=cents(remaining);
+      if(!billingConfirmed(d)) t.awaitingInvoice+=Math.max(0,cents(remaining)-invoices.reduce((n,i)=>n+cents(balance(i)),0));
+      if(billingConfirmed(d) && !invoices.length) { t.invoiceAmountsMissing++; if(remaining>0) t.missingDates++; }
+      for (const i of invoices) {
+        t.invoiced += cents(i.amount); t.paid += cents(i.paidAmount);
+        if (!isSettled && balance(i) > 0 && (!i.dueConfirmed || !i.dueDate)) t.missingDates++;
+        if (!isSettled && balance(i) > 0 && i.dueConfirmed && i.dueDate < day) t.overdue += cents(balance(i));
       }
     }
-    for (const t of Object.values(totals)) for (const k of ['proposed','contracted','invoiced','paid','outstanding','overdue']) t[k] /= 100;
+    for (const t of Object.values(totals)) for (const k of ['proposed','contracted','invoiced','invoicedFees','paid','paidFees','outstanding','awaitingInvoice','overdue']) t[k] /= 100;
     return totals;
   }
-  function payable(d, i) { const c = terms(d); return !d.archived && !d.paused && c.stage === 'contracted' && c.reviewed && issued(i) && i.dueConfirmed && !!i.dueDate && !!i.evidence && balance(i) > 0; }
+  function payable(d, i) { const c = terms(d); return !d.archived && !d.paused && !settled(d) && c.stage === 'contracted' && c.reviewed && issued(i) && i.dueConfirmed && !!i.dueDate && !!i.evidence && balance(i) > 0; }
   function reminder(d, i, day) {
     if (!payable(d,i)) return null;
     const delta = Math.round((new Date(i.dueDate+'T00:00:00Z')-new Date(day+'T00:00:00Z'))/86400000);
@@ -88,5 +122,5 @@
   }
   function money(n,currency='ZAR') { return n == null ? 'Not set' : new Intl.NumberFormat('en-ZA',{style:'currency',currency}).format(n); }
   function nextDay(day) { const d = new Date(day+'T00:00:00Z'); d.setUTCDate(d.getUTCDate()+1); return d.toISOString().slice(0,10); }
-  return { STAGES, date, validate, terms, balance, issued, lane, dashboard, payable, reminder, money, nextDay };
+  return { STAGES, date, validate, terms, balance, issued, lane, dashboard, payable, reminder, money, nextDay, confirmedPayment, settled, billingConfirmed, outstanding, invoicedFees };
 });
