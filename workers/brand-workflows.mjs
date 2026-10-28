@@ -69,12 +69,40 @@ export function candidate(thread) {
   const suggestions=[...new Set(evidence.match(/(?:ZAR|R|USD|GBP|EUR|\$|£|€)\s?\d[\d ,]*(?:\.\d{1,2})?/g)||[])].slice(0,12);
   return {threadId:thread.id,messageId:latest.id,subject:headers.subject||'Brand correspondence',from:headers.from||'',sourceUrl:'https://mail.google.com/mail/u/?authuser='+encodeURIComponent(OWNER)+'#all/'+thread.id,evidence:evidence.slice(-40000),truncated:evidence.length>40000,amountMentions:suggestions,attachmentReviewRequired:messages.some(m=>JSON.stringify(m.payload).includes('attachmentId')),reviewed:false};
 }
+// Match immutable source threads, including archived/closed campaigns. A brand name
+// alone is not a duplicate: the same brand can commission a different campaign.
+export function recordedCampaign(value,deals) {
+  if(!/^[a-f0-9]+$/i.test(value.threadId)) return null;
+  return deals.find(d=>[d.sourceKey,d.sourceUrl,d.notes,d.commercial?.evidence].some(text=>typeof text==='string' && (text.includes('gmail:'+value.threadId+':') || new RegExp('#(?:all|inbox|sent)/'+value.threadId+'(?:[^a-f0-9]|$)','i').test(text)))) || null;
+}
+export function opportunitySignal(value) {
+  const subject=value.subject.replace(/^(?:(?:re|fw|fwd):\s*)+/ig,'').trim();
+  // A creator job title in a signature is not an offer. Screen the actual
+  // subject and substantive message text, before signatures and quoted replies.
+  if(/(?:property24|myproperty|viewing confirmation|rental agreement|lease agreement|tax filing|expense breakdown|license renewal|licence renewal|clutch warning|discovery refund|delivery status notification|phone call (?:to|from)|item missing|shipment|account.*hibernation|password reset|focus groups|self.tape|movies for|webfluential feedback)/i.test(subject)) return false;
+  if(/(?:social media collaboration|paid collab(?:oration)?|brand (?:campaign|partnership)|influencer (?:campaign|collab)|creator (?:campaign|brief)|sponsor(?:ship|ed)|ugc (?:campaign|collab)|collaboration\s*[|:])/i.test(subject)) return true;
+  const substantive=value.evidence.split(/--- MESSAGE ---/).map(message=>message.split(/\n\s*(?:warm regards|kind regards|best regards|content creator\s*&\s*social media consultant|on .{0,160}wrote:|>{1,})/i)[0]).join('\n');
+  const offer=/(?:we(?:'d| would) love to work with you|we(?:'re| are) (?:reaching out|looking for|casting)|upcoming campaign|paid collaboration|paid partnership|sponsored (?:post|video)|send (?:us |your )?(?:your )?rates|campaign brief|creator brief)/i.test(substantive);
+  const scope=/(?:instagram|tiktok|ugc|reel|skit|deliverables|usage rights|content (?:piece|video)|influencer|creator)/i.test(substantive);
+  return offer&&scope;
+}
+export async function reconcileCandidates(env,deals) {
+  const pending=await env.AUTH_DB.prepare("SELECT id,payload FROM brand_candidates WHERE state='review' ORDER BY created LIMIT 50").all();
+  for(const row of pending.results||[]) {
+    const value=JSON.parse(row.payload);
+    if(recordedCampaign(value,deals)) await env.AUTH_DB.prepare("UPDATE brand_candidates SET state='recorded' WHERE id=? AND payload=? AND state='review'").bind(row.id,row.payload).run();
+  }
+}
 export async function scanInbox(env,store,ctx,fetcher) {
   await stillEnabled(store,'scan');
   // Bounded pages with a persisted continuation. A failed page never advances the cursor.
-  const query='newer_than:90d -in:trash -in:spam -category:promotions -from:'+OWNER+' {"brand campaign" "influencer" "paid collaboration" "content creator" "usage rights" "creator brief"}';
+  const query='newer_than:90d -in:trash -in:spam -category:promotions -from:'+OWNER+' {"brand campaign" "paid collaboration" "paid collab" "paid partnership" "social media collaboration" "influencer campaign" "usage rights" "creator brief" "send your rates" "sponsored post"}';
   const state=await store.get('brand-scan-cursor');
-  const page=await api(fetcher,ctx.access,GMAIL+'/threads?maxResults=3&q='+encodeURIComponent(query)+(state?.page?'&pageToken='+encodeURIComponent(state.page):''));
+  // Query changes invalidate Gmail page tokens, without losing dismissal history.
+  const pageToken=state?.query===query?state.page:null;
+  const live=await ctx.workspace.read(),deals=live.data.ally.deals?.deals||[];
+  await reconcileCandidates(env,deals);
+  const page=await api(fetcher,ctx.access,GMAIL+'/threads?maxResults=3&q='+encodeURIComponent(query)+(pageToken?'&pageToken='+encodeURIComponent(pageToken):''));
   for(const item of page.threads||[]) {
     const threadUrl=GMAIL+'/threads/'+encodeURIComponent(item.id);
     let thread, incomplete=false;
@@ -87,6 +115,8 @@ export async function scanInbox(env,store,ctx,fetcher) {
     }
     const value=candidate(thread);
     if(!value) continue;
+    const existing=recordedCampaign(value,deals);
+    if(existing || !opportunitySignal(value)) continue;
     if(incomplete) {
       value.truncated=true;
       value.attachmentReviewRequired=true;
@@ -98,7 +128,7 @@ export async function scanInbox(env,store,ctx,fetcher) {
     if(old && JSON.parse(old.payload).messageId===value.messageId) continue;
     await env.AUTH_DB.prepare("INSERT INTO brand_candidates(id,payload,state,created) VALUES(?,?,'review',?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,state='review',created=excluded.created").bind(value.threadId,JSON.stringify(value),Date.now()).run();
   }
-  await store.put('brand-scan-cursor',{page:page.nextPageToken||null},FOREVER);
+  await store.put('brand-scan-cursor',{page:page.nextPageToken||null,query},FOREVER);
   return {complete:!page.nextPageToken};
 }
 export function eventPlan(deal,invoice) {

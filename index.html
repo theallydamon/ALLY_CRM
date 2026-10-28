@@ -3688,17 +3688,12 @@ if (mChanged) setMama((prev) => ({ ...prev, tasks: adminTasks, creators }));
               </button>
               <input ref={importInputRef} type="file" accept="application/json" onChange={handleImportFile} style={{ display: "none" }} />
             </div>
-            {user && <CalendarChip cal={cal} registry={registry} crmEmail={user.email || ""} showRegistry={profile.id !== "work"} />}
+            {user && <CalendarChip cal={cal} registry={registry} crmEmail={user.email || ""} showRegistry={profile.id !== "work"} cloudState={cloudState} workspaceError={workspaceError} />}
             {fbAuth && user && (
               <div className="flex items-center gap-1.5" title={`Signed in as ${user.email}`}>
                 {user.photoURL
                   ? <img src={user.photoURL} alt={`${user.displayName || user.email} Google profile`} referrerPolicy="no-referrer" style={{ width: 30, height: 30, borderRadius: 99, objectFit: "cover", flexShrink: 0 }} />
                   : <div className="flex items-center justify-center" style={{ width: 30, height: 30, borderRadius: 99, background: C.accentBg, border: `1px solid ${C.accentLine}`, color: C.accent, fontSize: 12, fontWeight: 800, flexShrink: 0 }}>{String(user.displayName || user.email || "A").charAt(0).toUpperCase()}</div>}
-                {/* "reconnecting…" is deliberately not "sync error": the change is safe, the app is
-                    still trying, and there is nothing for anyone to do about it. */}
-                <span className="btn-label" style={{ fontSize: 10.5, color: cloudState === "error" ? C.rose : cloudState === "retry" ? C.amber : MUT, whiteSpace: "nowrap" }}>
-                  {cloudState === "saving" ? "syncing…" : cloudState === "synced" ? "synced ✓" : cloudState === "loading" ? "loading…" : cloudState === "retry" ? "reconnecting…" : cloudState === "error" ? "sync error" : ""}
-                </span>
                 <button onClick={signOutGoogle} style={{ ...iconBtn, fontSize: 11, padding: "5px 8px", border: `1px solid ${LINE}`, borderRadius: 8 }}><span className="btn-label">Sign out</span></button>
               </div>
             )}
@@ -3954,32 +3949,44 @@ function CompleteCheckbox({ onComplete, size = 18, mt = 0, label = "Mark complet
 
    The popover is the disconnect affordance 02-GOAL.md requires. Do not promote any of this back
    into the page body. */
-function CalendarChip({ cal, registry, crmEmail, showRegistry = true }) {
+function CalendarChip({ cal, registry, crmEmail, showRegistry = true, cloudState, workspaceError }) {
   const { connected, connecting, account, calError, gisReady, grant, disconnect } = cal;
   const [open, setOpen] = useState(false);
+  const brandEnabled=showRegistry&&crmEmail.toLowerCase()==='theallydamon@gmail.com';
+  const brandConnection=useBrandConnection(brandEnabled);
+  const [,redrawDrive]=useState(0);
+  useEffect(()=>TaskFiles.subscribe(()=>redrawDrive(n=>n+1)),[]);
+  useEffect(()=>{if(!open)return;const close=e=>{if(e.key==='Escape')setOpen(false);};document.addEventListener('keydown',close);return()=>document.removeEventListener('keydown',close);},[open]);
+  const driveConnected=TaskFiles.connected(crmEmail);
 
   const mismatch = account && crmEmail && account.toLowerCase() !== crmEmail.toLowerCase();
   const sheetConnected = registry && registry.state === "synced";
   const sheetBusy = registry && (registry.state === "connecting" || registry.state === "syncing");
-  const allConnected = connected && (!showRegistry || sheetConnected) && !mismatch;
-  const dot = allConnected ? C.mint : mismatch ? C.amber : C.rose;
-  const connectionLabel = allConnected ? (showRegistry ? "Google Calendar and Skit Registry connected" : "Google Calendar connected") : "A connection needs attention";
+  const allConnected = connected && (!showRegistry || sheetConnected) && !mismatch && (!brandEnabled || brandConnection.healthy) && !TaskFiles.needsRetry(crmEmail) && !["error","retry","offline","loading"].includes(cloudState);
+  const dot = allConnected ? C.mint : brandConnection.loading ? MUT : mismatch ? C.amber : C.rose;
+  const connectionLabel = allConnected ? "All connections working" : brandConnection.loading ? "Checking connections" : "A connection needs attention";
 
   return (
     <div style={{ position: "relative", flexShrink: 0 }}>
       <button onClick={() => setOpen((o) => !o)}
         title={connectionLabel}
         aria-label={connectionLabel}
+        aria-expanded={open}
+        aria-haspopup="dialog"
         className="flex items-center justify-center"
         style={{ ...iconBtn, padding: 6, borderRadius: 99, border: "1px solid transparent", cursor: "pointer" }}>
-        <span className={!allConnected && (connecting || sheetBusy) ? "pulse-dot" : ""}
+        <span className={!allConnected && (connecting || sheetBusy || brandConnection.loading) ? "pulse-dot" : ""}
           style={{ width: 7, height: 7, borderRadius: 99, background: dot, flexShrink: 0, display: "block" }} />
       </button>
 
       {open && (
         <>
           <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
-          <div style={{ position: "absolute", right: 0, top: "calc(100% + 7px)", zIndex: 41, width: 310, ...card, borderRadius: 13, padding: 13, boxShadow: "0 18px 44px rgba(0,0,0,0.6)" }}>
+          <div role="dialog" aria-label="Connections" style={{ position: "absolute", right: 0, top: "calc(100% + 7px)", zIndex: 41, width: 360, maxWidth: "calc(100vw - 32px)", maxHeight: "75vh", overflowY: "auto", ...card, borderRadius: 13, padding: 13, boxShadow: "0 18px 44px rgba(0,0,0,0.6)" }}>
+            <div className="brand-row" style={{fontWeight:700,fontSize:13,marginBottom:12}}><span>Connections</span><button style={iconBtn} aria-label="Close connections" onClick={()=>setOpen(false)}>✕</button></div>
+            <div style={{fontSize:12.5,fontWeight:700}}>CRM database <span style={{fontSize:10.5,color:cloudState==='synced'?C.mint:MUT}}>{cloudState==='synced'?'· saved':cloudState==='saving'?'· saving':cloudState==='loading'?'· loading':'· needs attention'}</span></div>
+            {workspaceError&&<p role="alert" className="brand-error">{workspaceError}</p>}
+            {brandEnabled&&<div style={{fontSize:10.5,color:MUT,marginTop:4,marginBottom:12}}>Background connector · {brandConnection.status&&!brandConnection.error?'reachable':brandConnection.loading?'checking':'check access'}</div>}
             <div style={{ fontWeight: 700, fontSize: 12.5, marginBottom: 2 }}>
               Google Calendar {connected ? <span style={{ color: C.mint, fontWeight: 600 }}>· connected</span> : <span style={{ color: MUT, fontWeight: 400 }}>· not connected</span>}
             </div>
@@ -3999,6 +4006,9 @@ function CalendarChip({ cal, registry, crmEmail, showRegistry = true }) {
               </div>
               {registry && registry.error && <div role="alert" style={{ marginTop: 7, fontSize: 10.5, lineHeight: 1.45, color: C.rose }}>{registry.error}</div>}
             </div>}
+
+            {showRegistry&&<div style={{marginTop:11,paddingTop:10,borderTop:`1px solid ${LINE}`}}><strong style={{fontSize:12.5}}>Drive attachments</strong><p style={{fontSize:10.5,color:MUT,marginTop:3}}>{driveConnected?'Connected':TaskFiles.isRestoring(crmEmail)?'Checking access…':TaskFiles.needsRetry(crmEmail)?'Reconnect when attaching a file':'Available when you attach a file'}</p></div>}
+            {brandEnabled&&<BrandConnectionDetails connection={brandConnection}/>}
 
             {calError && (
               <div role="alert" style={{ marginTop: 9, padding: "7px 9px", borderRadius: 8, background: C.accentBg, border: `1px solid ${C.accentLine}`, fontSize: 10.5, lineHeight: 1.45 }}>{calError}</div>
@@ -6273,25 +6283,38 @@ function BrandEditor({deal,onSave,onClose,onArchive,update,remove}) {
     {deal.id && !deal._new && <details className="brand-editor-section"><summary>Production, tasks & notes</summary><div style={{marginTop:16}}><DealCard x={deal} open={true} onToggleOpen={()=>{}} update={update} remove={remove} isProspect={(deal.type||'Active')==='Prospect'}/></div></details>}
   </section></div>;
 }
-function BrandWorkflows({deals,onReview}) {
-  const [status,setStatus]=useState(null),[candidates,setCandidates]=useState([]),[error,setError]=useState(''),[busy,setBusy]=useState(false);
-  const refresh=async()=>{const s=await brandRequest('status');setStatus(s);if(s.connected){const p=await brandRequest('candidates');setCandidates(p.candidates);}else{setCandidates([]);}};
-  useEffect(()=>{refresh().catch(e=>setError(e.message));},[]);
-  const action=async(fn)=>{setBusy(true);setError('');try{await fn();await refresh();}catch(e){setError(e.message);}finally{setBusy(false);}};
-  const connect=()=>{setError(''); if(!window.google?.accounts?.oauth2){setError('Google sign-in is loading. Try again.');return;} const user=fbAuth.currentUser;const client=google.accounts.oauth2.initCodeClient({client_id:'139362174943-bg2h6vu4tgt6is8tu0ca415nea741fn3.apps.googleusercontent.com',scope:'openid email https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/calendar.events',ux_mode:'popup',login_hint:'theallydamon@gmail.com',include_granted_scopes:false,callback:r=>{if(r.error){setError('Google access was not granted.');return;}action(()=>brandRequest('connect',{code:r.code,refreshToken:user.refreshToken}));},error_callback:()=>setError('Google connection closed. Try again.')});client.requestCode();};
-  return <div>
-    <div className="brand-workflow-hero"><div><div className="brand-eyebrow">CONNECTED WORKFLOWS</div><h2>Less chasing. More creating.</h2><p>Review opportunities, keep payment dates in your calendar, and receive payment reminders at theallydamon@gmail.com.</p></div><span className="brand-pill">{status?.connected?'Connected':'Setup needed'}</span></div>
-    <div className="brand-workflow-grid">
-      {[['scan','Gmail opportunities','Finds likely brand correspondence from the past 90 days. Every result waits for your review.'],['calendar','Payment calendar','Private Payment due events for confirmed outstanding invoices. Paid or void invoices are removed on sync.'],['reminders','Payment emails','A daily email from 07:00 SAST when payments are due in 3 days, due today, or overdue. Only to you.']].map(([key,title,description])=><article className="brand-workflow-card" key={key}><div className="brand-row"><h3>{title}</h3><input aria-label={title} type="checkbox" disabled={busy||!status?.connected} checked={!!status?.settings?.[key]} onChange={e=>action(()=>brandRequest('settings',{settings:{[key]:e.target.checked}}))}/></div><p>{description}</p></article>)}
-    </div>
-    <div className="brand-row" style={{margin:'20px 0',justifyContent:'flex-start',flexWrap:'wrap'}}><button className="brand-button" onClick={connect} disabled={busy}>{status?.connected?'Reconnect Google':'Connect Google workflows'}</button>{status?.connected && <><button className="brand-quiet" disabled={busy} onClick={()=>action(()=>brandRequest('run'))}>{busy?'Working…':'Sync now'}</button><button className="brand-quiet" disabled={busy} onClick={()=>action(()=>brandRequest('disconnect'))}>Disconnect</button></>}</div>
-    {error && <p role="alert" className="brand-error">{error}</p>}
-    {status?.lastError && <p className="brand-error">{status.lastError}</p>}
-    <p className="brand-hint">{status?.lastRun?'Last run: '+new Date(status.lastRun).toLocaleString('en-ZA',{timeZone:'Africa/Johannesburg'}):'No background run verified yet.'} {status?.lastScheduledRun?'Last scheduled check: '+new Date(status.lastScheduledRun).toLocaleString('en-ZA',{timeZone:'Africa/Johannesburg'})+'. ':''}Disabling Calendar pauses sync and leaves existing events in place.</p>
-    <div className="brand-row" style={{marginTop:32}}><h3>Opportunity review</h3><span className="brand-muted">{candidates.length} waiting</span></div>
-    {candidates.length===0 && <div className="brand-empty-small">No opportunities waiting for review</div>}
-    {candidates.map(x=><article key={x.id} className="brand-candidate"><div className="brand-row"><div><strong>{x.subject}</strong><p className="brand-muted">{x.from}</p></div><a href={x.sourceUrl} target="_blank" rel="noreferrer">Open thread ↗</a></div>{x.amountMentions?.length>0 && <p className="brand-hint">Amounts mentioned, unconfirmed: {x.amountMentions.join(' · ')}</p>}{x.attachmentReviewRequired && <p className="brand-hint">Review attachments in Gmail before confirming terms.</p>}<details><summary>Read source evidence{x.truncated?' · truncated':''}</summary><pre className="brand-evidence">{x.evidence}</pre></details><div className="brand-row" style={{justifyContent:'flex-start',marginTop:14}}><button className="brand-button" onClick={()=>onReview(x)}>Review & record</button><button className="brand-quiet" disabled={busy} onClick={()=>action(()=>brandRequest('dismiss',{id:x.id,messageId:x.messageId,state:'dismissed'}))}>Dismiss</button></div></article>)}
-    <details style={{marginTop:30}}><summary>Delivery & sync history</summary>{(status?.jobs||[]).map(j=><div key={j.id} className="brand-job"><span>{j.kind==='email'?'Payment email':'Calendar event'}</span><strong className={j.state==='uncertain'?'brand-error':''}>{j.state==='uncertain'?'Delivery uncertain · check Sent before retrying':j.state}</strong><span>{new Date(j.updated).toLocaleString('en-ZA',{timeZone:'Africa/Johannesburg'})}</span></div>)}</details>
+function useBrandConnection(enabled) {
+  const [status,setStatus]=useState(null),[error,setError]=useState(''),[busy,setBusy]=useState(false);
+  const refresh=useCallback(async()=>{if(!enabled)return;try{const value=await brandRequest('status');setStatus(value);setError('');}catch(e){setError(e.message);}},[enabled]);
+  useEffect(()=>{if(!enabled){setStatus(null);setError('');return;}refresh();const timer=setInterval(refresh,60000);const visible=()=>{if(!document.hidden)refresh();};document.addEventListener('visibilitychange',visible);return()=>{clearInterval(timer);document.removeEventListener('visibilitychange',visible);};},[refresh,enabled]);
+  const action=async fn=>{setBusy(true);setError('');try{await fn();await refresh();}catch(e){setError(e.message);}finally{setBusy(false);}};
+  const connect=()=>{setError('');if(!window.google?.accounts?.oauth2){setError('Google sign-in is loading. Try again.');return;}const user=fbAuth.currentUser;const client=google.accounts.oauth2.initCodeClient({client_id:'139362174943-bg2h6vu4tgt6is8tu0ca415nea741fn3.apps.googleusercontent.com',scope:'openid email https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/calendar.events',ux_mode:'popup',login_hint:'theallydamon@gmail.com',include_granted_scopes:false,callback:r=>{if(r.error){setError('Google access was not granted.');return;}action(()=>brandRequest('connect',{code:r.code,refreshToken:user.refreshToken}));},error_callback:()=>setError('Google connection closed. Try again.')});client.requestCode();};
+  const stale=!!status?.connected && (!status.lastScheduledRun || Date.now()-status.lastScheduledRun>3*60*60*1000);
+  return {status,error,busy,refresh,action,connect,loading:enabled&&!status&&!error,healthy:!!status?.connected&&!error&&!status.lastError&&!stale&&['scan','calendar','reminders'].every(key=>status.settings?.[key]),stale};
+}
+function BrandConnectionDetails({connection}) {
+  const {status,error,busy,action,connect,refresh,stale}=connection;
+  return <div className="brand-connection-details">
+    <div className="brand-row"><strong>Background services</strong><span className="brand-hint">{status?.connected?'Connected':'Not connected'}</span></div>
+    {[['scan','Gmail opportunity screening'],['calendar','Payment due calendar'],['reminders','Payment reminder emails']].map(([key,label])=><label key={key} className="brand-connection-setting"><span>{label}</span><input type="checkbox" aria-label={label} disabled={busy||!status?.connected} checked={!!status?.settings?.[key]} onChange={e=>action(()=>brandRequest('settings',{settings:{[key]:e.target.checked}}))}/></label>)}
+    <p className="brand-hint">{status?.lastScheduledRun?'Last scheduled check: '+new Date(status.lastScheduledRun).toLocaleString('en-ZA',{timeZone:'Africa/Johannesburg'}):'No scheduled check verified yet.'}</p>
+    {stale&&<p role="status" className="brand-error">The scheduled check needs attention.</p>}
+    {(error||status?.lastError)&&<p role="alert" className="brand-error">{error||status.lastError}</p>}
+    <div className="brand-connection-actions"><button className="brand-quiet" disabled={busy} onClick={connect}>{status?.connected?'Reconnect Google':'Connect Google'}</button>{status?.connected&&<><button className="brand-quiet" disabled={busy} onClick={()=>action(()=>brandRequest('run'))}>{busy?'Checking…':'Check now'}</button><button className="brand-quiet" disabled={busy} onClick={()=>action(()=>brandRequest('disconnect'))}>Disconnect background services</button></>}<button className="brand-quiet" disabled={busy} onClick={refresh}>Refresh status</button></div>
+    <details><summary>Delivery history</summary>{(status?.jobs||[]).map(j=><div key={j.id} className="brand-job"><span>{j.kind==='email'?'Payment email':'Calendar event'}</span><strong>{j.state==='uncertain'?'Delivery uncertain, check Sent before retrying':j.state}</strong><span>{new Date(j.updated).toLocaleString('en-ZA',{timeZone:'Africa/Johannesburg'})}</span></div>)}</details>
+  </div>;
+}
+function BrandOpportunityReview({onReview}) {
+  const [candidates,setCandidates]=useState(null),[error,setError]=useState(''),[busy,setBusy]=useState(false);
+  const refresh=async()=>{setError('');try{const p=await brandRequest('candidates');setCandidates(p.candidates);}catch(e){setError(e.message);}};
+  useEffect(()=>{refresh();},[]);
+  const dismiss=async x=>{setBusy(true);setError('');try{const result=await brandRequest('dismiss',{id:x.id,messageId:x.messageId,state:'dismissed'});if(!result.saved)throw Error('This conversation changed. Review the latest message before removing it.');await refresh();}catch(e){setError(e.message);}finally{setBusy(false);}};
+  return <div className="brand-opportunities">
+    <div className="brand-row"><div><h2>Opportunity review</h2><p className="brand-muted">New brand enquiries to consider. Confirm the details before adding a deal.</p></div>{candidates&&<span className="brand-pill">{candidates.length} to review</span>}</div>
+    {error&&<div role="alert" className="brand-error">{error}<button className="brand-quiet" onClick={refresh}>Try again</button></div>}
+    {!candidates&&!error&&<p className="brand-muted" role="status">Loading opportunities…</p>}
+    {candidates?.length===0&&<div className="brand-empty-small"><strong>You’re up to date.</strong><p>New brand enquiries will appear here when they need your review.</p></div>}
+    {(candidates||[]).map(x=><article key={x.id} className="brand-candidate"><div className="brand-row"><div><strong>{x.subject}</strong><p className="brand-muted">{x.from}</p></div><a href={x.sourceUrl} target="_blank" rel="noreferrer">Open conversation ↗</a></div>{x.amountMentions?.length>0&&<p className="brand-hint">Amounts mentioned, unconfirmed: {x.amountMentions.join(' · ')}</p>}{x.attachmentReviewRequired&&<p className="brand-hint">Check the attachments before confirming terms.</p>}<details><summary>Conversation details{x.truncated?' · open the full conversation':''}</summary><pre className="brand-evidence">{x.evidence}</pre></details><div className="brand-row" style={{justifyContent:'flex-start',marginTop:14}}><button className="brand-button" onClick={()=>onReview(x)}>Review & record</button><button className="brand-quiet" aria-label={'Remove '+x.subject} disabled={busy} onClick={()=>dismiss(x)}>Remove</button></div></article>)}
   </div>;
 }
 function DealsModule({ data, setData, q, navRequest, onContentSchedule, registry }) {
@@ -6324,7 +6347,7 @@ function DealsModule({ data, setData, q, navRequest, onContentSchedule, registry
     <div className="brand-page-head"><div><div className="brand-eyebrow">YOUR BUSINESS, IN VIEW</div><h1>Brand deals<span>.</span></h1></div><button className="brand-button" onClick={add}>+ New deal</button></div>
     <div className="brand-metrics">{[['Agreed fees',t.contracted],['Invoiced fees',t.invoicedFees],['Paid fees',t.paidFees],['Outstanding fees',t.outstanding],['Overdue invoices',t.overdue]].map(([label,value])=><div key={label} className={'brand-metric '+(label==='Overdue invoices'&&value?'brand-metric-alert':'')}><span>{label}</span><strong>{BF.money(value||0,currency)}</strong></div>)}</div>
     <div className="brand-row" style={{marginBottom:24}}><span className="brand-hint">{alive.length} deals · {needs.length} need review · {t.missingDates||0} invoices need due dates</span><select aria-label="Dashboard currency" className="brand-currency" value={currency} onChange={e=>setCurrency(e.target.value)}>{currencies.map(c=><option key={c}>{c}</option>)}</select></div>
-    <nav className="brand-tabs" aria-label="Brand deal views">{[['database','Database'],['pipeline','Pipeline'],['payments','Payments'],['insights','Financials'],['creative','Content & delivery'],['workflows','Workflows'],['clients','Social clients']].map(([key,label])=><button key={key} className={sub===key?'active':''} onClick={()=>setSub(key)}>{label}</button>)}</nav>
+    <nav className="brand-tabs" aria-label="Brand deal views">{[['database','Database'],['pipeline','Pipeline'],['payments','Payments'],['insights','Financials'],['creative','Content & delivery'],['workflows','Opportunities'],['clients','Social clients']].map(([key,label])=><button key={key} className={sub===key?'active':''} onClick={()=>setSub(key)}>{label}</button>)}</nav>
     {['database','pipeline'].includes(sub) && <div className="brand-row" style={{margin:'20px 0'}}><select className="brand-currency" aria-label="Filter deals" value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">All deals</option>{BRAND_LANES.map(l=><option key={l[0]} value={l[0]}>{l[1]}</option>)}<option value="archived">Archived</option></select><span className="brand-muted">{rows.length} records</span></div>}
     {sub==='database' && <div className="brand-table-wrap"><table className="brand-table brand-database"><thead><tr>{['Brand / campaign','Stage','Fee','Outstanding','Next payment',''].map((x,n)=><th key={n}>{x}</th>)}</tr></thead><tbody>{rows.map(d=>{const c=BF.terms(d),inv=(c.invoices||[]).filter(i=>!BF.settled(d)&&BF.issued(i)&&BF.balance(i)>0),due=inv.filter(i=>i.dueConfirmed&&i.dueDate).sort((a,b)=>a.dueDate.localeCompare(b.dueDate))[0];return <tr key={d.id} data-nav-id={d.id}><td><button className="brand-name" onClick={()=>setEditor(d)}><span className="brand-avatar">{d.brand.slice(0,2).toUpperCase()}</span><span><strong>{d.brand}</strong><small>{c.campaign||d.piece||'Campaign'}{d.stage==='done'?' · Completed':''}{!d.commercial?' · Review terms':''}</small></span></button></td><td><BrandPill stage={BF.lane(d)}/></td><td>{BF.money(c.fee,c.currency)}</td><td>{c.stage==='contracted'?BF.money(BF.outstanding(d),c.currency):'—'}</td><td className={due?.dueDate<day?'brand-error':''}>{due?.dueDate || (BF.outstanding(d)>0?'Needs due date':'—')}</td><td><button className="brand-quiet" onClick={()=>setEditor(d)} aria-label={'Open '+d.brand}>↗</button></td></tr>;})}</tbody></table>{!rows.length && <div className="brand-empty-small">No deals in this view. Add a deal or change your filters.</div>}</div>}
     {sub==='pipeline' && <div className="brand-pipeline">{BRAND_LANES.filter(([key])=>rows.some(d=>BF.lane(d)===key)||filter===key).map(([key,label,color])=><div key={key} className="brand-lane"><div className="brand-row"><h3><span style={{color}}>●</span> {label}</h3><span className="brand-muted">{rows.filter(d=>BF.lane(d)===key).length}</span></div><BrandLaneTotal deals={rows.filter(d=>BF.lane(d)===key)} lane={key}/>{rows.filter(d=>BF.lane(d)===key).map(d=><button key={d.id} className="brand-deal-tile" onClick={()=>setEditor(d)}><span className="brand-avatar">{d.brand.slice(0,2).toUpperCase()}</span><strong>{d.brand}</strong><small>{BF.terms(d).campaign||d.piece}</small><span>{BF.money(BF.terms(d).fee,BF.terms(d).currency)}</span></button>)}</div>)}</div>}
@@ -6332,7 +6355,7 @@ function DealsModule({ data, setData, q, navRequest, onContentSchedule, registry
     {sub==='payments' && <div className="brand-table-wrap"><table className="brand-table"><thead><tr>{['Brand','Invoice','Due','Invoice amount','Received','Remaining'].map(x=><th key={x}>{x}</th>)}</tr></thead><tbody>{invoices.sort((a,b)=>(a.i.dueDate||'9999').localeCompare(b.i.dueDate||'9999')).map(({d,i})=><tr key={d.id+i.id}><td><button className="brand-name" onClick={()=>setEditor(d)}>{d.brand}</button></td><td>{i.number}</td><td className={i.dueConfirmed&&i.dueDate<day&&BF.balance(i)>0?'brand-error':''}>{i.dueConfirmed?i.dueDate:'Needs confirmation'}</td><td>{BF.money(i.amount,BF.terms(d).currency)}</td><td>{BF.money(i.paidAmount,BF.terms(d).currency)}</td><td>{BF.settled(d)?'Settled':BF.money(BF.balance(i),BF.terms(d).currency)}</td></tr>)}</tbody></table>{!invoices.length && <div className="brand-empty-small">Confirmed invoices will appear here</div>}</div>}
     {sub==='insights' && <div className="brand-insights"><div className="brand-insight-card"><h3>Revenue at a glance</h3>{[['Proposed fees',t.proposed],['Agreed fees',t.contracted],['Invoiced fees',t.invoicedFees],['Paid fees',t.paidFees],['Outstanding fees',t.outstanding],['Invoice status to confirm',t.awaitingInvoice],['Bank receipt amounts entered',t.paid]].map(([label,v])=><div key={label} className="brand-chart-row"><div className="brand-row"><span>{label}</span><strong>{BF.money(v||0,currency)}</strong></div><div className="brand-chart-track"><span style={{width:(100*(v||0)/Math.max(t.proposed||0,t.contracted||0,t.invoiced||0,1))+'%'}}/></div></div>)}<p className="brand-hint">{t.unknownFees||0} deals have no fee recorded. Fee totals exclude product allowances and vouchers. Paid fees show the fees for settled bookings, before deductions. Exact bank receipts are recorded separately; {t.paidAmountsMissing||0} paid bookings have no receipt amount entered. {t.invoiceAmountsMissing||0} sent invoices still need their detailed amounts and dates.</p></div><div className="brand-insight-card"><h3>Needs attention</h3>{needs.map(d=><button key={d.id} className="brand-attention" onClick={()=>setEditor(d)}><strong>{d.brand}</strong><span>{!BF.terms(d).reviewed?'Review commercial terms':BF.terms(d).fee==null?'Add confirmed fee':'Add invoice details / due date'} ↗</span></button>)}{!needs.length && <p className="brand-muted">Everything is up to date.</p>}</div></div>}
     {sub==='creative' && <div style={{marginTop:24}}><ContentModule pipeline="brandContent" data={data} setData={setData} q={q} navRequest={navRequest} onContentSchedule={onContentSchedule} registry={registry}/></div>}
-    {sub==='workflows' && <BrandWorkflows deals={deals} onReview={reviewOpen}/>}
+    {sub==='workflows' && <BrandOpportunityReview onReview={reviewOpen}/>}
     {sub==='clients' && <><div style={{margin:'20px 0'}}><AddBtn label="Add client" onClick={()=>setData(d=>({...d,deals:{...d.deals,clients:[{id:uid(),name:'New client',notes:'',tasks:[]},...(d.deals.clients||[])]}}))}/></div><div className="grid gap-3" style={{gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))'}}>{clients.filter(c=>!q||c.name.toLowerCase().includes(q.toLowerCase())).map(c=><ClientCard key={c.id} c={c} updateClient={(id,p)=>setData(d=>({...d,deals:{...d.deals,clients:d.deals.clients.map(x=>x.id===id?{...x,...p}:x)}}))} removeClient={id=>setData(d=>({...d,deals:{...d.deals,clients:d.deals.clients.filter(x=>x.id!==id)}}))}/>)}</div></>}
     {review && <div className="brand-overlay"><div role="dialog" aria-modal="true" aria-label="Review opportunity" className="brand-review-dialog"><h2>Record this opportunity</h2><p>{review.subject}</p><label className="brand-field"><span>Choose the campaign to avoid duplicates</span><select value={reviewTarget} onChange={e=>setReviewTarget(e.target.value)}><option value="new">New campaign</option>{deals.map(d=><option key={d.id} value={d.id}>{d.brand} · {BF.terms(d).campaign||d.id}</option>)}</select></label><p className="brand-hint">Read the full Gmail thread and attachments. Enter only the terms you can verify.</p><div className="brand-row"><button className="brand-quiet" onClick={()=>setReview(null)}>Cancel</button><button className="brand-button" onClick={reviewStart}>Continue review</button></div></div></div>}
     {editor && <BrandEditor key={editor.id} deal={{...editor,...(deals.find(d=>d.id===editor.id)||{}),commercial:editor.commercial,sourceUrl:editor.sourceUrl||''}} onSave={save} onClose={()=>setEditor(null)} onArchive={archive} update={update} remove={archive}/>}

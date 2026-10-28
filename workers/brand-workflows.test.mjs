@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import finance from '../functions/brand-finance.js';
 import core from '../functions/crm-records.js';
 import { Store } from './store.mjs';
-import { candidate,eventPlan,digest,ownEmail,sendReminders,syncCalendar,handleBrand,scanInbox } from './brand-workflows.mjs';
+import { candidate,eventPlan,digest,ownEmail,sendReminders,syncCalendar,handleBrand,scanInbox,opportunitySignal,recordedCampaign,reconcileCandidates } from './brand-workflows.mjs';
 function db() {
   const sql=new DatabaseSync(':memory:');
   for(const p of ['0001_auth.sql','0002_brand_workflows.sql']) sql.exec(readFileSync(new URL('./migrations/'+p,import.meta.url),'utf8'));
@@ -125,6 +125,33 @@ test('Gmail scan is idempotent by thread/latest message and reopens only for new
   f.env.AUTH_DB.sql.exec("UPDATE brand_candidates SET state='dismissed'");
   await scanInbox(f.env,f.store,f.ctx,fetcher);assert.equal(f.env.AUTH_DB.sql.prepare('SELECT state FROM brand_candidates').get().state,'dismissed');
   id='m2';await scanInbox(f.env,f.store,f.ctx,fetcher);assert.equal(f.env.AUTH_DB.sql.prepare('SELECT state FROM brand_candidates').get().state,'review');
+});
+test('opportunity screening ignores creator signatures, property/admin threads and platform recruitment',()=>{
+  const signature='\nWarm regards,\nA creator\nContent Creator & Social Media Consultant';
+  for(const subject of ['Property24 contact request','Rental agreement','Tax filing and handover','Discovery refund','Webfluential password reset','Takealot phone call from customer','Gig economy focus groups','3 x movies for casting']) {
+    assert.equal(opportunitySignal({subject,evidence:'Please see the attached documents.'+signature}),false,subject);
+  }
+  assert.equal(opportunitySignal({subject:'An update',evidence:'Thanks for the update.'+signature+'\nOn Monday wrote:\nWe are looking for influencers for an upcoming campaign.'}),false,'quoted old offers do not turn ordinary updates into new opportunities');
+  assert.equal(opportunitySignal({subject:'How payment works for music creators',evidence:'We work with music creators on brand deals. Your profile is free. Join our platform.'}),false);
+  assert.equal(opportunitySignal({subject:'Estate x Creator, Potential Social Media Collaboration',evidence:'Marketing will be in contact.'}),true,'a genuine property-brand collaboration is not a rental enquiry');
+  assert.equal(opportunitySignal({subject:'A proposal for you',evidence:"We would love to work with you on a skit. Please send your rates for Instagram and TikTok."}),true);
+});
+test('duplicate checks use campaign source threads across active and archived records, never brand name alone',async()=>{
+  const id='abc123',c={threadId:id,messageId:'m1',subject:'Paid collaboration',evidence:'An Instagram campaign'};
+  const existing={id:'known',brand:'Example',archived:true,sourceKey:'gmail:abc123:campaign:first:deal'};
+  assert.equal(recordedCampaign(c,[existing]).id,'known');
+  assert.equal(recordedCampaign({...c,threadId:'abc1234'},[existing]),null);
+  assert.equal(recordedCampaign({...c,threadId:'def456'},[existing]),null,'new campaign for same brand remains reviewable');
+  assert.equal(recordedCampaign(c,[{id:'note',commercial:{evidence:'Source https://mail.google.com/mail/u/0/#all/abc123'}}]).id,'note');
+  const f=await fixture();
+  await f.env.AUTH_DB.prepare("INSERT INTO brand_candidates VALUES(?,?,'review',?)").bind(id,JSON.stringify(c),now).run();
+  await reconcileCandidates(f.env,[existing]);
+  assert.equal(f.env.AUTH_DB.sql.prepare('SELECT state FROM brand_candidates').get().state,'recorded');
+  let fetched=0;
+  f.ctx.workspace.read=async()=>({data:{ally:{deals:{deals:[existing]}}}});
+  const fetcher=async url=>{fetched++;return url.includes('/threads?')?ok({threads:[{id}]}):ok({id,messages:[{id:'m2',payload:{headers:[{name:'Subject',value:'Paid collaboration'}],mimeType:'text/plain',body:{data:Buffer.from('A new reply about the existing campaign').toString('base64url')}}}]});};
+  await scanInbox(f.env,f.store,f.ctx,fetcher);
+  assert.equal(fetched,2);assert.equal(f.env.AUTH_DB.sql.prepare('SELECT state FROM brand_candidates').get().state,'recorded','existing correspondence does not reopen an opportunity');
 });
 test('workflow endpoints reject other origins, no setup, missing bearer and invalid CSRF',async()=>{
   const request=(origin='https://evil.example',headers={})=>new Request('https://example.com/brand/status',{method:'POST',headers:{origin,'content-type':'application/json',...headers},body:'{}'});
