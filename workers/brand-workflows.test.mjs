@@ -35,6 +35,29 @@ test('gross proposals, agreed fees, invoices, partial bank receipts and currenci
   assert.equal(finance.lane({...d,commercial:{...d.commercial,invoices:[invoice({amount:4000,paidAmount:4000})]}}),'invoiced','paid deposit does not mean whole campaign is paid');
   assert.equal(finance.lane({stage:'done',type:'Active'}),'proposed','production done never implies paid or contracted');
 });
+test('owner-confirmed paid history needs no invented dates and sent invoice fees match pipeline totals',()=>{
+  const d=(id,fee,paymentStatus,billingStatus='unknown')=>({id,brand:id,stage:'done',commercial:finance.validate({stage:'contracted',reviewed:true,evidence:'Agreed booking',fee,currency:'ZAR',paymentStatus,paymentEvidence:'Synthetic owner confirmation',billingStatus,billingEvidence:billingStatus==='invoiced'?'Owner confirms invoice sent':'',invoices:[]})});
+  const past=[d('paid-a',5000,'paid'),d('paid-b',20000,'paid'),d('paid-c',29400,'paid'),d('paid-d',50000,'paid')], current=[d('invoice-a',18000,'outstanding','invoiced'),d('invoice-b',7000,'outstanding','invoiced'),d('invoice-c',6000,'outstanding','invoiced')], barter=d('product-only',0,'barter');
+  const t=finance.dashboard([...past,...current,barter],'2026-10-28').ZAR;
+  assert.equal(t.paidFees,104400);assert.equal(t.invoicedFees,31000);assert.equal(t.outstanding,31000);assert.equal(t.paid,0);assert.equal(t.invoiced,0);assert.equal(t.overdue,0);assert.equal(t.missingDates,3);assert.equal(t.invoiceAmountsMissing,3);
+  for(const x of past) { assert.equal(finance.lane(x),'paid'); assert.equal(finance.outstanding(x),0);assert.deepEqual(x.commercial.invoices,[]); }
+  for(const x of current)assert.equal(finance.lane(x),'invoiced');
+  assert.equal(finance.lane(barter),'barter');
+  assert.throws(()=>finance.validate({stage:'contracted',reviewed:true,evidence:'Contract',fee:500,paymentStatus:'paid'}));
+  assert.throws(()=>finance.validate({stage:'contracted',reviewed:true,evidence:'Contract',fee:500,paymentStatus:'barter',paymentEvidence:'Trade'}));
+  assert.throws(()=>finance.validate({stage:'contracted',reviewed:true,evidence:'Contract',billingStatus:'invoiced'}));
+});
+test('invoice and payment confirmations do not double count, archive clears totals and paid state suppresses stale reminders',()=>{
+  const d=deal();d.commercial.paymentStatus='outstanding';d.commercial.paymentEvidence='Owner confirms unpaid';d.commercial.billingStatus='invoiced';d.commercial.billingEvidence='Invoice sent';
+  let t=finance.dashboard([d],'2026-10-28').ZAR;
+  assert.equal(t.outstanding,7000);assert.equal(t.invoicedFees,8000);assert.equal(t.invoiced,8000);
+  d.commercial.paymentStatus='paid';d.commercial.paymentEvidence='Owner confirms full settlement, date unknown';
+  t=finance.dashboard([d],'2026-10-28').ZAR;assert.equal(t.outstanding,0);assert.equal(t.overdue,0);assert.equal(t.paidFees,8000);assert.equal(t.paid,1000);assert.equal(finance.reminder(d,invoice(),'2026-10-28'),null);
+  assert.deepEqual(finance.dashboard([{...d,archived:true}],'2026-10-28'),{});
+  const unbilled=deal({commercial:finance.validate({stage:'contracted',reviewed:true,evidence:'Contract',fee:8000,paymentStatus:'outstanding',paymentEvidence:'Owner says unpaid'})});
+  assert.equal(finance.lane(unbilled),'awaiting_invoice');assert.equal(finance.dashboard([unbilled],'2026-10-28').ZAR.awaitingInvoice,8000);
+  assert.deepEqual(digest([unbilled],'2026-10-28'),[]);
+});
 test('no invented deadlines, no pending terms, no void/paid/archived reminders; exact SA dates',()=>{
   const d=deal(),i=invoice();
   assert.equal(finance.reminder(d,i,'2026-10-23'),'upcoming');assert.equal(finance.reminder(d,i,'2026-10-26'),'due');assert.equal(finance.reminder(d,i,'2026-10-27'),'overdue');assert.equal(finance.reminder(d,i,'2026-10-24'),null);
