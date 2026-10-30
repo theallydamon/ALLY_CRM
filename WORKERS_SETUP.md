@@ -53,7 +53,7 @@ After the deployed URL is confirmed, update the private Ally Workflows plugin's 
 
 ## Data and authorization
 
-The Worker exposes `searchCrmRecords`, `getCrmRecord`, and `saveCrmRecord` across the seven existing boards. Read-only connections cannot invoke writes. Record writes use the existing validated core, source keys, request IDs, version checks and atomic Firestore preconditions.
+The Worker exposes `searchCrmRecords`, `getCrmRecord`, `saveCrmRecord`, and `deleteCrmRecord` across the seven existing boards. Read-only connections cannot invoke writes. Record writes use the existing validated core, source keys, request IDs, version checks and atomic Firestore preconditions.
 
 OAuth clients, single-use grants and encrypted Firebase refresh credentials are stored in D1. Connections expire after 90 days. Revocation disables all tokens for that connection. The `/oauth/revoke` endpoint is advertised in OAuth metadata. Losing or replacing `CONNECTION_KEY` requires reconnecting; do not rotate it casually.
 
@@ -66,3 +66,13 @@ Credential refresh revalidates the Google identity on every CRM tool call. Only 
 Local checks: 18 existing backend tests, 14 Worker tests and one bundled workerd test. Workerd runs real Worker crypto, D1 and OAuth while Google services are mocked. These checks do not establish live Firebase access or production CPU consumption. CI repeats the checks with Node 22.
 
 Private workflow instructions and plugin packaging are kept outside this public repository. Updating their endpoint happens after deployment verification. HubSpot synchronization is a workflow step using the connected HubSpot tools, not implemented by this Worker. Brand workflow code is available but requires separate owner Google consent and activation; see `BRAND_DEALS_SETUP.md`. The original daily cron cleans up authentication state; an additional hourly trigger runs only explicitly enabled brand workflows after their separate connection is configured.
+
+## Deleting a CRM record
+
+Deploy the connector update using the existing Cloudflare deployment steps above, then reconnect the CRM app with `crm.records.delete` in addition to the existing read/write/offline scopes. Existing write tokens cannot discover or invoke deletion. The consent page describes permanent deletion separately.
+
+Search spelling variants and inspect the full relevant board before creating records. For GoMove, search both “GoMove” and “Go Move”; read every candidate before identifying a duplicate.
+
+After explicit user authorization to delete a selected record, call `getCrmRecord`, then `deleteCrmRecord` with its `board`, exact `id`, fresh `expectedVersion`, `confirm: true`, and a unique `requestId`. Reuse that request ID only for an identical retry. Deletion supports all seven boards and removes only the selected item, preserving unrelated board data. It does not delete linked HubSpot records or other CRM items. Version conflicts require a fresh read; a missing record is never recreated. Verify deletion by reading the exact ID again and checking the board.
+
+The workspace change and operation receipt commit atomically. Replaying a successful delete returns its receipt without another deletion, even if the record is absent. No record contents or OAuth credentials are stored in the delete receipt. Existing create retries cannot recreate a removed record.
