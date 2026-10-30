@@ -1,6 +1,6 @@
 "use strict";
 const { CLAUDE_REDIRECT_URI } = require("./lib");
-const SCOPES = ["crm.tasks.write", "crm.records.read", "crm.records.write", "offline_access"];
+const SCOPES = ["crm.tasks.write", "crm.records.read", "crm.records.write", "crm.records.delete", "offline_access"];
 function redirectUriAllowed(uri, extra = process.env.CHATGPT_REDIRECT_URIS || "") {
   // Exact callbacks only. Never accept arbitrary paths/subdomains or redirect wildcards.
   const allowed = new Set([CLAUDE_REDIRECT_URI, "https://chatgpt.com/connector_platform_oauth_redirect"]);
