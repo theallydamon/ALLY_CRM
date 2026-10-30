@@ -13,7 +13,7 @@ const {
 } = require("./lib");
 
 const { SCOPES, redirectUriAllowed, requestedScopes, hasScope } = require("./crm-auth");
-const { TOOL_DEFINITIONS } = require("./crm-records");
+const { TOOL_DEFINITIONS, recordToolScope } = require("./crm-records");
 const { makeService } = require("./crm-service");
 
 initializeApp();
@@ -128,7 +128,7 @@ async function authorize(req, res) {
   return res.status(200).set("Content-Security-Policy", "default-src 'self' https://www.gstatic.com https://apis.google.com; script-src 'self' 'unsafe-inline' https://www.gstatic.com https://apis.google.com; frame-src https://accounts.google.com; connect-src 'self' https://*.googleapis.com https://*.firebaseio.com").send(`<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Connect your assistant to ALLY CRM</title>
 <style>body{font:16px system-ui;max-width:520px;margin:12vh auto;padding:24px;color:#202124}button{border:0;border-radius:12px;padding:13px 18px;background:#202124;color:white;font-weight:650;cursor:pointer}.muted{color:#667085;font-size:14px}#error{color:#b42318}</style></head>
-<body><h1>Connect ALLY CRM</h1><p>Sign in with an approved CRM account. Your assistant will receive these permissions: ${scope.split(" ").map((s) => ({ "crm.tasks.write": "add inbox tasks", "crm.records.read": "read CRM records", "crm.records.write": "create and update CRM records (no deletion)", "offline_access": "keep the approved connection active" }[s])).join("; ")}.</p><button id="connect">Continue with Google</button><p id="error"></p><p class="muted">No Google password or service-account key is shared with your assistant.</p>
+<body><h1>Connect ALLY CRM</h1><p>Sign in with an approved CRM account. Your assistant will receive these permissions: ${scope.split(" ").map((s) => ({ "crm.tasks.write": "add inbox tasks", "crm.records.read": "read CRM records", "crm.records.write": "create and update CRM records (no deletion)", "crm.records.delete": "permanently delete selected CRM records", "offline_access": "keep the approved connection active" }[s])).join("; ")}.</p><button id="connect">Continue with Google</button><p id="error"></p><p class="muted">No Google password or service-account key is shared with your assistant.</p>
 <script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-app-compat.js"></script><script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-auth-compat.js"></script>
 <script>
 firebase.initializeApp({apiKey:"AIzaSyBkjEWhqucPPFVCi5cnx_15LccgbI4B-pQ",authDomain:"ally-crm-cbdd1.firebaseapp.com",projectId:"ally-crm-cbdd1",appId:"1:139362174943:web:ea4df75838f6dfcf80a66a"});
@@ -233,7 +233,7 @@ async function mcp(req, res) {
       sourceMessageId: { type: "string", maxLength: 500, description: "Stable Gmail message ID; required to prevent duplicate tasks" },
       sourceUrl: { type: "string", maxLength: 2000, description: "Optional HTTPS Gmail permalink" },
     } },
-  }] : []), ...TOOL_DEFINITIONS.filter((tool) => hasScope(actor, tool.name === "saveCrmRecord" ? "crm.records.write" : "crm.records.read")).map((tool) => ({ ...tool, securitySchemes: [{ type: "oauth2", scopes: [tool.name === "saveCrmRecord" ? "crm.records.write" : "crm.records.read"] }] }))] } });
+  }] : []), ...TOOL_DEFINITIONS.filter((tool) => hasScope(actor, recordToolScope(tool.name))).map((tool) => ({ ...tool, securitySchemes: [{ type: "oauth2", scopes: [recordToolScope(tool.name)] }] }))] } });
   if (body.method === "tools/call" && body.params && body.params.name === "logCrmTask") {
     if (!hasScope(actor, "crm.tasks.write")) return json(res, 200, { ...base, result: { isError: true, content: [{ type: "text", text: "Missing crm.tasks.write permission. Reconnect with approval." }] } });
     try {
@@ -245,7 +245,7 @@ async function mcp(req, res) {
   }
   if (body.method === "tools/call" && TOOL_DEFINITIONS.some((tool) => tool.name === body.params?.name)) {
     const name = body.params.name;
-    const needed = name === "saveCrmRecord" ? "crm.records.write" : "crm.records.read";
+    const needed = recordToolScope(name);
     if (!hasScope(actor, needed)) return json(res, 200, { ...base, result: { isError: true, content: [{ type: "text", text: "Missing " + needed + " permission. Reconnect with approval." }] } });
     try {
       const result = await callCrmTool(name, body.params.arguments || {}, actor.email);
