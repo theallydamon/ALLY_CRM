@@ -160,3 +160,27 @@ test('transport metadata, origin rejection, missing auth and rate limits',async(
   const store=new Store(h.db);for(let i=0;i<60;i++)assert.equal(await store.limit('fixture'),true);assert.equal(await store.limit('fixture'),false);
   assert.equal((await h.request('/oauth/register',{body:{redirect_uris:['https://evil.test/callback']}})).status,400);
 });
+test('delete scope is separate from write; confirmed versioned deletion is atomic and replayable',async()=>{
+  const h=harness(),writer=await login(h);
+  const saved=(await h.rpc('tools/call',{name:'saveCrmRecord',arguments:saveArgs()},writer.token)).body.result.structuredContent;
+  const args={board:'lifeAdmin',id:saved.record.id,expectedVersion:saved.version,confirm:true,requestId:'delete-one'};
+  const denied=await h.rpc('tools/call',{name:'deleteCrmRecord',arguments:args},writer.token);
+  assert.equal(denied.body.result.isError,true);assert.equal(h.writes,1);
+  const deleter=await login(h,'crm.records.read crm.records.delete');
+  const tools=(await h.rpc('tools/list',{},deleter.token)).body.result.tools;
+  assert.ok(tools.some(t=>t.name==='deleteCrmRecord'&&t.annotations.destructiveHint));
+  assert.ok(!tools.some(t=>t.name==='saveCrmRecord'));
+  for (const patch of [{confirm:false},{expectedVersion:'stale'},{board:'users'}]) {
+    const failed=await h.rpc('tools/call',{name:'deleteCrmRecord',arguments:{...args,...patch}},deleter.token);
+    assert.equal(failed.body.result.isError,true);assert.equal(h.writes,1);
+  }
+  h.conflicts=1;
+  const deleted=(await h.rpc('tools/call',{name:'deleteCrmRecord',arguments:args},deleter.token)).body.result;
+  assert.equal(deleted.isError,undefined,JSON.stringify(deleted));assert.equal(deleted.structuredContent.deleted,true);assert.equal(h.writes,2);
+  const replay=(await h.rpc('tools/call',{name:'deleteCrmRecord',arguments:args},deleter.token)).body.result;
+  assert.equal(replay.structuredContent.replayed,true);assert.equal(h.writes,2);
+  const missing=(await h.rpc('tools/call',{name:'getCrmRecord',arguments:{board:'lifeAdmin',id:args.id}},deleter.token)).body.result;
+  assert.equal(missing.isError,true);
+  const oldCreate=(await h.rpc('tools/call',{name:'saveCrmRecord',arguments:saveArgs()},writer.token)).body.result;
+  assert.equal(oldCreate.isError,true);assert.equal(h.writes,2);
+});

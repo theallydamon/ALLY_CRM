@@ -99,3 +99,31 @@ test("failed transaction writes neither workspace nor replay record", async () =
   assert.equal(fake.data.size, 1);
   assert.equal(fake.data.get("workspace").ally.lifeAdmin.items.length, 0);
 });
+test('deletion requires confirmation and a fresh version, removes only the selected record on every board', () => {
+  const { BOARDS, deleteRecord } = require('./crm-records');
+  for (const board of Object.keys(BOARDS)) {
+    const ws = seed();
+    const first = board === 'songStages' ? { workspace: ws, result: { record: ws.ally.song.stages[0], version: version(ws.ally.song.stages[0]) } } : saveRecord(ws, create(board), 0, 'selected');
+    const args = { board, id: first.result.record.id, expectedVersion: first.result.version, confirm: true };
+    const original = JSON.stringify(first.workspace);
+    assert.throws(() => deleteRecord(first.workspace, { ...args, confirm: false }), /confirmation/);
+    assert.throws(() => deleteRecord(first.workspace, { ...args, expectedVersion: 'stale' }), /Record changed/);
+    assert.throws(() => deleteRecord(first.workspace, { ...args, id: 'missing' }), /no longer exists/);
+    const deleted = deleteRecord(first.workspace, args);
+    assert.equal(deleted.result.deleted, true);
+    assert.equal(records(deleted.workspace, board).some(r => r.id === args.id), false);
+    assert.deepEqual(deleted.workspace.untouched, ws.untouched);
+    assert.equal(JSON.stringify(first.workspace), original);
+    if (board === 'deals') assert.deepEqual(deleted.workspace.ally.deals.clients, ws.ally.deals.clients);
+  }
+});
+test('delete transaction retries return the receipt and cannot recreate a record', async () => {
+  const fake = fakeDb(seed());
+  const first = await fake.call('saveCrmRecord', create('lifeAdmin'), 'owner');
+  const args = { board: 'lifeAdmin', id: first.record.id, expectedVersion: first.version, confirm: true, requestId: 'delete-one' };
+  const deleted = await fake.call('deleteCrmRecord', args, 'owner');
+  assert.equal(deleted.deleted, true);
+  assert.equal((await fake.call('deleteCrmRecord', args, 'owner')).replayed, true);
+  assert.equal(records(fake.data.get('workspace'), 'lifeAdmin').length, 0);
+  await assert.rejects(fake.call('deleteCrmRecord', { ...args, id: 'another' }, 'owner'), /different arguments/);
+});

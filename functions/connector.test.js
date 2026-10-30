@@ -129,3 +129,14 @@ test("metadata, unauthenticated challenges and wrong audiences", async () => {
   const registration = await h.request("/oauth/register", { body: { redirect_uris: ["https://attacker.example/callback"] } });
   assert.equal(registration.statusCode, 400);
 });
+test('delete requires its own OAuth scope and returns a stable receipt', async () => {
+  const h = harness(), writer = await login(h);
+  const saved = (await h.rpc('tools/call', { name: 'saveCrmRecord', arguments: { board: 'lifeAdmin', requestId: 'create-delete-fixture', fields: { title: 'Duplicate fixture', sourceKey: 'fixture:delete' } } }, writer.token)).body.result.structuredContent;
+  const args = { board: 'lifeAdmin', id: saved.record.id, expectedVersion: saved.version, confirm: true, requestId: 'delete-fixture' };
+  assert.equal((await h.rpc('tools/call', { name: 'deleteCrmRecord', arguments: args }, writer.token)).body.result.isError, true);
+  const deleter = await login(h, 'crm.records.read crm.records.delete');
+  const result = (await h.rpc('tools/call', { name: 'deleteCrmRecord', arguments: args }, deleter.token)).body.result;
+  assert.equal(result.structuredContent.deleted, true);
+  assert.equal((await h.rpc('tools/call', { name: 'deleteCrmRecord', arguments: args }, deleter.token)).body.result.structuredContent.replayed, true);
+  assert.equal(h.data.get('workspaces/ally-crm').ally.lifeAdmin.items.length, 0);
+});
