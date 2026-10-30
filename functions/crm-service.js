@@ -1,6 +1,6 @@
 "use strict";
 const { sha256 } = require("./lib");
-const { records, saveRecord, searchRecords, snapshot, text } = require("./crm-records");
+const { records, saveRecord, deleteRecord, searchRecords, snapshot, text } = require("./crm-records");
 function makeService(db, workspaceRef, integrationRef, serverTimestamp) {
   async function readWorkspace() {
     const snap = await workspaceRef.get();
@@ -14,11 +14,11 @@ function makeService(db, workspaceRef, integrationRef, serverTimestamp) {
       if (!item) throw new Error("CRM record not found.");
       return snapshot(args.board, item);
     }
-    if (name !== "saveCrmRecord") throw new Error("Unknown CRM tool.");
+    if (!["saveCrmRecord", "deleteCrmRecord"].includes(name)) throw new Error("Unknown CRM tool.");
     const requestId = text(args.requestId, "requestId");
     if (!requestId) throw new Error("requestId is required.");
     const operation = integrationRef.collection("operations").doc(sha256(actorEmail + ":" + requestId));
-    const inputHash = sha256(JSON.stringify(args));
+    const inputHash = sha256(JSON.stringify(name === "deleteCrmRecord" ? { name, args } : args));
     return db.runTransaction(async (tx) => {
       const [workspace, prior] = await Promise.all([tx.get(workspaceRef), tx.get(operation)]);
       if (prior.exists) {
@@ -28,7 +28,7 @@ function makeService(db, workspaceRef, integrationRef, serverTimestamp) {
       if (!workspace.exists) throw new Error("ALLY CRM workspace does not exist.");
       const current = workspace.data();
       if (!current.ally || !current.mama) throw new Error("ALLY CRM workspace has an unexpected shape.");
-      const saved = saveRecord(current, args);
+      const saved = name === "deleteCrmRecord" ? deleteRecord(current, args) : saveRecord(current, args);
       if (!saved.result.duplicate) tx.set(workspaceRef, { ...saved.workspace, workspaceId: "ally-crm", updatedAt: serverTimestamp(), updatedBy: "ally-assistant:" + actorEmail });
       tx.set(operation, { inputHash, result: saved.result, createdAt: serverTimestamp() });
       return saved.result;
