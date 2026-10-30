@@ -4,8 +4,10 @@ import { handleDrive } from './drive.mjs';
 import { Store, ALLOWED_EMAILS, sha256, randomToken, secretEqual, seal } from './store.mjs';
 import { verifyIdentity, exchangeFirebase, sessionToken, Workspace, boundedJson } from './firebase.mjs';
 import { TOOL_DEFINITIONS, callRecord } from './records.mjs';
+import core from '../functions/crm-records.js';
+const { recordToolScope } = core;
 const { requestedScopes, hasScope, redirectUriAllowed } = auth;
-const SCOPES = ['crm.records.read', 'crm.records.write', 'offline_access'];
+const SCOPES = ['crm.records.read', 'crm.records.write', 'crm.records.delete', 'offline_access'];
 const CODE_TTL = 300000, SESSION_TTL = 90 * 86400000;
 const json = (body, status = 200, headers = {}) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer', ...headers } });
 const failure = (error, status = 400) => json({ error }, status);
@@ -33,7 +35,7 @@ async function issue(store, actor) {
 }
 function loginHtml(base, pendingId, scope, env, nonce) {
   const config = JSON.stringify({ apiKey: env.FIREBASE_API_KEY, authDomain: 'ally-crm-cbdd1.firebaseapp.com', projectId: env.FIREBASE_PROJECT, appId: '1:139362174943:web:ea4df75838f6dfcf80a66a' }).replaceAll('<', '\\u003c');
-  const permissions = [hasScope({scope},'crm.records.read') && 'read CRM records',hasScope({scope},'crm.records.write') && 'create and update CRM records'].filter(Boolean).join('; ');
+  const permissions = [hasScope({scope},'crm.records.read') && 'read CRM records',hasScope({scope},'crm.records.write') && 'create and update CRM records',hasScope({scope},'crm.records.delete') && 'permanently delete selected CRM records'].filter(Boolean).join('; ');
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Connect ALLY CRM</title><style nonce="${nonce}">body{font:16px system-ui;max-width:520px;margin:12vh auto;padding:24px}button{padding:14px;border:0;border-radius:12px;background:#202124;color:white}#error{color:#b42318}</style></head><body><h1>Connect ALLY CRM</h1><p>Your assistant may ${permissions || 'connect to the CRM'}. No deletion is available.</p><p>This stores an encrypted Firebase sign-in credential in your Cloudflare account to access your CRM using your existing account permissions. This connection expires after 90 days. You can revoke it using the disconnect instructions.</p><button id="connect">Connect with Google</button><p id="error"></p><script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-app-compat.js"></script><script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-auth-compat.js"></script><script nonce="${nonce}">firebase.initializeApp(${config});document.getElementById('connect').onclick=async()=>{const el=document.getElementById('error');el.textContent='';try{await firebase.auth().setPersistence(firebase.auth.Auth.Persistence.NONE);const result=await firebase.auth().signInWithPopup(new firebase.auth.GoogleAuthProvider());const response=await fetch(${JSON.stringify(base+'/oauth/approve')},{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({pendingId:${JSON.stringify(pendingId)},idToken:await result.user.getIdToken(),refreshToken:result.user.refreshToken})});const data=await response.json();if(!response.ok)throw new Error(data.error||'Connection failed');location.href=data.redirect;}catch(e){el.textContent=e.message||'Connection failed';}};</script></body></html>`;
 }
 export function createHandler(fetcher = (input, init) => fetch(input, init)) {
@@ -72,7 +74,7 @@ export function createHandler(fetcher = (input, init) => fetch(input, init)) {
         if (q.resource && q.resource !== resource) return redirectError('invalid_target');
         let scope; try { scope = requestedScopes(q.scope || SCOPES.join(' '),q.redirect_uri); if (scope.split(' ').some(s=>!SCOPES.includes(s))) throw new Error('Unsupported scope'); } catch { return redirectError('invalid_scope'); }
         // This new connection exposes record tools. Existing task-only Firebase/Claude setup remains separate.
-        if (!scope.split(' ').some(s=>s==='crm.records.read'||s==='crm.records.write')) return redirectError('invalid_scope');
+        if (!scope.split(' ').some(s=>s==='crm.records.read'||s==='crm.records.write'||s==='crm.records.delete')) return redirectError('invalid_scope');
         const pendingId = randomToken(24), nonce = randomToken(16);
         await store.put('pending:'+pendingId,{clientId:q.client_id,redirectUri:q.redirect_uri,state:q.state||'',challenge:q.code_challenge,scope,resource},Date.now()+CODE_TTL);
         return new Response(loginHtml(base,pendingId,scope,env,nonce),{headers:{'content-type':'text/html;charset=utf-8','cache-control':'no-store','referrer-policy':'no-referrer','x-content-type-options':'nosniff','content-security-policy':`default-src 'none'; script-src 'nonce-${nonce}' https://www.gstatic.com https://apis.google.com; style-src 'nonce-${nonce}'; frame-src https://ally-crm-cbdd1.firebaseapp.com https://accounts.google.com; connect-src 'self' https://*.googleapis.com https://ally-crm-cbdd1.firebaseapp.com; img-src 'self' https://*.googleusercontent.com; base-uri 'none'; frame-ancestors 'none'; form-action 'none'`}});
@@ -127,9 +129,9 @@ export function createHandler(fetcher = (input, init) => fetch(input, init)) {
         const envelope={jsonrpc:'2.0',id:input.id ?? null};
         if(input.method==='initialize') return json({...envelope,result:{protocolVersion:'2025-06-18',capabilities:{tools:{}},serverInfo:{name:'ALLY CRM',version:'3.0.0'}}});
         if(input.method==='ping') return json({...envelope,result:{}});
-        if(input.method==='tools/list') return json({...envelope,result:{tools:TOOL_DEFINITIONS.filter(tool=>hasScope(actor,tool.name==='saveCrmRecord'?'crm.records.write':'crm.records.read')).map(tool=>({...tool,securitySchemes:[{type:'oauth2',scopes:[tool.name==='saveCrmRecord'?'crm.records.write':'crm.records.read']}]}))}});
+        if(input.method==='tools/list') return json({...envelope,result:{tools:TOOL_DEFINITIONS.filter(tool=>hasScope(actor,recordToolScope(tool.name))).map(tool=>({...tool,securitySchemes:[{type:'oauth2',scopes:[recordToolScope(tool.name)]}]}))}});
         if(input.method==='tools/call' && TOOL_DEFINITIONS.some(tool=>tool.name===input.params?.name)) {
-          const name=input.params.name,needed=name==='saveCrmRecord'?'crm.records.write':'crm.records.read';
+          const name=input.params.name,needed=recordToolScope(name);
           const toolError=message=>json({...envelope,result:{isError:true,content:[{type:'text',text:message}]}});
           if(!hasScope(actor,needed)) return toolError('Missing '+needed+' permission. Reconnect with approval.');
           try {
