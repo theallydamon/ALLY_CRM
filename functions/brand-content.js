@@ -1,9 +1,9 @@
 /* Shared brand content migration. Only exact identities link records; titles never merge campaigns. */
 (function(root, factory) {
-  const api = factory();
+  const api = factory(typeof module === 'object' && module.exports ? require('./brand-identity') : root.BrandIdentity);
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.BrandContent = api;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function() {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function(identity) {
   'use strict';
   // Fingerprints of the three reviewed enquiry-note descriptions, never their private text.
   const adminDescriptions = {
@@ -17,11 +17,12 @@
   const plain = value => String(value || '').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
   function migrate(ally) {
     if (!ally?.deals?.deals) return ally;
+    ally=identity.migrate(ally);
     let items = (ally.brandContent?.items || []).map(i => ({...i}));
     const deals = ally.deals.deals.map(original => {
       const d = {...original, tasks: (original.tasks || []).map(t => ({...t}))};
       const matched = items.filter(i => i.dealId === d.id || (!i.dealId && (
-        d.sourceKey && i.sourceKey && prefix(d.sourceKey) === prefix(i.sourceKey) ||
+        d.sourceKey && i.sourceKey && [d.sourceKey,...(d.sourceKeys||[])].some(source=>prefix(source) === prefix(i.sourceKey)) ||
         d.hubspotDealId && i.hubspotDealId === d.hubspotDealId && ally.deals.deals.filter(other=>other.hubspotDealId===d.hubspotDealId).length===1
       )));
       for (const i of matched) {
@@ -77,10 +78,11 @@
       return d;
     });
     items=items.map(i=>({...i,desc:hasText(i.desc)?i.desc:'TBD',caption:i.caption || ''}));
-    const next={...ally,brandContent:{...ally.brandContent,items},deals:{...ally.deals,deals}};
+    const next=identity.migrate({...ally,brandContent:{...ally.brandContent,items},deals:{...ally.deals,deals}});
     return JSON.stringify(next)===JSON.stringify(ally)?ally:next;
   }
   function update(ally, id, patch) {
+    id=identity.resolve(ally.brandContent?.aliases,id);
     if (!(ally.brandContent?.items || []).some(i=>i.id===id)) throw Error('Content no longer exists. Reopen the deal.');
     return {...ally,brandContent:{...ally.brandContent,items:ally.brandContent.items.map(i=>i.id===id?{...i,...patch}:i)}};
   }

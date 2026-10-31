@@ -2,14 +2,14 @@ import core from '../functions/crm-records.js';
 import lib from '../functions/lib.js';
 import { timestamp } from './firebase.mjs';
 export const { TOOL_DEFINITIONS } = core;
-const { records, searchRecords, snapshot, saveRecord, text } = core;
+const { records, resolveRecord, searchRecords, snapshot, saveRecord, text } = core;
 const { sha256 } = lib;
 export async function callRecord(workspace, name, args, actor) {
   if (name !== 'saveCrmRecord') {
     const { data } = await workspace.read();
     if (name === 'searchCrmRecords') return searchRecords(data, args);
     if (name !== 'getCrmRecord') throw new Error('Unknown CRM tool.');
-    const record = records(data, args.board).find(item => item.id === text(args.id, 'id'));
+    const record = resolveRecord(data,args.board,text(args.id,'id'));
     if (!record) throw new Error('CRM record not found.');
     return snapshot(args.board, record);
   }
@@ -21,7 +21,7 @@ export async function callRecord(workspace, name, args, actor) {
     const ledger = history.operations, prior = ledger[key];
     if (prior) {
       if (prior.inputHash !== inputHash) throw new Error('requestId was already used for different arguments.');
-      const record = records(data, prior.board).find(item => item.id === prior.recordId);
+      const record = resolveRecord(data,prior.board,prior.recordId);
       if (!record) throw new Error('This operation already succeeded, but its record has since been removed.');
       return { created: prior.created, duplicate: prior.duplicate, replayed: true, ...snapshot(prior.board, record) };
     }

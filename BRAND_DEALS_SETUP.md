@@ -93,3 +93,11 @@ One shared `BrandFinance.LANES` taxonomy supplies the database filter, pipeline 
 | Missing or unrecognized commercial terms | Needs review |
 
 All columns remain visible, including empty Contracted and Declined columns. No migration guesses receipt dates, marks production-complete deals paid, or overwrites agreement/payment evidence to force a lane. Legacy connector script/caption writes route to a unique canonical piece, create a first piece if none exists, and reject ambiguous multi-piece edits.
+
+### One profile per brand
+
+`BrandIdentity` supplies a normalized brand key and retained brand-name aliases. The UI and connector check it across active and archived profiles before creating or renaming a brand. A connector duplicate create returns the existing record without replacing its details; the UI offers to open it. New profiles use `brand:<normalized-name>` conceptually, stored as `brand-<normalized-name>` IDs, so concurrent creates from separate sessions also share one ID. Content remains many pieces per brand, referenced by `dealId`.
+
+The owner-confirmed duplicate GoMove enquiry is consolidated only while its financial states agree. The two original deal records and content records are preserved in private workspace merge history. Their source keys, URLs, notes and evidence are retained, the old IDs redirect to the canonical IDs, and only equivalent/placeholder content is consolidated. Distinct authored scripts remain separate pieces. Old-tab resurrection is removed again with any changed values retained in recovery history. An independent backup was taken before applying the migration.
+
+Production displays the shared brand name instead of maintaining another name input. The brand editor rebases untouched fields from the live record and preserves local edits when opening shared content. Saving commercial terms retains the existing concurrency check. Get/update/replay of old IDs resolve to the canonical record; stale versions must be reread.
