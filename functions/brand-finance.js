@@ -5,6 +5,7 @@
   else root.BrandFinance = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function() {
   'use strict';
+  const LANES = [ ['proposed','Proposed','#98a8d9'], ['negotiating','Negotiating','#d3b37c'], ['contracted','Contracted','#ac9be9'], ['awaiting_invoice','Invoice to confirm','#d3b37c'], ['invoiced','Invoiced','#7dbbd1'], ['paid','Paid','#86c7a8'], ['barter','Product exchange','#86c7a8'], ['declined','Declined','#a1a1aa'], ['needs_review','Needs review','#a1a1aa'] ];
   const STAGES = ['proposed', 'negotiating', 'contracted', 'declined'];
   function date(value) {
     if (value === '' || value == null) return null;
@@ -78,8 +79,9 @@
     return Math.max(0,remaining,expected)/100;
   }
   function lane(d) {
+    if (!d.commercial) return 'needs_review';
     const c = terms(d), invoices = (c.invoices || []).filter(issued);
-    if (c.stage !== 'contracted') return c.stage;
+    if (c.stage !== 'contracted') return STAGES.includes(c.stage) ? c.stage : 'needs_review';
     if (confirmedPayment(d)==='barter') return 'barter';
     if (confirmedPayment(d)==='paid' || invoices.length && c.fee != null && invoices.reduce((n,i)=>n+cents(i.paidAmount),0) >= cents(receivableFee(d)) && invoices.every(i=>balance(i)===0)) return 'paid';
     return billingConfirmed(d) || invoices.length ? 'invoiced' : confirmedPayment(d)==='outstanding' ? 'awaiting_invoice' : 'contracted';
@@ -122,5 +124,5 @@
   }
   function money(n,currency='ZAR') { return n == null ? 'Not set' : new Intl.NumberFormat('en-ZA',{style:'currency',currency}).format(n); }
   function nextDay(day) { const d = new Date(day+'T00:00:00Z'); d.setUTCDate(d.getUTCDate()+1); return d.toISOString().slice(0,10); }
-  return { STAGES, date, validate, terms, balance, issued, lane, dashboard, payable, reminder, money, nextDay, confirmedPayment, settled, billingConfirmed, outstanding, invoicedFees };
+  return { LANES, STAGES, date, validate, terms, balance, issued, lane, dashboard, payable, reminder, money, nextDay, confirmedPayment, settled, billingConfirmed, outstanding, invoicedFees };
 });
