@@ -1,6 +1,6 @@
 "use strict";
 const { sha256 } = require("./lib");
-const { records, saveRecord, searchRecords, snapshot, text } = require("./crm-records");
+const { records, resolveRecord, saveRecord, searchRecords, snapshot, text } = require("./crm-records");
 function makeService(db, workspaceRef, integrationRef, serverTimestamp) {
   async function readWorkspace() {
     const snap = await workspaceRef.get();
@@ -10,7 +10,7 @@ function makeService(db, workspaceRef, integrationRef, serverTimestamp) {
   return async function call(name, args, actorEmail) {
     if (name === "searchCrmRecords") return searchRecords(await readWorkspace(), args);
     if (name === "getCrmRecord") {
-      const item = records(await readWorkspace(), args.board).find((record) => record.id === text(args.id, "id"));
+      const item = resolveRecord(await readWorkspace(),args.board,text(args.id, "id"));
       if (!item) throw new Error("CRM record not found.");
       return snapshot(args.board, item);
     }
@@ -23,7 +23,10 @@ function makeService(db, workspaceRef, integrationRef, serverTimestamp) {
       const [workspace, prior] = await Promise.all([tx.get(workspaceRef), tx.get(operation)]);
       if (prior.exists) {
         if (prior.data().inputHash !== inputHash) throw new Error("requestId was already used for different arguments.");
-        return { ...prior.data().result, replayed: true };
+        const saved=prior.data().result;
+        const record=resolveRecord(workspace.data(),saved.board,saved.record.id);
+        if(!record) throw new Error('This operation succeeded, but its record has since been removed.');
+        return { ...saved, ...snapshot(saved.board,record), replayed: true };
       }
       if (!workspace.exists) throw new Error("ALLY CRM workspace does not exist.");
       const current = workspace.data();

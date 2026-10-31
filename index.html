@@ -27,6 +27,7 @@
 <script src="task-text.js"></script>
 <script src="task-files.js"></script>
 <script src="functions/brand-finance.js"></script>
+<script src="functions/brand-identity.js"></script>
 <script src="functions/brand-content.js"></script>
 <link rel="stylesheet" href="brand-deals.css" />
 <!-- Google Identity Services. Provides google.accounts.oauth2 for the Calendar access token.
@@ -4045,10 +4046,11 @@ function PersonalModule({ ally, mama, setAlly, setMama, go, q, navRequest, navig
   const openCalendarTask = (id) => {
     const parts = String(id || "").split(":");
     if (parts.length === 2 && ["content", "brandContent", "musicContent"].includes(parts[0])) {
-      const item = ((ally[parts[0]] || {}).items || []).find((i) => i.id === parts[1]);
+      const targetId=parts[0]==='brandContent'?window.BrandIdentity.resolve(ally.brandContent?.aliases,parts[1]):parts[1];
+      const item = ((ally[parts[0]] || {}).items || []).find((i) => i.id === targetId);
       if (item) { navigateToTask({ id: item.id, navTab: "content", navSub: parts[0] === "brandContent" ? "brandDeals" : parts[0], navOpenId: item.id }); return; }
     }
-    navigateToTask(collectPriorityTasks(ally, mama).find((task) => task.id === id));
+    navigateToTask(collectPriorityTasks(ally, mama).find((task) => task.id === window.BrandIdentity.resolve(ally.deals?.aliases,id)));
   };
   return (
     <section style={{ width: "100%", margin: 0, textAlign: "left" }}>
@@ -6143,7 +6145,7 @@ function DealCard({ x, open, onToggleOpen, update, remove, isProspect, contentIt
     <div data-nav-id={x.id} onClick={() => { if (hasTextSelection()) return; onToggleOpen(); }} className="rounded-2xl p-4" style={{ cursor: "pointer", ...card, borderRadius: 16, borderLeft: `3px solid ${tint}`, opacity: done ? 0.65 : 1 }}>
       {/* header: brand name (card title) + active/prospect + expand */}
       <div className="flex items-center gap-3 flex-wrap">
-        <div className="flex-1" style={{ minWidth: 150 }}><InlineEdit value={x.brand} onChange={(v) => update(x.id, { brand: v })} strong bubbleClicks /></div>
+        <div className="flex-1" style={{ minWidth: 150 }}><strong>{x.brand}</strong></div>
         <button onClick={(e) => { e.stopPropagation(); update(x.id, { type: isProspect ? "Active" : "Prospect" }); }} className="rounded-full px-2.5 py-1" style={{ fontSize: 10.5, cursor: "pointer", fontFamily: "inherit", background: `${typeTint}1a`, border: `1px solid ${typeTint}55`, color: typeTint, whiteSpace: "nowrap" }}>{isProspect ? "→ mark active" : "→ mark prospect"}</button>
         <button onClick={(e) => { e.stopPropagation(); onToggleOpen(); }} style={iconBtn} aria-label="Expand">{open ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</button>
       </div>
@@ -6217,6 +6219,7 @@ function ClientCard({ c, updateClient, removeClient }) {
 }
 
 const BF = window.BrandFinance;
+const BI = window.BrandIdentity;
 const BRAND_LANES = BF.LANES;
 function BrandLaneTotal({deals,lane}) {
   if(!deals.length) return null;
@@ -6251,19 +6254,25 @@ function BrandContentDialog({item,onChange,onClose}) {
   useEffect(()=>{const previous=document.activeElement,overflow=document.body.style.overflow;document.body.style.overflow='hidden';ref.current?.focus();const key=e=>{if(e.key==='Escape'){e.preventDefault();onClose();}if(e.key==='Tab'){const fields=Array.from(ref.current.querySelectorAll('button,input,textarea,[contenteditable=true]'));const first=fields[0],last=fields.at(-1);if(e.shiftKey&&(document.activeElement===first||document.activeElement===ref.current)){e.preventDefault();last?.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first?.focus();}}};document.addEventListener('keydown',key);return()=>{document.removeEventListener('keydown',key);document.body.style.overflow=overflow;previous?.focus();};},[]);
   return <div className="brand-overlay"><section ref={ref} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Edit content piece" className="brand-editor"><div className="brand-editor-head"><h2>{item?.title || 'Content piece'}</h2><button aria-label="Close content" className="brand-quiet" onClick={onClose}>✕</button></div>{item?<BrandContentFields item={item} onChange={onChange}/>:<p role="alert">This content piece is no longer available. Close and reopen the deal.</p>}</section></div>;
 }
-function BrandEditor({deal,onSave,onClose,onArchive,update,remove,contentItems,onOpenContent,onAddContent}) {
+function BrandEditor({deal,onSave,onClose,onArchive,update,remove,contentItems,onOpenContent,onAddContent,allDeals,onOpenExisting}) {
   const [draft,setDraft]=useState(()=>({...deal,commercial:JSON.parse(JSON.stringify(BF.terms(deal)))}));
   const [error,setError]=useState('');
+  const draftBase=useRef(deal),draftRef=useRef(draft);
+  const [conflicts,setConflicts]=useState([]);
+  draftRef.current=draft;
+  useEffect(()=>{const result=BI.rebase(draftBase.current,draftRef.current,deal);if(result.conflicts.length)setConflicts(result.conflicts);setDraft(current=>jsonEqual(result.draft,current)?current:result.draft);draftBase.current=deal;},[deal]);
+  const identityField=(key,value)=>{try{if(!deal._new)update(deal.id,{[key]:value});setDraft(d=>({...d,[key]:value}));setError('');}catch(e){setError(e.message);}};
+  const existingBrand=BI.find(allDeals||[],draft.brand,deal.id);
   const c=draft.commercial;
   const term=(key,value)=>setDraft(d=>({...d,commercial:{...d.commercial,[key]:value}}));
   const invoice=(id,patch)=>term('invoices',(c.invoices||[]).map(i=>i.id===id?{...i,...patch}:i));
-  const save=()=>{try { const commercial=BF.validate(c); if(!draft.brand?.trim()) throw Error('Add the brand name.'); if(draft.sourceUrl && !/^https:\/\//.test(draft.sourceUrl)) throw Error('Source links must use HTTPS.'); onSave({...draft,brand:draft.brand.trim(),commercial}); } catch(e){setError(e.message);} };
+  const save=()=>{try { if(conflicts.length)throw Error('These details also changed in another session. Close and reopen the profile before saving.'); const commercial=BF.validate(c); if(!draft.brand?.trim()) throw Error('Add the brand name.'); if(draft.sourceUrl && !/^https:\/\//.test(draft.sourceUrl)) throw Error('Source links must use HTTPS.'); onSave({...draft,_baseCommercial:Object.prototype.hasOwnProperty.call(deal,'_baseCommercial')?deal._baseCommercial:draftBase.current.commercial,brand:draft.brand.trim(),commercial}); } catch(e){setError(e.message);} };
   const dialog=useRef(null);
   useEffect(()=>{ const previous=document.activeElement; const overflow=document.body.style.overflow; document.body.style.overflow='hidden'; const el=dialog.current; el?.focus(); const key=e=>{if(el?.offsetParent===null)return;if(e.key==='Escape'){e.preventDefault();onClose();} if(e.key==='Tab' && el){const all=Array.from(el.querySelectorAll('button,input,select,textarea,a[href]')).filter(x=>!x.disabled); const first=all[0],last=all.at(-1);if(e.shiftKey && (document.activeElement===first || document.activeElement===el)){e.preventDefault();last?.focus();}else if(!e.shiftKey && document.activeElement===last){e.preventDefault();first?.focus();}}};document.addEventListener('keydown',key);return()=>{document.removeEventListener('keydown',key);document.body.style.overflow=overflow;previous?.focus();};},[]);
   return <div className="brand-overlay"><section ref={dialog} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Edit brand deal" className="brand-editor">
-    <div className="brand-editor-head"><div><div className="brand-eyebrow">DEAL DETAILS</div><h2>{deal.brand || 'New brand deal'}</h2><div aria-label="Deal stage"><BrandPill stage={BF.lane(draft)}/></div></div><button onClick={onClose} className="brand-quiet" aria-label="Close deal">✕</button></div>
+    <div className="brand-editor-head"><div><div className="brand-eyebrow">DEAL DETAILS</div><h2>{draft.brand || 'New brand deal'}</h2><div aria-label="Deal stage"><BrandPill stage={BF.lane(draft)}/></div></div><button onClick={onClose} className="brand-quiet" aria-label="Close deal">✕</button></div>
     <div className="brand-form-grid">
-      <BrandField label="Brand" value={draft.brand} onChange={v=>setDraft(d=>({...d,brand:v}))}/>
+      <BrandField label="Brand" value={draft.brand} onChange={v=>identityField('brand',v)}/>
       <BrandField label="Campaign" value={c.campaign} onChange={v=>term('campaign',v)}/>
       <label className="brand-field"><span>Agreement stage</span><select aria-label="Agreement stage" value={c.stage} onChange={e=>term('stage',e.target.value)}>{BF.STAGES.map(s=><option key={s} value={s}>{s[0].toUpperCase()+s.slice(1)}</option>)}</select></label>
       <label className="brand-field"><span>Currency</span><select aria-label="Currency" value={c.currency} onChange={e=>term('currency',e.target.value)}>{[...new Set(['ZAR','USD','GBP','EUR',c.currency||'ZAR'])].map(s=><option key={s}>{s}</option>)}</select></label>
@@ -6276,7 +6285,7 @@ function BrandEditor({deal,onSave,onClose,onArchive,update,remove,contentItems,o
       <BrandField label="Usage rights & exclusivity" type="textarea" value={c.rights} onChange={v=>term('rights',v)} wide/>
       <BrandField label="Payment terms & trigger" type="textarea" value={c.paymentTerms} onChange={v=>term('paymentTerms',v)} wide/>
       <BrandField label="Agreed terms source / contract reference" type="textarea" value={c.evidence} onChange={v=>term('evidence',v)} wide/>
-      <BrandField label="Source link" value={draft.sourceUrl} onChange={v=>setDraft(d=>({...d,sourceUrl:v}))} wide/>
+      <BrandField label="Source link" value={draft.sourceUrl} onChange={v=>identityField('sourceUrl',v)} wide/>
       <label className="brand-check brand-wide"><input type="checkbox" checked={!!c.reviewed} onChange={e=>term('reviewed',e.target.checked)}/>I have reviewed and confirmed the agreed commercial terms</label>
       <label className="brand-field"><span>Payment status</span><select aria-label="Payment status" value={c.paymentStatus||'unknown'} onChange={e=>{const value=e.target.value;setDraft(d=>({...d,commercial:{...d.commercial,paymentStatus:value,paymentEvidence:value==='unknown'?'':(d.commercial.paymentEvidence?d.commercial.paymentEvidence+'\n':'')+'Owner marked '+value+' in ALLY CRM on '+todayISO()+'. Exact receipt date and amount are separate.'}}));}}><option value="unknown">Not confirmed</option><option value="outstanding">Outstanding</option><option value="paid">Paid</option><option value="barter">Product exchange, no cash</option></select></label>
       <label className="brand-field"><span>Invoice status</span><select aria-label="Invoice status" value={c.billingStatus||'unknown'} onChange={e=>{const value=e.target.value;setDraft(d=>({...d,commercial:{...d.commercial,billingStatus:value,billingEvidence:value==='unknown'?'':(d.commercial.billingEvidence?d.commercial.billingEvidence+'\n':'')+'Owner confirmed '+value+' in ALLY CRM on '+todayISO()+'. Invoice dates are not assumed.'}}));}}><option value="unknown">Not confirmed</option><option value="not_invoiced">Not sent</option><option value="invoiced">Invoice sent</option></select></label>
@@ -6298,6 +6307,7 @@ function BrandEditor({deal,onSave,onClose,onArchive,update,remove,contentItems,o
       </div></div>)}
     </div>
     {error && <p role="alert" className="brand-error">{error}</p>}
+    {existingBrand&&<p className="brand-hint">This brand already has a profile. <button className="brand-quiet" onClick={()=>onOpenExisting(existingBrand)}>Open {existingBrand.brand}</button></p>}
     <div className="brand-editor-actions"><button className="brand-quiet" onClick={()=>onArchive(deal.id)}>{deal.archived?'Restore deal':'Archive deal'}</button><button className="brand-button" onClick={save}>Save deal</button></div>
     {deal.id && !deal._new && <details className="brand-editor-section"><summary>Production, tasks & notes</summary><div style={{marginTop:16}}><DealCard x={deal} open={true} onToggleOpen={()=>{}} update={update} remove={remove} contentItems={contentItems} onOpenContent={onOpenContent} onAddContent={onAddContent} isProspect={(deal.type||'Active')==='Prospect'}/></div></details>}
   </section></div>;
@@ -6352,18 +6362,19 @@ function DealsModule({ data, setData, q, navRequest, onContentSchedule, registry
   const day=todayISO();
   const totals=BF.dashboard(alive,day),currencies=[...new Set(['ZAR',...Object.keys(totals)])], t=totals[currency]||{};
   const patchDeals=fn=>setData(d=>({...d,deals:{...d.deals,deals:fn(d.deals.deals||[])}}));
-  const update=(id,p)=>patchDeals(rows=>rows.map(d=>d.id===id?{...d,...p}:d));
+  const update=(id,p)=>{const canonical=BI.resolve(data.deals.aliases,id);if(p.brand&&BI.find(deals,p.brand,canonical))throw Error('This brand already has a profile. Open the existing brand.');patchDeals(rows=>rows.map(d=>d.id===canonical?{...d,...p}:d));};
   const archive=id=>{update(id,{archived:!deals.find(d=>d.id===id)?.archived});setEditor(null);};
   const add=()=>setEditor({id:uid(),brand:'',piece:'Reel',type:'Prospect',stage:'script',tasks:[],notes:'',script:'',caption:'',stageDue:{},created:day,_new:true,commercial:{stage:'proposed',currency,reviewed:false,invoices:[]}});
-  useEffect(()=>{if(navRequest?.navTab==='deals' && navRequest.navOpenId){const d=deals.find(x=>x.id===navRequest.navOpenId);if(d){setEditor(d);setSub('database');}}else if(navRequest?.navTab==='content' && navRequest.navSub==='brandDeals'){setSub('creative');if(navRequest.navOpenId)setContentFocus(navRequest.navOpenId);}},[navRequest]);
+  useEffect(()=>{if(navRequest?.navTab==='deals' && navRequest.navOpenId){const d=deals.find(x=>x.id===BI.resolve(data.deals.aliases,navRequest.navOpenId));if(d){setEditor(d);setSub('database');}}else if(navRequest?.navTab==='content' && navRequest.navSub==='brandDeals'){setSub('creative');if(navRequest.navOpenId)setContentFocus(BI.resolve(data.brandContent?.aliases,navRequest.navOpenId));}},[navRequest]);
   const save=draft=>{
     const existing=deals.find(d=>d.id===draft.id);
-    if(existing && JSON.stringify(existing.commercial)!==JSON.stringify(Object.prototype.hasOwnProperty.call(editor,'_baseCommercial')?editor._baseCommercial:editor.commercial)) throw Error('Terms changed in another session. Close and reopen the deal.');
+    if(existing && JSON.stringify(existing.commercial)!==JSON.stringify(draft._baseCommercial)) throw Error('Terms changed in another session. Close and reopen the deal.');
     const {_new,_baseCommercial,...saved}=draft;
-    if (!existing && deals.some(d=>!d.archived && d.brand?.trim().toLowerCase()===saved.brand.toLowerCase() && (BF.terms(d).campaign||'').toLowerCase()===(saved.commercial.campaign||'').toLowerCase())) throw Error('A deal with this brand and campaign already exists. Open it or give this campaign a distinct name.');
+    if (!existing) saved.id='brand-'+BI.key(saved.brand);
+    if (BI.find(deals,saved.brand,existing?.id)) throw Error('This brand already has a profile. Open the existing brand to keep its details connected.');
     const sourceKey=saved.sourceKey||'chat:campaign:'+saved.brand.toLowerCase().replace(/[^a-z0-9]+/g,'-')+':'+saved.id+':deal';
-    if(deals.some(d=>d.id!==saved.id && d.sourceKey===sourceKey)) throw Error('This source already belongs to a deal. Open that deal instead.');
-    patchDeals(rows=>existing?rows.map(d=>d.id===saved.id?{...d,brand:saved.brand,sourceUrl:saved.sourceUrl||'',sourceKey,commercial:saved.commercial,...(saved.commercial.stage==='contracted'?{type:'Active'}:{})}:d):[{...saved,sourceUrl:saved.sourceUrl||'',sourceKey,...(saved.commercial.stage==='contracted'?{type:'Active'}:{})},...rows]);
+    if(deals.some(d=>d.id!==saved.id && BI.sourceMatches(d,sourceKey))) throw Error('This source already belongs to a deal. Open that deal instead.');
+    patchDeals(rows=>existing?rows.map(d=>d.id===saved.id?{...d,brand:saved.brand,sourceUrl:saved.sourceUrl||'',sourceKey,commercial:saved.commercial,...(saved.commercial.stage==='contracted'?{type:'Active'}:{})}:d):[{...saved,sourceUrl:saved.sourceUrl||'',sourceKey,...(saved.commercial.stage==='contracted'?{type:'Active'}:{})},...rows.filter(d=>d.id!==saved.id)]);
     setEditor(null);
   };
   const rows=deals.filter(d=>(filter==='archived'?d.archived:!d.archived) && (!q || [d.brand,BF.terms(d).campaign,BF.terms(d).contact].join(' ').toLowerCase().includes(q.toLowerCase())) && (['all','archived'].includes(filter)||BF.lane(d)===filter));
@@ -6386,7 +6397,7 @@ function DealsModule({ data, setData, q, navRequest, onContentSchedule, registry
     {sub==='workflows' && <BrandOpportunityReview onReview={reviewOpen}/>}
     {sub==='clients' && <><div style={{margin:'20px 0'}}><AddBtn label="Add client" onClick={()=>setData(d=>({...d,deals:{...d.deals,clients:[{id:uid(),name:'New client',notes:'',tasks:[]},...(d.deals.clients||[])]}}))}/></div><div className="grid gap-3" style={{gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))'}}>{clients.filter(c=>!q||c.name.toLowerCase().includes(q.toLowerCase())).map(c=><ClientCard key={c.id} c={c} updateClient={(id,p)=>setData(d=>({...d,deals:{...d.deals,clients:d.deals.clients.map(x=>x.id===id?{...x,...p}:x)}}))} removeClient={id=>setData(d=>({...d,deals:{...d.deals,clients:d.deals.clients.filter(x=>x.id!==id)}}))}/>)}</div></>}
     {review && <div className="brand-overlay"><div role="dialog" aria-modal="true" aria-label="Review opportunity" className="brand-review-dialog"><h2>Record this opportunity</h2><p>{review.subject}</p><label className="brand-field"><span>Choose the campaign to avoid duplicates</span><select value={reviewTarget} onChange={e=>setReviewTarget(e.target.value)}><option value="new">New campaign</option>{deals.map(d=><option key={d.id} value={d.id}>{d.brand} · {BF.terms(d).campaign||d.id}</option>)}</select></label><p className="brand-hint">Read the full Gmail thread and attachments. Enter only the terms you can verify.</p><div className="brand-row"><button className="brand-quiet" onClick={()=>setReview(null)}>Cancel</button><button className="brand-button" onClick={reviewStart}>Continue review</button></div></div></div>}
-    {editor && <div style={{display:contentFocus?'none':undefined}} aria-hidden={contentFocus?true:undefined}><BrandEditor key={editor.id} deal={{...editor,...(deals.find(d=>d.id===editor.id)||{}),commercial:editor.commercial,sourceUrl:editor.sourceUrl||''}} onSave={save} onClose={()=>setEditor(null)} onArchive={archive} update={update} remove={archive} contentItems={contentItems.filter(i=>i.dealId===editor.id)} onOpenContent={setContentFocus} onAddContent={()=>addContent(editor.id)}/></div>}
+    {editor && <div style={{display:contentFocus?'none':undefined}} aria-hidden={contentFocus?true:undefined}><BrandEditor key={editor.id} deal={{...editor,...(deals.find(d=>d.id===editor.id)||{}),commercial:Object.prototype.hasOwnProperty.call(editor,'_baseCommercial')?editor.commercial:(deals.find(d=>d.id===editor.id)?.commercial||editor.commercial)}} onSave={save} onClose={()=>setEditor(null)} onArchive={archive} update={update} remove={archive} contentItems={contentItems.filter(i=>i.dealId===editor.id)} onOpenContent={setContentFocus} onAddContent={()=>addContent(editor.id)} allDeals={deals} onOpenExisting={setEditor}/></div>}
     {contentFocus && <BrandContentDialog item={contentItems.find(i=>i.id===contentFocus)} onChange={p=>patchContent(contentFocus,p)} onClose={()=>setContentFocus(null)}/>}
   </section>;
 }
