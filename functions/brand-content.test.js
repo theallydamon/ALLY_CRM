@@ -56,3 +56,14 @@ test('legacy script writes can create a first piece but never guess among multip
  const ambiguous={...result.workspace,ally:{...result.workspace.ally,brandContent:{items:[...result.workspace.ally.brandContent.items,{id:'other',dealId:'d',desc:'other'}]},deals:{deals:[{...result.result.record,primaryContentId:''}]}}};
  assert.throws(()=>core.saveRecord(ambiguous,{board:'deals',id:'d',expectedVersion:core.version(ambiguous.ally.deals.deals[0]),fields:{script:'ambiguous'}}),/specific brandContent/);
 });
+
+test('active and completed views preserve searchable history and independent delivery/payment states',()=>{
+ const content=require('./brand-content');
+ const state={deals:{deals:[{id:'a',brand:'Brand',commercial:{paymentStatus:'outstanding'}},{id:'b',brand:'Archived',archived:true}]},brandContent:{items:[{id:'1',dealId:'a',title:'Current',status:'To Film',desc:'New script'},{id:'2',dealId:'a',title:'Old',status:'Posted',desc:'Original skit'},{id:'3',dealId:'b',title:'Retained',status:'Ideas',desc:'Saved'}]}};
+ const before=JSON.stringify(state);
+ assert.deepEqual(content.groups(state,'','active').flatMap(g=>g.items.map(i=>i.id)),['1']);
+ assert.deepEqual(content.groups(state,'','completed').flatMap(g=>g.items.map(i=>i.id)),['2','3']);
+ assert.equal(content.groups(state,'Original','completed')[0].items[0].desc,'Original skit');
+ assert.equal(content.groups(state,'','all').flatMap(g=>g.items).length,3);
+ assert.equal(JSON.stringify(state),before);
+});
