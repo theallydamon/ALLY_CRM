@@ -86,5 +86,17 @@
     if (!(ally.brandContent?.items || []).some(i=>i.id===id)) throw Error('Content no longer exists. Reopen the deal.');
     return {...ally,brandContent:{...ally.brandContent,items:ally.brandContent.items.map(i=>i.id===id?{...i,...patch}:i)}};
   }
-  return {migrate,update};
+  function groups(ally,query='') {
+    const groups=new Map(),q=query.toLowerCase();
+    for(const item of ally.brandContent?.items||[]){
+      const dealId=identity.resolve(ally.deals?.aliases,item.dealId),deal=ally.deals?.deals?.find(d=>d.id===dealId);
+      const brand=deal?.brand||'Unassigned content';
+      if(q&&![brand,item.title,item.desc].join(' ').toLowerCase().includes(q))continue;
+      const key=deal?.id||'unassigned';
+      if(!groups.has(key))groups.set(key,{dealId:deal?.id||'',brand,items:[]});
+      groups.get(key).items.push(item);
+    }
+    return [...groups.values()];
+  }
+  return {migrate,update,groups};
 });
