@@ -33,7 +33,7 @@ test('gross proposals, agreed fees, invoices, partial bank receipts and currenci
   assert.equal(t.ZAR.proposed,9000);assert.equal(t.ZAR.contracted,8000);assert.equal(t.ZAR.paid,1000);assert.equal(t.ZAR.outstanding,7000);assert.equal(t.ZAR.overdue,7000);assert.equal(t.USD.outstanding,500);
   assert.equal(finance.lane(d),'invoiced');assert.equal(finance.lane({...d,commercial:{...d.commercial,invoices:[invoice({paidAmount:8000})]}}),'paid');
   assert.equal(finance.lane({...d,commercial:{...d.commercial,invoices:[invoice({amount:4000,paidAmount:4000})]}}),'invoiced','paid deposit does not mean whole campaign is paid');
-  assert.equal(finance.lane({stage:'done',type:'Active'}),'proposed','production done never implies paid or contracted');
+  assert.equal(finance.lane({stage:'done',type:'Active'}),'needs_review','production done never implies paid or contracted');
 });
 test('owner-confirmed paid history needs no invented dates and sent invoice fees match pipeline totals',()=>{
   const d=(id,fee,paymentStatus,billingStatus='unknown')=>({id,brand:id,stage:'done',commercial:finance.validate({stage:'contracted',reviewed:true,evidence:'Agreed booking',fee,currency:'ZAR',paymentStatus,paymentEvidence:'Synthetic owner confirmation',billingStatus,billingEvidence:billingStatus==='invoiced'?'Owner confirms invoice sent':'',invoices:[]})});

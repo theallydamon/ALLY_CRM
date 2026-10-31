@@ -73,3 +73,23 @@ The optional browser fixture is `tests/brand-deals.browser.cjs` (requires Playwr
 - [Gmail send](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/send)
 - [Calendar event insertion](https://developers.google.com/workspace/calendar/api/v3/reference/events/insert)
 - [Cloudflare Worker limits](https://developers.cloudflare.com/workers/platform/limits/)
+
+## Shared creative records and stage labels
+
+`ally.brandContent.items` is the canonical collection for branded creative work. Each piece keeps its existing ID and stores `title`, `desc`, `caption`, and `dealId`. Deal production tasks refer to a piece with `contentId`; their former script description is migrated into that piece. Deal Details opens the same content editor used by Content & Delivery. Administrative tasks and notes remain on the deal. New pieces default to `TBD` descriptions.
+
+`functions/brand-content.js` runs in both the browser and connector. Migration uses exact campaign source keys, unambiguous HubSpot links, existing task script matches and reviewed task identities. It never merges by brand/title. Conflicting scripts/captions remain distinct pieces, and existing IDs, attachments, dates, production state, commercial terms and invoices are retained. The three reviewed enquiry-note descriptions move to deal notes only if their fingerprints still match; a subsequently edited description is preserved. A separate blank historical Story task remains a distinct TBD piece. The migration is idempotent, and the cloud listener explicitly persists it even when local state is already normalized.
+
+One shared `BrandFinance.LANES` taxonomy supplies the database filter, pipeline columns and deal header. The header's stage is always derived by `BrandFinance.lane`, exactly like the pipeline. The editable **Agreement stage** remains separate from invoice/payment evidence and production progress:
+
+| Existing information | Displayed stage |
+| --- | --- |
+| Proposed / Negotiating / Declined agreement | Proposed / Negotiating / Declined |
+| Contracted, no invoice or payment confirmation | Contracted |
+| Confirmed outstanding fee without sent invoice evidence | Invoice to confirm |
+| Sent invoice evidence or issued invoice | Invoiced |
+| Confirmed paid booking or fully settled invoices covering the fee | Paid |
+| Confirmed product exchange | Product exchange |
+| Missing or unrecognized commercial terms | Needs review |
+
+All columns remain visible, including empty Contracted and Declined columns. No migration guesses receipt dates, marks production-complete deals paid, or overwrites agreement/payment evidence to force a lane. Legacy connector script/caption writes route to a unique canonical piece, create a first piece if none exists, and reject ambiguous multi-piece edits.
