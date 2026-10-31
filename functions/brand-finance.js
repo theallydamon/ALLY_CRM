@@ -113,6 +113,14 @@
     for (const t of Object.values(totals)) for (const k of ['proposed','contracted','invoiced','invoicedFees','paid','paidFees','outstanding','awaitingInvoice','overdue']) t[k] /= 100;
     return totals;
   }
+  function moneyView(deals,currency,day){
+    const rows=deals.filter(d=>!d.archived&&(terms(d).currency||'ZAR')===currency),totals=dashboard(rows,day)[currency]||{};
+    const owing=rows.filter(d=>outstanding(d)>0).map(d=>{
+      const c=terms(d),invoices=(c.invoices||[]).filter(issued),numbers=(c.invoices||[]).filter(i=>!i.void&&i.number).map(i=>i.number),next=invoices.filter(i=>balance(i)>0&&i.dueConfirmed&&i.dueDate).sort((a,b)=>a.dueDate.localeCompare(b.dueDate))[0];
+      return {deal:d,amount:outstanding(d),invoice:numbers.length&&(invoices.length||billingConfirmed(d))?'Sent · '+numbers.join(', '):invoices.length?'Sent':billingConfirmed(d)?'Sent, details not recorded':c.billingStatus==='not_invoiced'?'Not sent':'Not confirmed',due:next?.dueDate||null};
+    });
+    return {paidFees:totals.paidFees||0,owed:totals.outstanding||0,owing,paid:rows.filter(d=>lane(d)==='paid'),unconfirmed:rows.filter(d=>terms(d).stage==='contracted'&&terms(d).reviewed&&!settled(d)&&lane(d)!=='paid'&&!outstanding(d)),invoices:rows.flatMap(d=>(terms(d).invoices||[]).filter(i=>!i.void&&(i.number||i.amount!=null||i.issuedDate||i.dueDate||i.paidAmount>0||i.evidence)).map(i=>({deal:d,invoice:i})))};
+  }
   function payable(d, i) { const c = terms(d); return !d.archived && !d.paused && !settled(d) && c.stage === 'contracted' && c.reviewed && issued(i) && i.dueConfirmed && !!i.dueDate && !!i.evidence && balance(i) > 0; }
   function reminder(d, i, day) {
     if (!payable(d,i)) return null;
@@ -124,5 +132,5 @@
   }
   function money(n,currency='ZAR') { return n == null ? 'Not set' : new Intl.NumberFormat('en-ZA',{style:'currency',currency}).format(n); }
   function nextDay(day) { const d = new Date(day+'T00:00:00Z'); d.setUTCDate(d.getUTCDate()+1); return d.toISOString().slice(0,10); }
-  return { LANES, STAGES, date, validate, terms, balance, issued, lane, dashboard, payable, reminder, money, nextDay, confirmedPayment, settled, billingConfirmed, outstanding, invoicedFees };
+  return { LANES, STAGES, date, validate, terms, balance, issued, lane, dashboard, moneyView, payable, reminder, money, nextDay, confirmedPayment, settled, billingConfirmed, outstanding, invoicedFees };
 });

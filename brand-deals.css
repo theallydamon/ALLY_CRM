@@ -20,3 +20,16 @@
 .brand-content-fields .task-rich-editor { min-height:100px; max-height:420px; overflow:auto; }
 .brand-content-link { background:transparent; color:inherit; border:1px solid #45404d; border-radius:9px; padding:12px; text-align:left; display:flex; justify-content:space-between; gap:12px; cursor:pointer; }
 .brand-content-link span { color:#b8adcc; font-size:12px; }
+
+.brand-content-head { padding-bottom:18px; border-bottom:1px solid var(--brand-line); }
+.brand-content-head h3 { font-size:20px; letter-spacing:-.025em; }
+.brand-content-piece { padding-top:16px; }
+.brand-content-piece + .brand-content-piece { margin-top:24px; border-top:1px solid var(--brand-line); }
+.brand-money { margin-top:24px; }
+.brand-money-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); margin-top:24px; }
+.brand-money-metrics small { display:block; margin-top:10px; font-size:11px; color:var(--brand-muted); }
+.brand-money-details { margin-top:24px; border-top:1px solid var(--brand-line); padding-top:20px; }
+@media(max-width:600px) { .brand-content-head { align-items:flex-start; } .brand-content-head h3 { font-size:18px; } }
+.brand-view-toggle { display:flex; padding:3px; border:1px solid var(--brand-line); border-radius:9px; background:#17151c; }
+.brand-view-toggle button { border:0; background:none; color:var(--brand-muted); font:inherit; font-size:12px; padding:7px 12px; border-radius:6px; cursor:pointer; }
+.brand-view-toggle button.active { background:#30283f; color:#e8defb; }
