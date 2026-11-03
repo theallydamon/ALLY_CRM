@@ -6257,6 +6257,7 @@ function BrandMoney({deals,currency,currencies,onCurrency,day,onOpen,q}) {
 function BrandContentFields({item,onChange}) {
   return <div className="brand-content-fields">
     <BrandField label="Title" value={item.title} onChange={v=>onChange({title:v})}/>
+    {(item.status==='Posted'||item.postedAt)&&<BrandField label="Posted on" type="date" value={item.postedAt} onChange={v=>onChange({postedAt:v||null})}/>}
     <div className="brand-field"><span>Description</span><RichDescription label="Description" value={item.desc || ''} onChange={v=>onChange({desc:v,descHtml:false})}/></div>
     <BrandField label="Caption" type="textarea" value={item.caption || ''} onChange={v=>onChange({caption:v})}/>
   </div>;
