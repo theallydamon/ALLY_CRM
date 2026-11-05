@@ -6279,7 +6279,8 @@ function BrandEditor({deal,onSave,onClose,onArchive,update,remove,contentItems,o
   const c=draft.commercial;
   const term=(key,value)=>setDraft(d=>({...d,commercial:{...d.commercial,[key]:value}}));
   const invoice=(id,patch)=>term('invoices',(c.invoices||[]).map(i=>i.id===id?{...i,...patch}:i));
-  const save=()=>{try { if(conflicts.length)throw Error('These details also changed in another session. Close and reopen the profile before saving.'); const commercial=BF.validate(c); if(!draft.brand?.trim()) throw Error('Add the brand name.'); if(draft.sourceUrl && !/^https:\/\//.test(draft.sourceUrl)) throw Error('Source links must use HTTPS.'); onSave({...draft,_baseCommercial:Object.prototype.hasOwnProperty.call(deal,'_baseCommercial')?deal._baseCommercial:draftBase.current.commercial,brand:draft.brand.trim(),commercial}); } catch(e){setError(e.message);} };
+  const save=(candidate=draft)=>{try { if(conflicts.length)throw Error('These details also changed in another session. Close and reopen the profile before saving.'); const commercial=BF.validate(candidate.commercial); if(!candidate.brand?.trim()) throw Error('Add the brand name.'); if(candidate.sourceUrl && !/^https:\/\//.test(candidate.sourceUrl)) throw Error('Source links must use HTTPS.'); onSave({...candidate,_baseCommercial:Object.prototype.hasOwnProperty.call(deal,'_baseCommercial')?deal._baseCommercial:draftBase.current.commercial,brand:candidate.brand.trim(),commercial}); setError(''); } catch(e){setError(e.message);} };
+  const changeStage=stage=>save({...draft,commercial:{...c,stage}});
   const dialog=useRef(null);
   useEffect(()=>{ const previous=document.activeElement; const overflow=document.body.style.overflow; document.body.style.overflow='hidden'; const el=dialog.current; el?.focus(); const key=e=>{if(el?.offsetParent===null)return;if(e.key==='Escape'){e.preventDefault();onClose();} if(e.key==='Tab' && el){const all=Array.from(el.querySelectorAll('button,input,select,textarea,a[href]')).filter(x=>!x.disabled); const first=all[0],last=all.at(-1);if(e.shiftKey && (document.activeElement===first || document.activeElement===el)){e.preventDefault();last?.focus();}else if(!e.shiftKey && document.activeElement===last){e.preventDefault();first?.focus();}}};document.addEventListener('keydown',key);return()=>{document.removeEventListener('keydown',key);document.body.style.overflow=overflow;previous?.focus();};},[]);
   return <div className="brand-overlay"><section ref={dialog} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Edit brand deal" className="brand-editor">
@@ -6287,7 +6288,7 @@ function BrandEditor({deal,onSave,onClose,onArchive,update,remove,contentItems,o
     <div className="brand-form-grid">
       <BrandField label="Brand" value={draft.brand} onChange={v=>identityField('brand',v)}/>
       <BrandField label="Campaign" value={c.campaign} onChange={v=>term('campaign',v)}/>
-      <label className="brand-field"><span>Agreement stage</span><select aria-label="Agreement stage" value={c.stage} onChange={e=>term('stage',e.target.value)}>{BF.STAGES.map(s=><option key={s} value={s}>{s[0].toUpperCase()+s.slice(1)}</option>)}</select></label>
+      <label className="brand-field"><span>Agreement stage</span><select aria-label="Agreement stage" value={c.stage} onChange={e=>changeStage(e.target.value)}>{BF.STAGES.map(s=><option key={s} value={s}>{s[0].toUpperCase()+s.slice(1)}</option>)}</select><small>Changing stage saves the deal and moves it to that column. Contracted needs confirmed terms and a source.</small>{error&&<small role="alert" className="brand-error">{error}</small>}</label>
       <label className="brand-field"><span>Currency</span><select aria-label="Currency" value={c.currency} onChange={e=>term('currency',e.target.value)}>{[...new Set(['ZAR','USD','GBP','EUR',c.currency||'ZAR'])].map(s=><option key={s}>{s}</option>)}</select></label>
       <BrandField label="Total agreed fee · before deductions" type="number" value={c.fee} onChange={v=>term('fee',v)}/>
       <BrandField label="Agency deduction · amount" type="number" value={c.agencyFee} onChange={v=>term('agencyFee',v)}/>
@@ -6319,9 +6320,9 @@ function BrandEditor({deal,onSave,onClose,onArchive,update,remove,contentItems,o
         <label className="brand-check brand-wide"><input type="checkbox" checked={!!i.dueConfirmed} onChange={e=>invoice(i.id,{dueConfirmed:e.target.checked})}/>Due date confirmed from agreed terms</label>
       </div></div>)}
     </div>
-    {error && <p role="alert" className="brand-error">{error}</p>}
+    {error && <p className="brand-error">{error}</p>}
     {existingBrand&&<p className="brand-hint">This brand already has a profile. <button className="brand-quiet" onClick={()=>onOpenExisting(existingBrand)}>Open {existingBrand.brand}</button></p>}
-    <div className="brand-editor-actions"><button className="brand-quiet" onClick={()=>onArchive(deal.id)}>{deal.archived?'Restore deal':'Archive deal'}</button><button className="brand-button" onClick={save}>Save deal</button></div>
+    <div className="brand-editor-actions"><button className="brand-quiet" onClick={()=>onArchive(deal.id)}>{deal.archived?'Restore deal':'Archive deal'}</button><button className="brand-button" onClick={()=>save()}>Save deal</button></div>
     {deal.id && !deal._new && <details className="brand-editor-section"><summary>Production, tasks & notes</summary><div style={{marginTop:16}}><DealCard x={deal} open={true} onToggleOpen={()=>{}} update={update} remove={remove} contentItems={contentItems} onOpenContent={onOpenContent} onAddContent={onAddContent} isProspect={(deal.type||'Active')==='Prospect'}/></div></details>}
   </section></div>;
 }
